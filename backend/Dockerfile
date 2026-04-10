@@ -17,7 +17,8 @@ COPY . .
 # Run migrations and collect static files at build time
 RUN uv run python manage.py collectstatic --noinput 2>/dev/null || true
 
+RUN chmod +x entrypoint.sh
+
 EXPOSE 8000
 
-# Daphne serves HTTP + WebSocket + MCP SSE from one process
-CMD ["uv", "run", "daphne", "-b", "0.0.0.0", "-p", "8000", "core.asgi:application"]
+ENTRYPOINT ["./entrypoint.sh"]
