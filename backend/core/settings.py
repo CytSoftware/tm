@@ -235,7 +235,6 @@ OAUTH2_PROVIDER = {
     "ALLOWED_REDIRECT_URI_SCHEMES": ["http", "https"],
     # Let DRF handle authentication for non-OAuth views; OAuth views use their
     # own authentication backend automatically.
-    "OAUTH2_BACKEND_CLASS": "oauth2_provider.backends.OAuthLibCore",
 }
 
 # When OAuth needs login, redirect to the frontend login page.
