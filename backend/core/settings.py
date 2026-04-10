@@ -238,4 +238,8 @@ OAUTH2_PROVIDER = {
     "OAUTH2_BACKEND_CLASS": "oauth2_provider.backends.OAuthLibCore",
 }
 
-LOGIN_URL = "/admin/login/"
+# When OAuth needs login, redirect to the frontend login page.
+# After login the user has a Django session cookie (same domain via
+# COOKIE_DOMAIN=.cytsoftware.com), so the OAuth authorize page works.
+_frontend_url = _os.environ.get("FRONTEND_URL", "http://localhost:3000")
+LOGIN_URL = f"{_frontend_url}/login"
