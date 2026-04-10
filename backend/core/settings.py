@@ -233,8 +233,7 @@ OAUTH2_PROVIDER = {
     "REFRESH_TOKEN_EXPIRE_SECONDS": 86400 * 30,  # 30 days
     "ROTATE_REFRESH_TOKEN": True,
     "ALLOWED_REDIRECT_URI_SCHEMES": ["http", "https"],
-    # Let DRF handle authentication for non-OAuth views; OAuth views use their
-    # own authentication backend automatically.
+    "PKCE_REQUIRED": True,
 }
 
 # When OAuth needs login, redirect to the frontend login page.
