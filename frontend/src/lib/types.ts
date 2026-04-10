@@ -58,6 +58,7 @@ export type Task = {
   description: string;
   project: number;
   project_prefix: string;
+  project_name: string;
   column: Column;
   position: number;
   assignee: User | null;

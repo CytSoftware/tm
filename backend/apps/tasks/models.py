@@ -135,7 +135,7 @@ class Task(TimestampedModel):
         Project, on_delete=models.CASCADE, related_name="tasks"
     )
     column = models.ForeignKey(
-        Column, on_delete=models.PROTECT, related_name="tasks"
+        Column, on_delete=models.CASCADE, related_name="tasks"
     )
     position = models.FloatField(
         default=1000.0,
@@ -218,7 +218,7 @@ class RecurringTaskTemplate(TimestampedModel):
     story_points = models.PositiveSmallIntegerField(null=True, blank=True)
 
     column = models.ForeignKey(
-        Column, on_delete=models.PROTECT, related_name="recurring_templates"
+        Column, on_delete=models.CASCADE, related_name="recurring_templates"
     )
 
     rrule = models.CharField(

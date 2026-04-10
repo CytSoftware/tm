@@ -535,17 +535,34 @@ function NewViewDialog({
             {viewKind === "board" && (
               <Field label="Card fields">
                 <div className="grid grid-cols-2 gap-1">
-                  {ALL_CARD_FIELDS.map((field) => (
-                    <button
-                      key={field}
-                      type="button"
-                      className="flex items-center gap-2 rounded px-2 py-1.5 text-[12px] hover:bg-accent transition-colors"
-                      onClick={() => toggleCardField(field)}
-                    >
-                      <Checkbox checked={cardFields.includes(field)} />
-                      {CARD_FIELD_LABELS[field]}
-                    </button>
-                  ))}
+                  {ALL_CARD_FIELDS.map((field) => {
+                    const active = cardFields.includes(field);
+                    return (
+                      <button
+                        key={field}
+                        type="button"
+                        className={cn(
+                          "flex items-center gap-2 rounded px-2 py-1.5 text-[12px] transition-colors",
+                          active
+                            ? "bg-accent text-foreground"
+                            : "text-muted-foreground hover:bg-accent/50",
+                        )}
+                        onClick={() => toggleCardField(field)}
+                      >
+                        <div
+                          className={cn(
+                            "size-3.5 rounded-sm border flex items-center justify-center text-[9px]",
+                            active
+                              ? "bg-primary border-primary text-primary-foreground"
+                              : "border-input",
+                          )}
+                        >
+                          {active && "✓"}
+                        </div>
+                        {CARD_FIELD_LABELS[field]}
+                      </button>
+                    );
+                  })}
                 </div>
               </Field>
             )}

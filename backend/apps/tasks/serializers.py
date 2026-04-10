@@ -82,6 +82,7 @@ class TaskReadSerializer(serializers.ModelSerializer):
     column = ColumnSerializer(read_only=True)
     project = serializers.PrimaryKeyRelatedField(read_only=True)
     project_prefix = serializers.CharField(source="project.prefix", read_only=True)
+    project_name = serializers.CharField(source="project.name", read_only=True)
     is_recurring_instance = serializers.SerializerMethodField()
 
     class Meta:
@@ -93,6 +94,7 @@ class TaskReadSerializer(serializers.ModelSerializer):
             "description",
             "project",
             "project_prefix",
+            "project_name",
             "column",
             "position",
             "assignee",
