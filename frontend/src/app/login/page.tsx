@@ -1,0 +1,95 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { login } from "@/lib/auth";
+import { meKey } from "@/lib/query-keys";
+
+export default function LoginPage() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: () => login(username, password),
+    onSuccess: async (user) => {
+      queryClient.setQueryData(meKey(), user);
+      router.replace("/board");
+    },
+  });
+
+  return (
+    <div className="h-screen flex items-center justify-center bg-background">
+      <form
+        className="w-full max-w-[360px] space-y-5 rounded-xl border border-border/80 bg-card p-6"
+        onSubmit={(e) => {
+          e.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <div className="size-7 rounded-md bg-foreground grid place-items-center text-background text-[12px] font-semibold">
+            C
+          </div>
+          <div>
+            <div className="text-[14px] font-semibold tracking-tight">
+              Cyt Task Tracker
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              Sign in to continue
+            </div>
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label
+            htmlFor="username"
+            className="text-[11px] uppercase tracking-wide text-muted-foreground"
+          >
+            Username
+          </Label>
+          <Input
+            id="username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
+            className="h-9 text-[13px]"
+            required
+          />
+        </div>
+        <div className="space-y-2">
+          <Label
+            htmlFor="password"
+            className="text-[11px] uppercase tracking-wide text-muted-foreground"
+          >
+            Password
+          </Label>
+          <Input
+            id="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            className="h-9 text-[13px]"
+            required
+          />
+        </div>
+        {mutation.isError && (
+          <p className="text-[12px] text-destructive">Invalid credentials.</p>
+        )}
+        <Button
+          className="w-full h-9 text-[13px]"
+          type="submit"
+          disabled={mutation.isPending}
+        >
+          {mutation.isPending ? "Signing in..." : "Sign in"}
+        </Button>
+      </form>
+    </div>
+  );
+}
