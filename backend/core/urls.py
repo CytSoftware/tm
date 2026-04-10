@@ -16,6 +16,12 @@ def oauth_metadata(request):
     use /oauth/authorize/ instead of guessing /authorize.
     """
     base = request.build_absolute_uri("/").rstrip("/")
+    # Behind a reverse proxy (Traefik), the scheme is HTTP internally.
+    # Force HTTPS in production.
+    if base.startswith("http://") and not any(
+        h in base for h in ("localhost", "127.0.0.1")
+    ):
+        base = "https://" + base[7:]
     return JsonResponse({
         "issuer": base,
         "authorization_endpoint": f"{base}/oauth/authorize/",
