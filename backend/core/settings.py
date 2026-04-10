@@ -156,11 +156,29 @@ CSRF_TRUSTED_ORIGINS = (
     else ["http://localhost:3000", "http://127.0.0.1:3000"]
 )
 
-SESSION_COOKIE_SAMESITE = "Lax"
-CSRF_COOKIE_SAMESITE = "Lax"
-# Secure cookies when not in DEBUG mode (i.e. production over HTTPS)
-SESSION_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_SECURE = not DEBUG
+# Cross-subdomain cookie settings.
+# In production (DEBUG=False), the frontend (tm.cytsoftware.com) and backend
+# (tm-api.cytsoftware.com) are different origins. Cookies must use:
+#   SameSite=None  — so the browser sends them on cross-origin requests
+#   Secure=True    — required by browsers when SameSite=None
+#   Domain=.cytsoftware.com — so both subdomains can read the cookies
+# In local dev (DEBUG=True), use Lax + no domain restriction.
+_cookie_domain = _os.environ.get("COOKIE_DOMAIN", "")
+if _cookie_domain:
+    SESSION_COOKIE_DOMAIN = _cookie_domain
+    CSRF_COOKIE_DOMAIN = _cookie_domain
+
+if DEBUG:
+    SESSION_COOKIE_SAMESITE = "Lax"
+    CSRF_COOKIE_SAMESITE = "Lax"
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+else:
+    SESSION_COOKIE_SAMESITE = "None"
+    CSRF_COOKIE_SAMESITE = "None"
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
 # The frontend reads the CSRF cookie via JS, so it cannot be HttpOnly.
 CSRF_COOKIE_HTTPONLY = False
 
