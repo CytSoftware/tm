@@ -78,10 +78,12 @@ CHANNEL_LAYERS = {
     "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"},
 }
 
+import os as _os_early
+_db_dir = _os_early.environ.get("DB_DIR", "")
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": Path(_db_dir) / "db.sqlite3" if _db_dir else BASE_DIR / "db.sqlite3",
     }
 }
 
