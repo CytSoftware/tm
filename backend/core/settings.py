@@ -41,6 +41,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -98,6 +99,11 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -128,23 +134,33 @@ SPECTACULAR_SETTINGS = {
 }
 
 # ---------------------------------------------------------------------------
-# CORS / CSRF — talking to the Next.js dev server on :3000
+# CORS / CSRF
 # ---------------------------------------------------------------------------
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+# In production, set CORS_ALLOWED_ORIGINS and CSRF_TRUSTED_ORIGINS as env vars
+# (comma-separated). The admin dashboard needs the backend's own origin in
+# CSRF_TRUSTED_ORIGINS to accept login forms.
+import os as _os
+
+_cors_env = _os.environ.get("CORS_ALLOWED_ORIGINS", "")
+CORS_ALLOWED_ORIGINS = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    if _cors_env
+    else ["http://localhost:3000", "http://127.0.0.1:3000"]
+)
 CORS_ALLOW_CREDENTIALS = True
 
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+_csrf_env = _os.environ.get("CSRF_TRUSTED_ORIGINS", "")
+CSRF_TRUSTED_ORIGINS = (
+    [o.strip() for o in _csrf_env.split(",") if o.strip()]
+    if _csrf_env
+    else ["http://localhost:3000", "http://127.0.0.1:3000"]
+)
+
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
-# In dev over http we must not require Secure cookies.
-SESSION_COOKIE_SECURE = False
-CSRF_COOKIE_SECURE = False
+# Secure cookies when not in DEBUG mode (i.e. production over HTTPS)
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 # The frontend reads the CSRF cookie via JS, so it cannot be HttpOnly.
 CSRF_COOKIE_HTTPONLY = False
 
