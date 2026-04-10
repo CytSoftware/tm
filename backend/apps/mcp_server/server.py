@@ -12,14 +12,41 @@ Two transports:
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from asgiref.sync import sync_to_async
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from . import tools
 
-mcp = FastMCP("cyt-task-tracker")
+# Allow the production host + localhost for MCP transport security.
+# Without this, the MCP SDK's DNS rebinding protection rejects requests
+# from non-localhost hosts with a 421 "Invalid Host header".
+_allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+_extra_host = os.environ.get("ALLOWED_HOSTS", "")
+if _extra_host:
+    for h in _extra_host.split(","):
+        h = h.strip()
+        if h and h != "*":
+            _allowed_hosts.append(h)
+            _allowed_hosts.append(f"{h}:*")
+        elif h == "*":
+            # Wildcard — disable DNS rebinding protection entirely
+            _allowed_hosts = []
+            break
+
+_security = (
+    TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    if not _allowed_hosts
+    else TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=_allowed_hosts,
+    )
+)
+
+mcp = FastMCP("cyt-task-tracker", transport_security=_security)
 
 
 # Helper: wraps a sync tool function so it works in both sync and async contexts.
