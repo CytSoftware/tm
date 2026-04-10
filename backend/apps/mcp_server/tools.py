@@ -267,11 +267,12 @@ def create_task(
     labels: list[str | int] | None = None,
     story_points: int | None = None,
     column: str | int | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
     proj = _resolve_project(project)
     col = _resolve_column(proj, column)
     user = _resolve_user(assignee) if assignee else None
-    reporter = _resolve_reporter_for_mcp()
+    reporter = _resolve_reporter_for_mcp(mcp_user)
 
     task = Task(
         project=proj,
@@ -442,11 +443,12 @@ def create_recurring_task(
     labels: list[str | int] | None = None,
     story_points: int | None = None,
     column: str | int | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
     proj = _resolve_project(project)
     col = _resolve_column(proj, column)
     user = _resolve_user(assignee) if assignee else None
-    reporter = _resolve_reporter_for_mcp()
+    reporter = _resolve_reporter_for_mcp(mcp_user)
 
     rrule = parse_schedule(schedule)
     start = _parse_iso_datetime(dtstart) if dtstart else timezone.now()
@@ -584,14 +586,16 @@ def _parse_iso_datetime(value: str) -> datetime:
     return parsed
 
 
-def _resolve_reporter_for_mcp():
+def _resolve_reporter_for_mcp(user=None):
     """Return the user that MCP-created tasks should be reported by.
 
-    MCP is stdio — there is no request and no session. For Phase 1 we use the
-    first superuser we find, falling back to any staff user, falling back to
-    the first user in the DB. Setting ``CYT_MCP_DEFAULT_USERNAME`` overrides
-    this for more explicit deployments.
+    When *user* is provided (e.g. from an OAuth-authenticated MCP session),
+    it is used directly. Otherwise we fall back to the heuristic chain:
+    ``CYT_MCP_DEFAULT_USERNAME`` → first superuser → first staff → first user.
     """
+    if user is not None:
+        return user
+
     from django.conf import settings
 
     configured = getattr(settings, "CYT_MCP_DEFAULT_USERNAME", None)

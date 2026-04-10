@@ -5,7 +5,8 @@
       "url": "https://tm-api.cytsoftware.com/mcp",
       "headers": {
         "Authorization": "Bearer ihRYDjW_4ZEC2foy_rS250rO5veeE9dcTjCUzYlGEl8"
-      }
+      },
+      "_comment_oauth": "This server also supports OAuth 2.0 Authorization Code flow. MCP clients that support OAuth (e.g. Claude Desktop) will be redirected to /oauth/authorize/ for user login. Use 'python manage.py create_mcp_oauth_app' to generate client credentials."
     }
   }
 }

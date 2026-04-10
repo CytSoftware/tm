@@ -12,7 +12,9 @@ its internal task group. We forward lifespan to it on startup.
 import os
 import logging
 import asyncio
+import contextvars
 
+from asgiref.sync import sync_to_async
 from django.core.asgi import get_asgi_application
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
@@ -26,6 +28,12 @@ from django.conf import settings  # noqa: E402
 from apps.tasks.routing import websocket_urlpatterns  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# Context variable holding the authenticated user for the current MCP request.
+# MCP tool functions read this to determine who is calling.
+mcp_authenticated_user: contextvars.ContextVar = contextvars.ContextVar(
+    "mcp_authenticated_user", default=None
+)
 
 _channels_ws = AuthMiddlewareStack(URLRouter(websocket_urlpatterns))
 
@@ -79,23 +87,84 @@ async def _ensure_mcp_lifespan():
     await asyncio.sleep(0.1)
 
 
+async def _validate_oauth_token(bearer_token: str):
+    """Validate an OAuth2 Bearer token via django-oauth-toolkit.
+
+    Returns the Django user if the token is valid, or None.
+    """
+    from oauth2_provider.models import AccessToken
+    from django.utils import timezone as tz
+    try:
+        token_obj = await sync_to_async(
+            AccessToken.objects.select_related("user").get
+        )(token=bearer_token)
+        if token_obj.expires < tz.now():
+            return None
+        return token_obj.user
+    except AccessToken.DoesNotExist:
+        return None
+
+
 async def _handle_mcp(scope, receive, send):
-    """Token auth + forward to MCP app."""
-    token = getattr(settings, "CYT_MCP_TOKEN", "")
-    if token and scope["type"] == "http":
+    """Token auth + forward to MCP app.
+
+    Auth priority:
+    1. OAuth 2.0 Bearer token (validated via django-oauth-toolkit) — runs
+       MCP tools as the authenticated user.
+    2. Static CYT_MCP_TOKEN — backwards-compatible fallback for simple
+       deployments, runs tools as the default MCP user.
+    3. Reject with 401.
+    """
+    static_token = getattr(settings, "CYT_MCP_TOKEN", "")
+    authenticated_user = None
+
+    if scope["type"] == "http":
         headers = dict(scope.get("headers", []))
         auth = headers.get(b"authorization", b"").decode()
-        if auth != f"Bearer {token}":
+
+        if auth.startswith("Bearer "):
+            bearer = auth[7:]
+
+            # Try OAuth token first
+            oauth_user = await _validate_oauth_token(bearer)
+            if oauth_user is not None:
+                authenticated_user = oauth_user
+            elif static_token and bearer == static_token:
+                # Static token match — no specific user
+                authenticated_user = None
+            else:
+                # Neither OAuth nor static token matched
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        [b"content-type", b"application/json"],
+                        [b"www-authenticate", b'Bearer realm="mcp"'],
+                    ],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": b'{"detail":"Invalid or missing MCP token."}',
+                })
+                return
+        elif static_token:
+            # No Authorization header but static token is required
             await send({
                 "type": "http.response.start",
                 "status": 401,
-                "headers": [[b"content-type", b"application/json"]],
+                "headers": [
+                    [b"content-type", b"application/json"],
+                    [b"www-authenticate", b'Bearer realm="mcp"'],
+                ],
             })
             await send({
                 "type": "http.response.body",
                 "body": b'{"detail":"Invalid or missing MCP token."}',
             })
             return
+
+    # Set the authenticated user in a context variable so MCP tools can read it.
+    mcp_authenticated_user.set(authenticated_user)
 
     await _ensure_mcp_lifespan()
     await _mcp_app(scope, receive, send)

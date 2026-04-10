@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "corsheaders",
     "channels",
+    "oauth2_provider",
     # Local apps
     "apps.tasks",
     "apps.mcp_server",
@@ -221,3 +222,20 @@ CYT_BROADCAST_SECRET = _os.environ.get(
 # Set CYT_MCP_TOKEN in the environment. When empty, the MCP endpoint is open
 # (fine for local dev; lock it down for production).
 CYT_MCP_TOKEN = _os.environ.get("CYT_MCP_TOKEN", "")
+
+# ---------------------------------------------------------------------------
+# OAuth 2.0 (django-oauth-toolkit)
+# ---------------------------------------------------------------------------
+OAUTH2_PROVIDER = {
+    "SCOPES": {"read": "Read access", "write": "Read+Write access"},
+    "DEFAULT_SCOPES": ["read", "write"],
+    "ACCESS_TOKEN_EXPIRE_SECONDS": 3600,  # 1 hour
+    "REFRESH_TOKEN_EXPIRE_SECONDS": 86400 * 30,  # 30 days
+    "ROTATE_REFRESH_TOKEN": True,
+    "ALLOWED_REDIRECT_URI_SCHEMES": ["http", "https"],
+    # Let DRF handle authentication for non-OAuth views; OAuth views use their
+    # own authentication backend automatically.
+    "OAUTH2_BACKEND_CLASS": "oauth2_provider.backends.OAuthLibCore",
+}
+
+LOGIN_URL = "/admin/login/"

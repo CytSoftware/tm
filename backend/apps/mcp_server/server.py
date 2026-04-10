@@ -21,6 +21,12 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from . import tools
 
+
+def _get_mcp_user():
+    """Return the OAuth-authenticated user for the current MCP request, or None."""
+    from core.asgi import mcp_authenticated_user
+    return mcp_authenticated_user.get(None)
+
 # Disable the MCP SDK's built-in DNS rebinding protection entirely.
 # We already authenticate via Bearer token (CYT_MCP_TOKEN) in our own
 # ASGI middleware, so the SDK's Host/Origin validation is redundant and
@@ -105,6 +111,7 @@ async def create_task(
         labels=labels,
         story_points=story_points,
         column=column,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -222,6 +229,7 @@ async def create_recurring_task(
         labels=labels,
         story_points=story_points,
         column=column,
+        mcp_user=_get_mcp_user(),
     )
 
 
