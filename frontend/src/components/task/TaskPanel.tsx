@@ -75,6 +75,9 @@ export function TaskPanel({
   const [storyPoints, setStoryPoints] = useState<string>(
     task?.story_points != null ? String(task.story_points) : "",
   );
+  const [dueAt, setDueAt] = useState<string>(
+    task?.due_at ? task.due_at.slice(0, 16) : "",
+  );
   const [assigneeId, setAssigneeId] = useState<number | null>(
     task?.assignee?.id ?? null,
   );
@@ -224,6 +227,7 @@ export function TaskPanel({
       description,
       priority,
       story_points: storyPoints === "" ? null : Number(storyPoints),
+      due_at: dueAt ? new Date(dueAt).toISOString() : null,
       assignee_id: assigneeId,
       label_ids: labelIds,
     };
@@ -295,133 +299,131 @@ export function TaskPanel({
           </div>
         </div>
 
-        {/* Body — single column: fields on top, description fills rest */}
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          {/* Fields section — compact, non-scrolling */}
-          <div className="shrink-0 px-6 pt-4 pb-3 space-y-3 border-b border-border/60">
-            {/* Title — full width */}
-            <Field label="Title">
+        {/* Body — two columns: left properties sidebar, right title+description */}
+        <div className="flex-1 min-h-0 flex overflow-hidden">
+          {/* Left: property sidebar */}
+          <div className="w-64 shrink-0 border-r border-border/60 overflow-y-auto scrollbar-none p-4 space-y-1">
+            <PropRow label="Project">
+              <Select
+                value={String(projectId)}
+                onValueChange={(v) => setProjectId(Number(v))}
+                items={projectItems}
+              >
+                <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={String(p.id)}>
+                      {p.name} ({p.prefix})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </PropRow>
+
+            <PropRow label="Status">
+              <Select
+                value={String(columnId)}
+                onValueChange={(v) => setColumnId(Number(v))}
+                items={columnItems}
+              >
+                <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {selectedProject.columns
+                    .slice()
+                    .sort((a, b) => a.order - b.order)
+                    .map((c) => (
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </PropRow>
+
+            <PropRow label="Priority">
+              <Select
+                value={priority}
+                onValueChange={(v) => setPriority(v as Priority)}
+                items={priorityItems}
+              >
+                <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PRIORITY_ORDER.map((p) => (
+                    <SelectItem key={p} value={p}>
+                      {PRIORITY_LABELS[p]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </PropRow>
+
+            <PropRow label="Assignee">
+              <Select
+                value={assigneeId != null ? String(assigneeId) : ""}
+                onValueChange={(v) =>
+                  setAssigneeId(v === "" ? null : Number(v))
+                }
+                items={assigneeItems}
+              >
+                <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
+                  <SelectValue placeholder="Unassigned" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Unassigned</SelectItem>
+                  {users.map((u) => (
+                    <SelectItem key={u.id} value={String(u.id)}>
+                      {u.username}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </PropRow>
+
+            <PropRow label="Points">
               <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Short description of the work"
-                autoFocus
-                className="text-[13px]"
+                type="number"
+                min={1}
+                step={1}
+                value={storyPoints}
+                onChange={(e) => setStoryPoints(e.target.value)}
+                placeholder="—"
+                className="h-7 text-[12px] border-0 bg-transparent px-1.5 hover:bg-accent/60 rounded w-full"
               />
-            </Field>
+            </PropRow>
 
-            {/* Field grid — compact row */}
-            <div className="grid grid-cols-5 gap-2">
-              <Field label="Project">
-                <Select
-                  value={String(projectId)}
-                  onValueChange={(v) => setProjectId(Number(v))}
-                  items={projectItems}
-                >
-                  <SelectTrigger className="h-8 text-[13px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {projects.map((p) => (
-                      <SelectItem key={p.id} value={String(p.id)}>
-                        {p.name} ({p.prefix})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
+            <PropRow label="Deadline">
+              <Input
+                type="datetime-local"
+                value={dueAt}
+                onChange={(e) => setDueAt(e.target.value)}
+                className="h-7 text-[12px] border-0 bg-transparent px-1.5 hover:bg-accent/60 rounded w-full"
+              />
+            </PropRow>
 
-              <Field label="Column">
-                <Select
-                  value={String(columnId)}
-                  onValueChange={(v) => setColumnId(Number(v))}
-                  items={columnItems}
-                >
-                  <SelectTrigger className="h-8 text-[13px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {selectedProject.columns
-                      .slice()
-                      .sort((a, b) => a.order - b.order)
-                      .map((c) => (
-                        <SelectItem key={c.id} value={String(c.id)}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field label="Priority">
-                <Select
-                  value={priority}
-                  onValueChange={(v) => setPriority(v as Priority)}
-                  items={priorityItems}
-                >
-                  <SelectTrigger className="h-8 text-[13px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PRIORITY_ORDER.map((p) => (
-                      <SelectItem key={p} value={p}>
-                        {PRIORITY_LABELS[p]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field label="Points">
-                <Input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={storyPoints}
-                  onChange={(e) => setStoryPoints(e.target.value)}
-                  placeholder="—"
-                  className="h-8 text-[13px]"
+            <div className="pt-2">
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground px-1">
+                Labels
+              </span>
+              <div className="mt-1">
+                <LabelPicker
+                  available={availableLabels}
+                  selected={labelIds}
+                  onChange={setLabelIds}
                 />
-              </Field>
-
-              <Field label="Assignee">
-                <Select
-                  value={assigneeId != null ? String(assigneeId) : ""}
-                  onValueChange={(v) =>
-                    setAssigneeId(v === "" ? null : Number(v))
-                  }
-                  items={assigneeItems}
-                >
-                  <SelectTrigger className="h-8 text-[13px]">
-                    <SelectValue placeholder="Unassigned" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">Unassigned</SelectItem>
-                    {users.map((u) => (
-                      <SelectItem key={u.id} value={String(u.id)}>
-                        {u.username}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
+              </div>
             </div>
 
-            {/* Labels */}
-            <Field label="Labels">
-              <LabelPicker
-                available={availableLabels}
-                selected={labelIds}
-                onChange={setLabelIds}
-              />
-            </Field>
-
-            {/* Recurrence (create mode only) */}
             {mode === "create" && (
-              <div className="rounded-lg border border-border/80 p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[12px] font-medium">
-                    Repeat on a schedule
+              <div className="pt-2 mt-2 border-t border-border/40">
+                <div className="flex items-center justify-between px-1 py-1">
+                  <span className="text-[11px] text-muted-foreground">
+                    Recurring
                   </span>
                   <Switch
                     checked={recurrence.enabled}
@@ -431,21 +433,27 @@ export function TaskPanel({
                   />
                 </div>
                 {recurrence.enabled && (
-                  <RecurrencePicker
-                    state={recurrence}
-                    onChange={setRecurrence}
-                  />
+                  <div className="mt-1">
+                    <RecurrencePicker
+                      state={recurrence}
+                      onChange={setRecurrence}
+                    />
+                  </div>
                 )}
               </div>
             )}
           </div>
 
-          {/* Description — fills all remaining vertical space */}
+          {/* Right: title + description */}
           <div className="flex-1 min-h-0 flex flex-col min-w-0 overflow-hidden">
-            <div className="shrink-0 px-6 pt-3 pb-1">
-              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                Description
-              </span>
+            <div className="shrink-0 px-6 pt-4 pb-2">
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Task title"
+                autoFocus
+                className="text-[16px] font-medium border-0 bg-transparent px-0 h-auto focus-visible:ring-0 placeholder:text-muted-foreground/50"
+              />
             </div>
             <div className="flex-1 min-h-0 px-6 pb-4">
               <DescriptionEditor
@@ -488,6 +496,23 @@ function Field({
         {label}
       </span>
       {children}
+    </div>
+  );
+}
+
+function PropRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center min-h-[32px]">
+      <span className="w-[72px] shrink-0 text-[12px] text-muted-foreground pl-1">
+        {label}
+      </span>
+      <div className="w-[160px] shrink-0">{children}</div>
     </div>
   );
 }

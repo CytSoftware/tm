@@ -31,6 +31,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { apiFetch } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { projectsKey, usersKey, viewsKey } from "@/lib/query-keys";
 import type {
   SavedView,
@@ -332,7 +333,7 @@ function NewViewDialog({
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent
-        className="max-w-2xl p-0 gap-0 flex flex-col overflow-hidden max-h-[90vh]"
+        className="max-w-2xl p-0 gap-0 flex flex-col overflow-hidden max-h-[85vh]"
         showCloseButton={false}
       >
         <div className="shrink-0 px-5 pt-5 pb-4 border-b border-border/60">
@@ -345,33 +346,36 @@ function NewViewDialog({
               : "Save a filtered + sorted view of the board."}
           </p>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
-          <Field label="Name">
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="High priority, mine"
-              autoFocus
-              className="h-9 text-[13px]"
-            />
-          </Field>
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-5 py-4 space-y-3">
+          {/* Name + View type — side by side */}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Name">
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="High priority, mine"
+                autoFocus
+                className="h-9 text-[13px]"
+              />
+            </Field>
+            <Field label="View type">
+              <Select
+                value={viewKind}
+                onValueChange={(v) => setViewKind(v as "board" | "table")}
+                items={viewKindItems}
+              >
+                <SelectTrigger className="h-9 text-[13px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="board">Board</SelectItem>
+                  <SelectItem value="table">List</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
 
-          <Field label="View type">
-            <Select
-              value={viewKind}
-              onValueChange={(v) => setViewKind(v as "board" | "table")}
-              items={viewKindItems}
-            >
-              <SelectTrigger className="h-9 text-[13px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="board">Board</SelectItem>
-                <SelectItem value="table">List</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-
+          {/* Project — full width */}
           <Field label="Project">
             <Select
               value={filterProjectId != null ? String(filterProjectId) : ""}
@@ -394,67 +398,70 @@ function NewViewDialog({
             </Select>
           </Field>
 
-          <Field label="Priority">
-            <div className="flex flex-wrap gap-1.5">
-              {PRIORITY_ORDER.map((p) => {
-                const active = priorities.includes(p);
-                return (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() =>
-                      setPriorities(
+          {/* Priority + Assignees — side by side */}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Priority">
+              <div className="flex flex-wrap gap-1.5">
+                {PRIORITY_ORDER.map((p) => {
+                  const active = priorities.includes(p);
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() =>
+                        setPriorities(
+                          active
+                            ? priorities.filter((x) => x !== p)
+                            : [...priorities, p],
+                        )
+                      }
+                      className={`rounded border px-2 py-1 text-[12px] transition-colors ${
                         active
-                          ? priorities.filter((x) => x !== p)
-                          : [...priorities, p],
-                      )
-                    }
-                    className={`rounded border px-2 py-1 text-[12px] transition-colors ${
-                      active
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "bg-background text-muted-foreground border-border hover:border-foreground/30"
-                    }`}
-                  >
-                    {PRIORITY_LABELS[p]}
-                  </button>
-                );
-              })}
-            </div>
-          </Field>
-
-          <Field label="Assignees">
-            <div className="flex flex-wrap gap-1.5">
-              {users.map((u) => {
-                const active = assigneeIds.includes(u.id);
-                return (
-                  <button
-                    key={u.id}
-                    type="button"
-                    onClick={() =>
-                      setAssigneeIds(
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background text-muted-foreground border-border hover:border-foreground/30"
+                      }`}
+                    >
+                      {PRIORITY_LABELS[p]}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label="Assignees">
+              <div className="flex flex-wrap gap-1.5">
+                {users.map((u) => {
+                  const active = assigneeIds.includes(u.id);
+                  return (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() =>
+                        setAssigneeIds(
+                          active
+                            ? assigneeIds.filter((x) => x !== u.id)
+                            : [...assigneeIds, u.id],
+                        )
+                      }
+                      className={`rounded border px-2 py-1 text-[12px] transition-colors ${
                         active
-                          ? assigneeIds.filter((x) => x !== u.id)
-                          : [...assigneeIds, u.id],
-                      )
-                    }
-                    className={`rounded border px-2 py-1 text-[12px] transition-colors ${
-                      active
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "bg-background text-muted-foreground border-border hover:border-foreground/30"
-                    }`}
-                  >
-                    {u.username}
-                  </button>
-                );
-              })}
-              {users.length === 0 && (
-                <span className="text-[11px] text-muted-foreground">
-                  No users found.
-                </span>
-              )}
-            </div>
-          </Field>
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background text-muted-foreground border-border hover:border-foreground/30"
+                      }`}
+                    >
+                      {u.username}
+                    </button>
+                  );
+                })}
+                {users.length === 0 && (
+                  <span className="text-[11px] text-muted-foreground">
+                    No users found.
+                  </span>
+                )}
+              </div>
+            </Field>
+          </div>
 
+          {/* Labels — full width */}
           {labels.length > 0 && (
             <Field label="Labels">
               <div className="flex flex-wrap gap-1.5">
@@ -486,45 +493,45 @@ function NewViewDialog({
             </Field>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="Sort by">
-                  <Select
-                    value={sortField}
-                    onValueChange={(v) =>
-                      setSortField(v as "updated_at" | "priority" | "title")
-                    }
-                    items={sortFieldItems}
-                  >
-                    <SelectTrigger className="h-9 text-[13px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="updated_at">Last updated</SelectItem>
-                      <SelectItem value="priority">Priority</SelectItem>
-                      <SelectItem value="title">Title</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label="Direction">
-                  <Select
-                    value={sortDir}
-                    onValueChange={(v) => setSortDir(v as "asc" | "desc")}
-                    items={sortDirItems}
-                  >
-                    <SelectTrigger className="h-9 text-[13px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="asc">Ascending</SelectItem>
-                      <SelectItem value="desc">Descending</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </div>
-            </div>
+          {/* Sort by + Direction — side by side */}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Sort by">
+              <Select
+                value={sortField}
+                onValueChange={(v) =>
+                  setSortField(v as "updated_at" | "priority" | "title")
+                }
+                items={sortFieldItems}
+              >
+                <SelectTrigger className="h-9 text-[13px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="updated_at">Last updated</SelectItem>
+                  <SelectItem value="priority">Priority</SelectItem>
+                  <SelectItem value="title">Title</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Direction">
+              <Select
+                value={sortDir}
+                onValueChange={(v) => setSortDir(v as "asc" | "desc")}
+                items={sortDirItems}
+              >
+                <SelectTrigger className="h-9 text-[13px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="asc">Ascending</SelectItem>
+                  <SelectItem value="desc">Descending</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
 
+          {/* Card fields + Shared — side by side */}
+          <div className="grid grid-cols-2 gap-3">
             {viewKind === "board" && (
               <Field label="Card fields">
                 <div className="grid grid-cols-2 gap-1">
@@ -542,18 +549,19 @@ function NewViewDialog({
                 </div>
               </Field>
             )}
-          </div>
-
-          <div className="flex items-center justify-between rounded-md border border-border/80 p-3">
-            <div>
-              <span className="text-[13px] font-medium">
-                Shared with everyone
-              </span>
-              <p className="text-[11px] text-muted-foreground">
-                Other users will see this view in their view picker.
-              </p>
+            <div className={cn("flex items-stretch", viewKind !== "board" && "col-span-2")}>
+              <div className="flex items-center justify-between rounded-md border border-border/80 p-3 w-full">
+                <div>
+                  <span className="text-[13px] font-medium">
+                    Shared with everyone
+                  </span>
+                  <p className="text-[11px] text-muted-foreground">
+                    Other users will see this view in their view picker.
+                  </p>
+                </div>
+                <Switch checked={shared} onCheckedChange={setShared} />
+              </div>
             </div>
-            <Switch checked={shared} onCheckedChange={setShared} />
           </div>
         </div>
         <div className="shrink-0 px-5 py-3 border-t border-border/60 flex items-center justify-end gap-2">

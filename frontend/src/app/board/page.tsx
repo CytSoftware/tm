@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
@@ -36,13 +36,16 @@ import { TaskPanel } from "@/components/task/TaskPanel";
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import { LabelManager } from "@/components/label/LabelManager";
 import { ListView } from "@/components/list/ListView";
+import { CommandPalette } from "@/components/CommandPalette";
 import { apiFetch } from "@/lib/api";
 import { projectsKey, viewsKey } from "@/lib/query-keys";
 import { useActiveProject } from "@/lib/active-project";
 import { useTasksQuery, useMoveTask } from "@/hooks/use-tasks";
+import { useUsersQuery } from "@/hooks/use-users";
 import { connectProjectSocket } from "@/lib/ws";
 import type {
   Column,
+  Label,
   Project,
   ProjectListResponse,
   Task,
@@ -93,6 +96,19 @@ export default function BoardPage() {
   const tasksQuery = useTasksQuery({ projectId, viewId });
   const moveTask = useMoveTask(projectId ?? 0);
 
+  const usersQuery = useUsersQuery();
+  const allUsers = usersQuery.data ?? [];
+
+  // Fetch all labels for the command palette
+  const labelsQuery = useQuery({
+    queryKey: ["labels"],
+    queryFn: () =>
+      apiFetch<{ count: number; results: Label[] }>("/api/labels/").then(
+        (r) => r.results,
+      ),
+  });
+  const allLabels: Label[] = labelsQuery.data ?? [];
+
   const [dialogState, setDialogState] = useState<
     | { mode: "create"; columnId: number | null }
     | { mode: "edit"; task: Task }
@@ -101,6 +117,8 @@ export default function BoardPage() {
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [labelManagerOpen, setLabelManagerOpen] = useState(false);
   const [activeId, setActiveId] = useState<number | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   // orderedItems: Map<columnId, taskId[]> — local ordering state for DnD
   const [orderedItems, setOrderedItems] = useState<Map<number, number[]>>(
@@ -194,6 +212,158 @@ export default function BoardPage() {
   }, [tasksByColumn]);
 
   const isAllProjects = !projectId;
+
+  // The currently selected task object (for the command palette)
+  const selectedTask = useMemo(() => {
+    if (selectedTaskId === null) return null;
+    return (
+      (tasksQuery.data?.results ?? []).find((t) => t.id === selectedTaskId) ??
+      null
+    );
+  }, [selectedTaskId, tasksQuery.data]);
+
+  // Keyboard navigation — arrow keys, Enter, Esc, Space
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      // Skip when an input/textarea/contenteditable is focused
+      const el = document.activeElement;
+      if (
+        el instanceof HTMLInputElement ||
+        el instanceof HTMLTextAreaElement ||
+        (el instanceof HTMLElement && el.isContentEditable)
+      ) {
+        return;
+      }
+
+      // Skip when palette or any dialog is open
+      if (paletteOpen || dialogState || createProjectOpen || labelManagerOpen) {
+        return;
+      }
+
+      // Only handle in board view
+      if (viewKind !== "board") return;
+
+      // Build column→task arrays from current display order
+      const colTaskIds: number[][] = displayColumns.map(
+        (col) => orderedItems.get(col.id) ?? [],
+      );
+
+      switch (e.key) {
+        case "ArrowDown": {
+          e.preventDefault();
+          if (selectedTaskId === null) {
+            // Select first task of first non-empty column
+            for (const ids of colTaskIds) {
+              if (ids.length > 0) {
+                setSelectedTaskId(ids[0]);
+                return;
+              }
+            }
+            return;
+          }
+          // Move down within current column
+          for (const ids of colTaskIds) {
+            const idx = ids.indexOf(selectedTaskId);
+            if (idx !== -1 && idx < ids.length - 1) {
+              setSelectedTaskId(ids[idx + 1]);
+              return;
+            }
+          }
+          break;
+        }
+        case "ArrowUp": {
+          e.preventDefault();
+          if (selectedTaskId === null) return;
+          for (const ids of colTaskIds) {
+            const idx = ids.indexOf(selectedTaskId);
+            if (idx !== -1 && idx > 0) {
+              setSelectedTaskId(ids[idx - 1]);
+              return;
+            }
+          }
+          break;
+        }
+        case "ArrowRight": {
+          e.preventDefault();
+          if (selectedTaskId === null) {
+            // Select first task of first non-empty column
+            for (const ids of colTaskIds) {
+              if (ids.length > 0) {
+                setSelectedTaskId(ids[0]);
+                return;
+              }
+            }
+            return;
+          }
+          // Move to next column
+          for (let ci = 0; ci < colTaskIds.length; ci++) {
+            const idx = colTaskIds[ci].indexOf(selectedTaskId);
+            if (idx !== -1) {
+              // Find next column with tasks
+              for (let ni = ci + 1; ni < colTaskIds.length; ni++) {
+                if (colTaskIds[ni].length > 0) {
+                  const targetIdx = Math.min(idx, colTaskIds[ni].length - 1);
+                  setSelectedTaskId(colTaskIds[ni][targetIdx]);
+                  return;
+                }
+              }
+              return;
+            }
+          }
+          break;
+        }
+        case "ArrowLeft": {
+          e.preventDefault();
+          if (selectedTaskId === null) return;
+          for (let ci = 0; ci < colTaskIds.length; ci++) {
+            const idx = colTaskIds[ci].indexOf(selectedTaskId);
+            if (idx !== -1) {
+              // Find previous column with tasks
+              for (let ni = ci - 1; ni >= 0; ni--) {
+                if (colTaskIds[ni].length > 0) {
+                  const targetIdx = Math.min(idx, colTaskIds[ni].length - 1);
+                  setSelectedTaskId(colTaskIds[ni][targetIdx]);
+                  return;
+                }
+              }
+              return;
+            }
+          }
+          break;
+        }
+        case "Enter": {
+          e.preventDefault();
+          if (selectedTask) {
+            setDialogState({ mode: "edit", task: selectedTask });
+          }
+          break;
+        }
+        case "Escape": {
+          e.preventDefault();
+          setSelectedTaskId(null);
+          break;
+        }
+        case " ": {
+          e.preventDefault();
+          setPaletteOpen(true);
+          break;
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [
+    selectedTaskId,
+    selectedTask,
+    displayColumns,
+    orderedItems,
+    paletteOpen,
+    dialogState,
+    createProjectOpen,
+    labelManagerOpen,
+    viewKind,
+  ]);
 
   const activeTask = useMemo(() => {
     if (activeId === null) return null;
@@ -413,6 +583,7 @@ export default function BoardPage() {
                           <KanbanCard
                             key={task.id}
                             task={task}
+                            isSelected={task.id === selectedTaskId}
                             showProject={isAllProjects}
                             visibleFields={cardDisplay}
                             onClick={() =>
@@ -463,6 +634,25 @@ export default function BoardPage() {
           projectId={project?.id ?? null}
           projectName={project?.name ?? null}
           onClose={() => setLabelManagerOpen(false)}
+        />
+      )}
+      {paletteOpen && (
+        <CommandPalette
+          selectedTask={selectedTask}
+          project={project}
+          projects={projects}
+          users={allUsers}
+          labels={allLabels}
+          views={viewsQuery.data?.results ?? []}
+          onClose={() => setPaletteOpen(false)}
+          onEditTask={(task) => setDialogState({ mode: "edit", task })}
+          onCreateTask={() =>
+            setDialogState({ mode: "create", columnId: null })
+          }
+          onCreateProject={() => setCreateProjectOpen(true)}
+          onCreateLabel={() => setLabelManagerOpen(true)}
+          onSwitchProject={(id) => setProjectId(id)}
+          onSwitchView={(id) => setViewId(id)}
         />
       )}
     </div>

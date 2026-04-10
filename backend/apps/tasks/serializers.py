@@ -28,9 +28,17 @@ User = get_user_model()
 
 
 class UserSerializer(serializers.ModelSerializer):
+    avatar_url = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ("id", "username", "email", "first_name", "last_name")
+        fields = ("id", "username", "email", "first_name", "last_name", "avatar_url")
+
+    def get_avatar_url(self, obj) -> str:
+        profile = getattr(obj, "profile", None)
+        if profile and profile.avatar_url:
+            return profile.avatar_url
+        return ""
 
 
 class LabelSerializer(serializers.ModelSerializer):

@@ -105,6 +105,22 @@ class MeView(APIView):
             )
         return Response(UserSerializer(request.user).data)
 
+    @extend_schema(request={"application/json": {"type": "object", "properties": {"avatar_url": {"type": "string"}}}})
+    def patch(self, request):
+        if not request.user.is_authenticated:
+            return Response(
+                {"detail": "Not authenticated."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        from .models import UserProfile
+
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        avatar_url = request.data.get("avatar_url")
+        if avatar_url is not None:
+            profile.avatar_url = avatar_url
+            profile.save(update_fields=["avatar_url"])
+        return Response(UserSerializer(request.user).data)
+
 
 @api_view(["POST"])
 @permission_classes([permissions.AllowAny])

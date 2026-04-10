@@ -2,10 +2,6 @@
 
 import { cn } from "@/lib/utils";
 
-/**
- * Deterministic avatar color derived from username hash.
- * Produces a consistent hue per user, similar to Linear's approach.
- */
 const AVATAR_COLORS = [
   "bg-red-500",
   "bg-orange-500",
@@ -44,12 +40,33 @@ function getColor(username: string): string {
 
 type Props = {
   username: string;
+  avatarUrl?: string;
   /** Tailwind size class, e.g. "size-6" (default: "size-5") */
   size?: "size-4" | "size-5" | "size-6" | "size-7" | "size-8";
   className?: string;
 };
 
-export function UserAvatar({ username, size = "size-5", className }: Props) {
+export function UserAvatar({
+  username,
+  avatarUrl,
+  size = "size-5",
+  className,
+}: Props) {
+  if (avatarUrl) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={username}
+        title={username}
+        className={cn(
+          "rounded-full object-cover shrink-0",
+          size,
+          className,
+        )}
+      />
+    );
+  }
+
   return (
     <div
       className={cn(

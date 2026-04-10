@@ -310,6 +310,33 @@ class View(TimestampedModel):
 
 
 # ---------------------------------------------------------------------------
+# User profile (avatar)
+# ---------------------------------------------------------------------------
+
+
+class UserProfile(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="profile",
+    )
+    avatar_url = models.URLField(
+        blank=True,
+        default="",
+        help_text="URL to a profile picture (Gravatar, GitHub avatar, etc.).",
+    )
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.user.username} profile"
+
+
+@receiver(post_save, sender=settings.AUTH_USER_MODEL)
+def _create_user_profile(sender, instance, created, **kwargs):
+    if created:
+        UserProfile.objects.get_or_create(user=instance)
+
+
+# ---------------------------------------------------------------------------
 # Default columns for new projects
 # ---------------------------------------------------------------------------
 # A fresh Project gets a sensible default Kanban layout: Todo / In Progress /

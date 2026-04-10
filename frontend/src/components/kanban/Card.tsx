@@ -31,6 +31,7 @@ type Props = {
   task: Task;
   onClick?: () => void;
   isOverlay?: boolean;
+  isSelected?: boolean;
   showProject?: boolean;
   visibleFields?: CardField[] | null;
 };
@@ -47,6 +48,7 @@ export function KanbanCard({
   task,
   onClick,
   isOverlay,
+  isSelected,
   showProject,
   visibleFields,
 }: Props) {
@@ -87,11 +89,14 @@ export function KanbanCard({
         }
       }}
       className={cn(
-        "group rounded-lg border border-border/80 bg-card p-2.5 text-[13px]",
+        "group rounded-lg border bg-card p-2.5 text-[13px]",
         "cursor-grab active:cursor-grabbing select-none",
-        "shadow-[0_1px_0_rgba(0,0,0,0.02)] hover:border-border hover:bg-accent/30",
+        "shadow-[0_1px_0_rgba(0,0,0,0.02)]",
         "transition-[background-color,border-color,box-shadow] duration-150",
         isDragging && "opacity-30",
+        isSelected
+          ? "border-foreground/40 bg-accent/40"
+          : "border-border/80 hover:border-border hover:bg-accent/30",
         isOverlay &&
           "cursor-grabbing shadow-lg border-border ring-1 ring-border/40",
       )}
@@ -173,6 +178,7 @@ export function KanbanCard({
               <div className="flex items-center gap-1 min-w-0">
                 <UserAvatar
                   username={task.assignee.username}
+                  avatarUrl={task.assignee.avatar_url}
                   size="size-4"
                 />
                 <span className="truncate">{task.assignee.username}</span>

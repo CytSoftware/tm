@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "cyt-task-tracker": {
-      "type": "url",
+      "type": "http",
       "url": "https://tm-api.cytsoftware.com/mcp",
       "headers": {
         "Authorization": "Bearer ihRYDjW_4ZEC2foy_rS250rO5veeE9dcTjCUzYlGEl8"
