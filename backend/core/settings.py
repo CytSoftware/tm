@@ -1,0 +1,187 @@
+"""
+Django settings for the Cyt task tracker (Phase 1).
+
+This is a local-development-first configuration. For real deployment, set
+SECRET_KEY / ALLOWED_HOSTS / CORS origins via environment variables.
+"""
+
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Make `apps.tasks`, `apps.mcp_server` importable without an `apps.` prefix
+# when the `apps` package is already on sys.path via Django's app loader.
+# (We keep the full dotted names in INSTALLED_APPS below.)
+
+SECRET_KEY = "django-insecure--ip3l6p-jti9r8s$sy!lhqi2bzw3ixrwx6(#a=%uf)rz*53+3z"
+DEBUG = True
+ALLOWED_HOSTS = ["*"]  # dev only
+
+INSTALLED_APPS = [
+    # Daphne must come before django.contrib.staticfiles so that `runserver`
+    # is replaced by Daphne's ASGI runner. See channels docs.
+    "daphne",
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    # Third-party
+    "rest_framework",
+    "django_filters",
+    "drf_spectacular",
+    "corsheaders",
+    "channels",
+    # Local apps
+    "apps.tasks",
+    "apps.mcp_server",
+]
+
+MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Safety net: catches overdue recurring templates if the system timer is not configured.
+    "apps.tasks.middleware.LazyRecurringMiddleware",
+]
+
+ROOT_URLCONF = "core.urls"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = "core.wsgi.application"
+ASGI_APPLICATION = "core.asgi.application"
+
+# Single-process in-memory channel layer. Fine for Phase 1 / local dev.
+# Swap to channels_redis for multi-worker deployments.
+CHANNEL_LAYERS = {
+    "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"},
+}
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
+    }
+}
+
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = "UTC"
+USE_I18N = True
+USE_TZ = True
+
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ---------------------------------------------------------------------------
+# DRF
+# ---------------------------------------------------------------------------
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.OrderingFilter",
+    ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
+    "PAGE_SIZE": 200,
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Cyt Task Tracker API",
+    "DESCRIPTION": "Phase 1 of the Cyt internal infrastructure app.",
+    "VERSION": "0.1.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+}
+
+# ---------------------------------------------------------------------------
+# CORS / CSRF — talking to the Next.js dev server on :3000
+# ---------------------------------------------------------------------------
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+CORS_ALLOW_CREDENTIALS = True
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+# In dev over http we must not require Secure cookies.
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_SECURE = False
+# The frontend reads the CSRF cookie via JS, so it cannot be HttpOnly.
+CSRF_COOKIE_HTTPONLY = False
+
+# ---------------------------------------------------------------------------
+# Recurring-task safety net
+# ---------------------------------------------------------------------------
+# Minimum interval between lazy middleware scans (seconds). The primary trigger
+# is a systemd timer / cron running `python manage.py generate_recurring_tasks`;
+# this middleware is only a safety net so templates still fire if that's not set up.
+RECURRING_LAZY_SCAN_INTERVAL_SECONDS = 10 * 60
+
+# Simple in-memory cache is enough for the lazy-scan timestamp in Phase 1.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "cyt-tm-local",
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Cross-process broadcast bridge
+# ---------------------------------------------------------------------------
+# Phase 1 runs the MCP server in a separate process from daphne. Because the
+# in-memory channel layer is process-local, MCP-driven mutations can't reach
+# the browser via the normal Channels path. The MCP process POSTs to
+# /api/internal/broadcast/ instead, which uses this shared secret to
+# authenticate. Rotate in production; defaults to a local-dev value here.
+import os as _os
+
+CYT_BROADCAST_SECRET = _os.environ.get(
+    "CYT_BROADCAST_SECRET", "dev-broadcast-secret-change-me"
+)
+
+# ---------------------------------------------------------------------------
+# Remote MCP authentication
+# ---------------------------------------------------------------------------
+# Token for authenticating remote MCP clients connecting via HTTP at /mcp/.
+# Set CYT_MCP_TOKEN in the environment. When empty, the MCP endpoint is open
+# (fine for local dev; lock it down for production).
+CYT_MCP_TOKEN = _os.environ.get("CYT_MCP_TOKEN", "")

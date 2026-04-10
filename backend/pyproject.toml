@@ -1,0 +1,19 @@
+[project]
+name = "cyt-tm-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "channels[daphne]>=4.3.2",
+    "django>=6.0.4",
+    "django-cors-headers>=4.9.0",
+    "django-filter>=25.2",
+    "djangorestframework>=3.17.1",
+    "drf-spectacular>=0.29.0",
+    "mcp[cli]>=1.27.0",
+    "python-dateutil>=2.9.0.post0",
+]
+
+[dependency-groups]
+dev = [
+    "websockets>=16.0",
+]
