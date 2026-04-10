@@ -21,32 +21,16 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from . import tools
 
-# Allow the production host + localhost for MCP transport security.
-# Without this, the MCP SDK's DNS rebinding protection rejects requests
-# from non-localhost hosts with a 421 "Invalid Host header".
-_allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
-_extra_host = os.environ.get("ALLOWED_HOSTS", "")
-if _extra_host:
-    for h in _extra_host.split(","):
-        h = h.strip()
-        if h and h != "*":
-            _allowed_hosts.append(h)
-            _allowed_hosts.append(f"{h}:*")
-        elif h == "*":
-            # Wildcard — disable DNS rebinding protection entirely
-            _allowed_hosts = []
-            break
-
-_security = (
-    TransportSecuritySettings(enable_dns_rebinding_protection=False)
-    if not _allowed_hosts
-    else TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=_allowed_hosts,
-    )
+# Disable the MCP SDK's built-in DNS rebinding protection entirely.
+# We already authenticate via Bearer token (CYT_MCP_TOKEN) in our own
+# ASGI middleware, so the SDK's Host/Origin validation is redundant and
+# causes 421/403 rejections for legitimate remote clients.
+mcp = FastMCP(
+    "cyt-task-tracker",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    ),
 )
-
-mcp = FastMCP("cyt-task-tracker", transport_security=_security)
 
 
 # Helper: wraps a sync tool function so it works in both sync and async contexts.
