@@ -157,7 +157,10 @@ async def _handle_mcp(scope, receive, send):
                 "status": 401,
                 "headers": [
                     [b"content-type", b"application/json"],
-                    [b"www-authenticate", b'Bearer realm="mcp"'],
+                    [
+                        b"www-authenticate",
+                        b'Bearer realm="mcp", resource_metadata="https://tm-api.cytsoftware.com/.well-known/oauth-protected-resource"',
+                    ],
                 ],
             })
             await send({

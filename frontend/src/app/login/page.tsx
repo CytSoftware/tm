@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { meKey } from "@/lib/query-keys";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -20,6 +21,24 @@ export default function LoginPage() {
     mutationFn: () => login(username, password),
     onSuccess: async (user) => {
       queryClient.setQueryData(meKey(), user);
+      // If there's a `next` URL (e.g. from an OAuth authorize redirect),
+      // send the user back there after login. Only allow URLs to the
+      // same root domain to prevent open-redirect attacks.
+      const next = searchParams.get("next");
+      if (next) {
+        try {
+          const url = new URL(next, window.location.origin);
+          const isAllowed =
+            url.hostname === window.location.hostname ||
+            url.hostname.endsWith(".cytsoftware.com");
+          if (isAllowed) {
+            window.location.href = url.toString();
+            return;
+          }
+        } catch {
+          // Fall through to default redirect
+        }
+      }
       router.replace("/board");
     },
   });
