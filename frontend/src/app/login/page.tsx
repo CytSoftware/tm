@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -10,7 +10,30 @@ import { Label } from "@/components/ui/label";
 import { login } from "@/lib/auth";
 import { meKey } from "@/lib/query-keys";
 
+/**
+ * LoginPage wraps LoginForm in a Suspense boundary because LoginForm uses
+ * useSearchParams(), which forces CSR bailout. Without Suspense, Next's
+ * static prerender on `/login` errors out with `missing-suspense-with-csr-bailout`.
+ */
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginShell />}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginShell() {
+  // Identical chrome to LoginForm's output so there's no layout shift while
+  // the router suspends.
+  return (
+    <div className="h-screen flex items-center justify-center bg-background">
+      <div className="w-full max-w-[360px] space-y-5 rounded-xl border border-border/80 bg-card p-6" />
+    </div>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
