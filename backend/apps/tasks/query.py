@@ -10,7 +10,7 @@ saved ``View`` stores in its JSON fields:
 
     filters = {
         "assignee": [1, 2],            # user ids OR usernames OR "me"
-        "priority": ["HIGH", "URGENT"],
+        "priority": ["P1", "P2"],      # P1 = highest, P4 = lowest
         "labels": [3],                 # label ids OR names
         "column": 7,                   # column id OR name
         "project": 1,                  # project id OR prefix
@@ -37,12 +37,12 @@ from .models import Label, Priority, Project, Task
 
 User = get_user_model()
 
-# Priority sort order — URGENT first when dir=desc.
+# Priority sort order — P1 (highest) first when dir=desc.
 PRIORITY_RANK = {
-    Priority.URGENT: 4,
-    Priority.HIGH: 3,
-    Priority.MEDIUM: 2,
-    Priority.LOW: 1,
+    Priority.P1: 4,
+    Priority.P2: 3,
+    Priority.P3: 2,
+    Priority.P4: 1,
 }
 
 SORTABLE_FIELDS = {
@@ -60,9 +60,9 @@ def base_task_queryset() -> QuerySet[Task]:
     """Pre-joined task queryset used by every code path."""
     return (
         Task.objects.select_related(
-            "project", "column", "assignee", "reporter", "recurrence_template"
+            "project", "column", "reporter", "recurrence_template"
         )
-        .prefetch_related("labels")
+        .prefetch_related("labels", "assignees")
         .order_by("project_id", "column__order", "position", "id")
     )
 
@@ -141,12 +141,13 @@ def apply_task_filters(
     else:
         project = None
 
-    # Assignee
+    # Assignee — matches any task where one of the listed users is in the
+    # task's assignees M2M.
     if assignee_values := filters.get("assignee"):
         if not isinstance(assignee_values, (list, tuple)):
             assignee_values = [assignee_values]
         ids = _resolve_user_ids(assignee_values, requesting_user)
-        qs = qs.filter(assignee_id__in=ids) if ids else qs.none()
+        qs = qs.filter(assignees__id__in=ids).distinct() if ids else qs.none()
 
     # Priority
     if priority_values := filters.get("priority"):

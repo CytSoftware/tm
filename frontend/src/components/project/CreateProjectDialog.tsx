@@ -14,6 +14,8 @@ import { Label } from "@/components/ui/label";
 import { apiFetch, ApiError } from "@/lib/api";
 import { projectsKey } from "@/lib/query-keys";
 import { useActiveProject } from "@/lib/active-project";
+import { cn } from "@/lib/utils";
+import { PROJECT_COLOR_PALETTE } from "@/lib/colors";
 import type { Project } from "@/lib/types";
 
 type Props = {
@@ -26,6 +28,7 @@ export function CreateProjectDialog({ onClose }: Props) {
   const [name, setName] = useState("");
   const [prefix, setPrefix] = useState("");
   const [prefixTouched, setPrefixTouched] = useState(false);
+  const [color, setColor] = useState<string>(PROJECT_COLOR_PALETTE[0]);
 
   // Auto-derive a prefix from the name until the user edits it themselves.
   const suggestedPrefix = useMemo(() => {
@@ -35,7 +38,7 @@ export function CreateProjectDialog({ onClose }: Props) {
   }, [name, prefix, prefixTouched]);
 
   const mutation = useMutation({
-    mutationFn: (payload: { name: string; prefix: string }) =>
+    mutationFn: (payload: { name: string; prefix: string; color: string }) =>
       apiFetch<Project>("/api/projects/", {
         method: "POST",
         body: payload,
@@ -50,7 +53,7 @@ export function CreateProjectDialog({ onClose }: Props) {
   function handleSubmit() {
     const finalPrefix = (prefixTouched ? prefix : suggestedPrefix).toUpperCase();
     if (!name.trim() || !finalPrefix) return;
-    mutation.mutate({ name: name.trim(), prefix: finalPrefix });
+    mutation.mutate({ name: name.trim(), prefix: finalPrefix, color });
   }
 
   const error = mutation.error;
@@ -113,6 +116,35 @@ export function CreateProjectDialog({ onClose }: Props) {
               <p className="text-[11px] text-muted-foreground">
                 2–8 letters or digits. Must be unique across all projects.
               </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Color
+              </Label>
+              <div className="flex flex-wrap gap-1.5">
+                {PROJECT_COLOR_PALETTE.map((swatch) => (
+                  <button
+                    key={swatch}
+                    type="button"
+                    onClick={() => setColor(swatch)}
+                    className={cn(
+                      "size-7 rounded-md ring-offset-2 ring-offset-background transition-all",
+                      color === swatch
+                        ? "ring-2 ring-foreground/60 scale-110"
+                        : "hover:scale-105",
+                    )}
+                    style={{ background: swatch }}
+                    aria-label={`Pick ${swatch}`}
+                  />
+                ))}
+                <Input
+                  value={color}
+                  onChange={(e) => setColor(e.target.value)}
+                  className="h-7 w-24 font-mono text-[11px] ml-1"
+                  maxLength={9}
+                  placeholder="#6366f1"
+                />
+              </div>
             </div>
             {errorMessage && (
               <p className="text-[12px] text-destructive">{errorMessage}</p>

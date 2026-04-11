@@ -6,16 +6,18 @@
  * later phase.
  */
 
-export type Priority = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+// P1 is the highest priority, P4 is the lowest. Matches the "P1 = critical"
+// convention used everywhere outside the tracker.
+export type Priority = "P1" | "P2" | "P3" | "P4";
 
 export const PRIORITY_LABELS: Record<Priority, string> = {
-  LOW: "Low",
-  MEDIUM: "Medium",
-  HIGH: "High",
-  URGENT: "Urgent",
+  P1: "P1",
+  P2: "P2",
+  P3: "P3",
+  P4: "P4",
 };
 
-export const PRIORITY_ORDER: Priority[] = ["URGENT", "HIGH", "MEDIUM", "LOW"];
+export const PRIORITY_ORDER: Priority[] = ["P1", "P2", "P3", "P4"];
 
 export type User = {
   id: number;
@@ -45,6 +47,7 @@ export type Project = {
   id: number;
   name: string;
   prefix: string;
+  color: string;
   task_counter: number;
   columns: Column[];
   created_at: string;
@@ -56,15 +59,17 @@ export type Task = {
   key: string;
   title: string;
   description: string;
-  project: number;
-  project_prefix: string;
-  project_name: string;
-  column: Column;
+  project: number | null;
+  project_prefix: string | null;
+  project_name: string | null;
+  project_color: string | null;
+  column: Column | null;
   position: number;
-  assignee: User | null;
+  assignees: User[];
   reporter: User | null;
   labels: Label[];
-  priority: Priority;
+  /** null = task has no priority set; sorts last in priority-desc order. */
+  priority: Priority | null;
   story_points: number | null;
   recurrence_template: number | null;
   is_recurring_instance: boolean;
@@ -114,6 +119,49 @@ export type SavedViewSort = Array<{
   field: "created_at" | "updated_at" | "due_at" | "title" | "position" | "story_points" | "priority";
   dir: "asc" | "desc";
 }>;
+
+export type SortField = SavedViewSort[number]["field"];
+
+export const SORT_FIELDS: SortField[] = [
+  "updated_at",
+  "created_at",
+  "due_at",
+  "priority",
+  "title",
+  "story_points",
+  "position",
+];
+
+export const SORT_FIELD_LABELS: Record<SortField, string> = {
+  updated_at: "Last updated",
+  created_at: "Created",
+  due_at: "Due date",
+  priority: "Priority",
+  title: "Title",
+  story_points: "Story points",
+  position: "Manual order",
+};
+
+/** In-memory state for the FilterBar — superset of SavedViewFilters + sort. */
+export type BoardFilters = {
+  project: number | null;
+  priorities: Priority[];
+  assigneeIds: number[];
+  labelIds: number[];
+  columnName: string | null;
+  search: string;
+  sort: SavedViewSort;
+};
+
+export const EMPTY_BOARD_FILTERS: BoardFilters = {
+  project: null,
+  priorities: [],
+  assigneeIds: [],
+  labelIds: [],
+  columnName: null,
+  search: "",
+  sort: [{ field: "updated_at", dir: "desc" }],
+};
 
 /** Field names that can be toggled on/off for Kanban card display. */
 export type CardField =
@@ -168,10 +216,10 @@ export type RecurringTaskTemplate = {
   project_prefix: string;
   title: string;
   description: string;
-  assignee: User | null;
+  assignees: User[];
   labels: Label[];
   column: Column;
-  priority: Priority;
+  priority: Priority | null;
   story_points: number | null;
   rrule: string;
   dtstart: string;

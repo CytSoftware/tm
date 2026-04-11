@@ -166,3 +166,11 @@ urlpatterns = [
     path("api/", include("apps.tasks.urls")),
     path("oauth/", include("oauth2_provider.urls", namespace="oauth2_provider")),
 ]
+
+# Serve MEDIA_ROOT in development so uploaded profile pictures render in the
+# frontend without needing a reverse proxy.
+from django.conf import settings as _settings
+from django.conf.urls.static import static as _static
+
+if _settings.DEBUG:
+    urlpatterns += _static(_settings.MEDIA_URL, document_root=_settings.MEDIA_ROOT)

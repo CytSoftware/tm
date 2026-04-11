@@ -125,15 +125,22 @@ export function useMoveTask(projectId: number) {
           if (after) newPosition = after.position + 0.5;
         }
 
-        const columnObj = tasks.find((t) => t.column.id === column_id)?.column;
+        const columnObj = tasks.find(
+          (t) => t.column?.id === column_id,
+        )?.column;
+        const fallbackColumn =
+          moving.column ??
+          (columnObj ?? null);
         const optimistic: Task = {
           ...moving,
-          column: columnObj ?? { ...moving.column, id: column_id },
+          column: columnObj ?? (fallbackColumn ? { ...fallbackColumn, id: column_id } : null),
           position: newPosition,
         };
         tasks.push(optimistic);
         tasks.sort((a, b) => {
-          if (a.column.id !== b.column.id) return a.column.id - b.column.id;
+          const aColId = a.column?.id ?? -1;
+          const bColId = b.column?.id ?? -1;
+          if (aColId !== bColId) return aColId - bColId;
           return a.position - b.position;
         });
         qc.setQueryData<TaskListResponse>(queryKey, {

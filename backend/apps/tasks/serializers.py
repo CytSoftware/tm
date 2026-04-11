@@ -36,9 +36,20 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_avatar_url(self, obj) -> str:
         profile = getattr(obj, "profile", None)
-        if profile and profile.avatar_url:
-            return profile.avatar_url
-        return ""
+        if not profile:
+            return ""
+        raw = profile.effective_avatar_url
+        if not raw:
+            return ""
+        # Uploaded files come back as a relative /media/... path — turn it
+        # into an absolute URL so the Next frontend can hot-link it from a
+        # different origin. External URLs pass through unchanged.
+        if raw.startswith("http://") or raw.startswith("https://"):
+            return raw
+        request = self.context.get("request")
+        if request is not None:
+            return request.build_absolute_uri(raw)
+        return raw
 
 
 class LabelSerializer(serializers.ModelSerializer):
@@ -62,6 +73,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "prefix",
+            "color",
             "task_counter",
             "columns",
             "created_at",
@@ -76,13 +88,20 @@ class ProjectSerializer(serializers.ModelSerializer):
 
 
 class TaskReadSerializer(serializers.ModelSerializer):
-    assignee = UserSerializer(read_only=True)
+    assignees = UserSerializer(many=True, read_only=True)
     reporter = UserSerializer(read_only=True)
     labels = LabelSerializer(many=True, read_only=True)
     column = ColumnSerializer(read_only=True)
     project = serializers.PrimaryKeyRelatedField(read_only=True)
-    project_prefix = serializers.CharField(source="project.prefix", read_only=True)
-    project_name = serializers.CharField(source="project.name", read_only=True)
+    project_prefix = serializers.CharField(
+        source="project.prefix", read_only=True, default=None
+    )
+    project_name = serializers.CharField(
+        source="project.name", read_only=True, default=None
+    )
+    project_color = serializers.CharField(
+        source="project.color", read_only=True, default=None
+    )
     is_recurring_instance = serializers.SerializerMethodField()
 
     class Meta:
@@ -95,9 +114,10 @@ class TaskReadSerializer(serializers.ModelSerializer):
             "project",
             "project_prefix",
             "project_name",
+            "project_color",
             "column",
             "position",
-            "assignee",
+            "assignees",
             "reporter",
             "labels",
             "priority",
@@ -115,20 +135,32 @@ class TaskReadSerializer(serializers.ModelSerializer):
 
 
 class TaskWriteSerializer(serializers.ModelSerializer):
-    """Accepts project_id, column_id, assignee_id, label_ids for writes."""
+    """Accepts project_id, column_id, assignee_ids, label_ids for writes.
+
+    ``project_id`` and ``column_id`` are both optional: a task with neither
+    lives in the Inbox (no project, no column).
+    """
 
     project_id = serializers.PrimaryKeyRelatedField(
-        queryset=Project.objects.all(), source="project", write_only=True
-    )
-    column_id = serializers.PrimaryKeyRelatedField(
-        queryset=Column.objects.all(), source="column", write_only=True
-    )
-    assignee_id = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.all(),
-        source="assignee",
+        queryset=Project.objects.all(),
+        source="project",
         write_only=True,
         required=False,
         allow_null=True,
+    )
+    column_id = serializers.PrimaryKeyRelatedField(
+        queryset=Column.objects.all(),
+        source="column",
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+    assignee_ids = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        source="assignees",
+        many=True,
+        write_only=True,
+        required=False,
     )
     label_ids = serializers.PrimaryKeyRelatedField(
         queryset=Label.objects.all(),
@@ -148,7 +180,7 @@ class TaskWriteSerializer(serializers.ModelSerializer):
             "project_id",
             "column_id",
             "position",
-            "assignee_id",
+            "assignee_ids",
             "label_ids",
             "priority",
             "story_points",
@@ -157,91 +189,133 @@ class TaskWriteSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "key")
 
     def validate(self, attrs):
-        project = attrs.get("project") or (self.instance and self.instance.project)
-        column = attrs.get("column") or (self.instance and self.instance.column)
+        # Resolve the effective project / column for validation. A missing
+        # key in attrs means "don't touch" on update, "no value" on create.
+        has_project_key = "project" in attrs
+        has_column_key = "column" in attrs
+
+        project = (
+            attrs.get("project")
+            if has_project_key
+            else (self.instance.project if self.instance else None)
+        )
+        column = (
+            attrs.get("column")
+            if has_column_key
+            else (self.instance.column if self.instance else None)
+        )
 
         # When the project changes on update, auto-map the column to a
         # same-named column in the new project (or the first non-done column).
         if (
             self.instance
-            and "project" in attrs
-            and attrs["project"].id != self.instance.project_id
+            and has_project_key
+            and (attrs["project"].id if attrs["project"] else None)
+            != self.instance.project_id
         ):
             new_project = attrs["project"]
-            # Auto-map the column: if no column was sent, OR the sent column
-            # belongs to the OLD project, find a matching column in the new one.
-            sent_column = attrs.get("column")
-            needs_remap = (
-                sent_column is None
-                or sent_column.project_id != new_project.id
-            )
-            if needs_remap:
-                # Try same-named column in the new project, then first non-done
-                old_col_name = (
-                    sent_column.name
-                    if sent_column
-                    else self.instance.column.name
+            if new_project is None:
+                # Moving into the Inbox clears the column entirely.
+                attrs["column"] = None
+                column = None
+            else:
+                sent_column = attrs.get("column") if has_column_key else None
+                needs_remap = (
+                    sent_column is None
+                    or sent_column.project_id != new_project.id
                 )
-                mapped = (
-                    new_project.columns.filter(name=old_col_name).first()
-                    or new_project.columns.filter(is_done=False).order_by("order").first()
-                    or new_project.columns.order_by("order").first()
-                )
-                if mapped is None:
-                    raise serializers.ValidationError(
-                        {"project_id": "Target project has no columns."}
+                if needs_remap:
+                    old_col_name = (
+                        sent_column.name
+                        if sent_column
+                        else (self.instance.column.name if self.instance.column else None)
                     )
-                attrs["column"] = mapped
-                column = mapped
+                    mapped = None
+                    if old_col_name:
+                        mapped = new_project.columns.filter(name=old_col_name).first()
+                    mapped = (
+                        mapped
+                        or new_project.columns.filter(is_done=False).order_by("order").first()
+                        or new_project.columns.order_by("order").first()
+                    )
+                    if mapped is None:
+                        raise serializers.ValidationError(
+                            {"project_id": "Target project has no columns."}
+                        )
+                    attrs["column"] = mapped
+                    column = mapped
 
-        if project and column and column.project_id != project.id:
+        if project is None and column is not None:
+            raise serializers.ValidationError(
+                {"column_id": "Cannot set a column on a projectless task."}
+            )
+        if project is not None and column is not None and column.project_id != project.id:
             raise serializers.ValidationError(
                 {"column_id": "Column does not belong to the selected project."}
             )
+
         labels = attrs.get("labels")
-        if project and labels:
-            # Labels must be global (project=None) or belong to the task's project
-            if any(
-                label.project_id is not None and label.project_id != project.id
-                for label in labels
-            ):
-                raise serializers.ValidationError(
-                    {"label_ids": "Labels must be global or belong to the task's project."}
-                )
+        if labels:
+            if project is None:
+                # Inbox tasks can only carry global (project-less) labels.
+                if any(label.project_id is not None for label in labels):
+                    raise serializers.ValidationError(
+                        {"label_ids": "Projectless tasks can only use global labels."}
+                    )
+            else:
+                if any(
+                    label.project_id is not None and label.project_id != project.id
+                    for label in labels
+                ):
+                    raise serializers.ValidationError(
+                        {"label_ids": "Labels must be global or belong to the task's project."}
+                    )
         return attrs
 
     def create(self, validated_data):
         request = self.context.get("request")
         labels = validated_data.pop("labels", None)
+        assignees = validated_data.pop("assignees", None)
         validated_data.setdefault("reporter", request.user if request else None)
         task = Task.objects.create(**validated_data)
         if labels:
             task.labels.set(labels)
+        if assignees is not None:
+            task.assignees.set(assignees)
         return task
 
     def update(self, instance, validated_data):
         from .id_generation import generate_task_key
 
         labels = validated_data.pop("labels", None)
-        project_changed = (
-            "project" in validated_data
-            and validated_data["project"].id != instance.project_id
+        assignees = validated_data.pop("assignees", None)
+
+        new_project = validated_data.get("project", instance.project) if "project" in validated_data else instance.project
+        old_project_id = instance.project_id
+        project_changed = "project" in validated_data and (
+            (new_project.id if new_project else None) != old_project_id
         )
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
-        # Re-key the task when the project changes so the prefix matches.
         if project_changed:
-            instance.key = generate_task_key(instance.project)
-            # Clear labels — they belong to the old project.
+            # Moving to a new project re-keys the task so the prefix matches
+            # the destination. Moving to the Inbox uses the row id (which is
+            # already assigned since this is an update path).
+            if instance.project_id:
+                instance.key = generate_task_key(instance.project)
+            else:
+                instance.key = f"INBOX-{instance.id:03d}"
             instance.save()
-            instance.labels.clear()
+            instance.labels.clear()  # labels belonged to the old project
         else:
             instance.save()
 
         if labels is not None:
             instance.labels.set(labels)
+        if assignees is not None:
+            instance.assignees.set(assignees)
         return instance
 
 
@@ -288,7 +362,7 @@ class ViewSerializer(serializers.ModelSerializer):
 
 
 class RecurringTaskTemplateReadSerializer(serializers.ModelSerializer):
-    assignee = UserSerializer(read_only=True)
+    assignees = UserSerializer(many=True, read_only=True)
     labels = LabelSerializer(many=True, read_only=True)
     column = ColumnSerializer(read_only=True)
     project_prefix = serializers.CharField(source="project.prefix", read_only=True)
@@ -302,7 +376,7 @@ class RecurringTaskTemplateReadSerializer(serializers.ModelSerializer):
             "project_prefix",
             "title",
             "description",
-            "assignee",
+            "assignees",
             "labels",
             "column",
             "priority",
@@ -330,12 +404,12 @@ class RecurringTaskTemplateWriteSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False,
     )
-    assignee_id = serializers.PrimaryKeyRelatedField(
+    assignee_ids = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
-        source="assignee",
+        source="assignees",
+        many=True,
         write_only=True,
         required=False,
-        allow_null=True,
     )
     label_ids = serializers.PrimaryKeyRelatedField(
         queryset=Label.objects.all(),
@@ -353,7 +427,7 @@ class RecurringTaskTemplateWriteSerializer(serializers.ModelSerializer):
             "title",
             "description",
             "column_id",
-            "assignee_id",
+            "assignee_ids",
             "label_ids",
             "priority",
             "story_points",
@@ -390,6 +464,7 @@ class RecurringTaskTemplateWriteSerializer(serializers.ModelSerializer):
 
         request = self.context.get("request")
         labels = validated_data.pop("labels", None)
+        assignees = validated_data.pop("assignees", None)
         validated_data.setdefault("created_by", request.user if request else None)
         if "column" not in validated_data:
             project = validated_data["project"]
@@ -404,12 +479,15 @@ class RecurringTaskTemplateWriteSerializer(serializers.ModelSerializer):
         template = RecurringTaskTemplate.objects.create(**validated_data)
         if labels:
             template.labels.set(labels)
+        if assignees is not None:
+            template.assignees.set(assignees)
         return template
 
     def update(self, instance, validated_data):
         from .recurring import compute_initial_next_run
 
         labels = validated_data.pop("labels", None)
+        assignees = validated_data.pop("assignees", None)
         rrule_changed = "rrule" in validated_data and validated_data["rrule"] != instance.rrule
         dtstart_changed = (
             "dtstart" in validated_data and validated_data["dtstart"] != instance.dtstart
@@ -423,6 +501,8 @@ class RecurringTaskTemplateWriteSerializer(serializers.ModelSerializer):
         instance.save()
         if labels is not None:
             instance.labels.set(labels)
+        if assignees is not None:
+            instance.assignees.set(assignees)
         return instance
 
 

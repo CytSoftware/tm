@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   DndContext,
   DragEndEvent,
@@ -37,6 +41,12 @@ import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import { LabelManager } from "@/components/label/LabelManager";
 import { ListView } from "@/components/list/ListView";
 import { CommandPalette } from "@/components/CommandPalette";
+import {
+  FilterBar,
+  applyBoardFilters,
+  boardFiltersFromSavedView,
+  savedViewPayloadFromFilters,
+} from "@/components/board/FilterBar";
 import { apiFetch } from "@/lib/api";
 import { projectsKey, viewsKey } from "@/lib/query-keys";
 import { useActiveProject } from "@/lib/active-project";
@@ -44,15 +54,18 @@ import { useTasksQuery, useMoveTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import { connectProjectSocket } from "@/lib/ws";
 import type {
+  BoardFilters,
   Column,
   Label,
   Project,
   ProjectListResponse,
   Task,
   SavedView,
+  SavedViewSort,
   ViewListResponse,
   CardField,
 } from "@/lib/types";
+import { EMPTY_BOARD_FILTERS } from "@/lib/types";
 
 /** Standard column names and their canonical order. */
 const STANDARD_COLUMNS = [
@@ -99,7 +112,19 @@ export default function BoardPage() {
   const usersQuery = useUsersQuery();
   const allUsers = usersQuery.data ?? [];
 
-  // Fetch all labels for the command palette
+  // Temporary (non-persistent) filter + sort state for the board.
+  // Loading a saved view seeds it via the render-time "storing previous
+  // render info" pattern, but mutating the state after that does not touch
+  // the underlying View — the user has to explicitly "Save to view" to
+  // push changes back.
+  const [boardFilters, setBoardFilters] = useState<BoardFilters>(
+    () => ({ ...EMPTY_BOARD_FILTERS }),
+  );
+  const [seededForViewId, setSeededForViewId] = useState<
+    number | null | "unset"
+  >("unset");
+
+  // Fetch all labels for the command palette + filter bar
   const labelsQuery = useQuery({
     queryKey: ["labels"],
     queryFn: () =>
@@ -108,6 +133,37 @@ export default function BoardPage() {
       ),
   });
   const allLabels: Label[] = labelsQuery.data ?? [];
+
+  // Seed the board filter state from the loaded saved view whenever the
+  // selected viewId changes. Uses React's "storing information from previous
+  // renders" pattern: compare state, update both slices in render, React
+  // restarts the render with the fresh state.
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  if (seededForViewId !== viewId) {
+    setSeededForViewId(viewId);
+    setBoardFilters(
+      activeView
+        ? boardFiltersFromSavedView(activeView, allLabels, allUsers)
+        : { ...EMPTY_BOARD_FILTERS },
+    );
+  }
+
+  // "Save to view" — flush current temp filters back into the loaded view.
+  const saveViewMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeView) return;
+      await apiFetch(`/api/views/${activeView.id}/`, {
+        method: "PATCH",
+        body: {
+          filters: savedViewPayloadFromFilters(boardFilters),
+          sort: boardFilters.sort,
+        },
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: viewsKey() });
+    },
+  });
 
   const [dialogState, setDialogState] = useState<
     | { mode: "create"; columnId: number | null }
@@ -134,14 +190,25 @@ export default function BoardPage() {
     return connectProjectSocket({ projectId, queryClient });
   }, [projectId, queryClient]);
 
-  // Build column list + task grouping.
+  // Raw tasks from the API, then filtered/sorted in memory via the board
+  // filter state. This keeps temporary filters instant — no refetch.
+  const allTasks = tasksQuery.data?.results ?? [];
+  const filteredTasks = useMemo(
+    () => applyBoardFilters(allTasks, boardFilters),
+    [allTasks, boardFilters],
+  );
+
+  // Build column list + task grouping. Projectless tasks land in an Inbox
+  // bucket (in the "all projects" view only; the single-project view hides
+  // them because they don't belong to any column in the project).
   const { displayColumns, tasksByColumn } = useMemo(() => {
-    const tasks = tasksQuery.data?.results ?? [];
+    const tasks = filteredTasks;
 
     if (project) {
-      // Single project — group by column id
+      // Single project — group by column id, skip projectless/columnless tasks.
       const map = new Map<number, Task[]>();
       for (const t of tasks) {
+        if (!t.column || t.project !== project.id) continue;
         const arr = map.get(t.column.id) ?? [];
         arr.push(t);
         map.set(t.column.id, arr);
@@ -156,24 +223,31 @@ export default function BoardPage() {
       };
     }
 
-    // All projects — group by column name, always include standard columns
+    // All projects — group by column name, always include standard columns.
     const byName = new Map<string, Task[]>();
-    const colInfoByName = new Map<string, Column>();
 
     // Seed all standard column names so empty ones appear
     for (const std of STANDARD_COLUMNS) {
       byName.set(std.name, []);
     }
 
+    // A synthetic "Inbox" bucket for projectless / columnless tasks.
+    const INBOX = "Inbox";
+    const inboxTasks: Task[] = [];
+
     for (const t of tasks) {
+      if (!t.column) {
+        inboxTasks.push(t);
+        continue;
+      }
       const name = t.column.name;
       const arr = byName.get(name) ?? [];
       arr.push(t);
       byName.set(name, arr);
-      if (!colInfoByName.has(name)) colInfoByName.set(name, t.column);
     }
     for (const arr of byName.values())
       arr.sort((a, b) => a.position - b.position);
+    inboxTasks.sort((a, b) => a.position - b.position);
 
     // Sort columns by standard order, unknowns at the end
     const names = [...byName.keys()].sort(
@@ -181,7 +255,9 @@ export default function BoardPage() {
         (STANDARD_COL_ORDER[a] ?? 99) - (STANDARD_COL_ORDER[b] ?? 99),
     );
 
-    // Use negative synthetic IDs so they don't clash with real column IDs
+    // Use negative synthetic IDs so they don't clash with real column IDs.
+    // Inbox always gets id -100 so it's visually distinct from the project
+    // virtual columns (-1..-N).
     const virtualCols: Column[] = names.map((name, i) => ({
       id: -(i + 1),
       project: 0,
@@ -189,15 +265,28 @@ export default function BoardPage() {
       order: STANDARD_COL_ORDER[name] ?? 50 + i,
       is_done: name === "Done",
     }));
+    if (inboxTasks.length > 0) {
+      virtualCols.unshift({
+        id: -100,
+        project: 0,
+        name: INBOX,
+        order: -1,
+        is_done: false,
+      });
+    }
 
-    // Re-key the task map from name to the virtual column's synthetic ID
+    // Re-key the task map from name to the virtual column's synthetic ID.
     const map = new Map<number, Task[]>();
-    virtualCols.forEach((vc, i) => {
-      map.set(vc.id, byName.get(names[i]) ?? []);
-    });
+    for (const vc of virtualCols) {
+      if (vc.name === INBOX) {
+        map.set(vc.id, inboxTasks);
+      } else {
+        map.set(vc.id, byName.get(vc.name) ?? []);
+      }
+    }
 
     return { displayColumns: virtualCols, tasksByColumn: map };
-  }, [tasksQuery.data, project]);
+  }, [filteredTasks, project]);
 
   // Sync orderedItems from tasksByColumn whenever query data changes
   useEffect(() => {
@@ -453,6 +542,10 @@ export default function BoardPage() {
     );
     if (!movingTask) return;
 
+    // Projectless (Inbox) tasks can't be moved via drag — the API requires
+    // a column id and Inbox has none. Ignore the drop.
+    if (movingTask.project == null) return;
+
     // Find which column the task ended up in (from orderedItems)
     const finalColId = findColumnOfTask(activeTaskId);
     if (finalColId == null) return;
@@ -482,7 +575,7 @@ export default function BoardPage() {
     if (!targetColumnId) return;
 
     // Check if nothing actually changed
-    const sameColumn = movingTask.column.id === targetColumnId;
+    const sameColumn = movingTask.column?.id === targetColumnId;
     if (sameColumn && finalIds.length <= 1) return;
 
     // Compute before_id / after_id from the finalIds order
@@ -509,6 +602,17 @@ export default function BoardPage() {
     });
   }
 
+  const availableColumnNames = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of allTasks) {
+      if (t.column?.name) set.add(t.column.name);
+    }
+    return Array.from(set).sort(
+      (a, b) =>
+        (STANDARD_COL_ORDER[a] ?? 99) - (STANDARD_COL_ORDER[b] ?? 99),
+    );
+  }, [allTasks]);
+
   return (
     <div className="h-full flex flex-col min-h-0">
       <BoardHeader
@@ -523,6 +627,15 @@ export default function BoardPage() {
           setDialogState({ mode: "create", columnId: null })
         }
         onManageLabels={() => setLabelManagerOpen(true)}
+        boardFilters={boardFilters}
+        onBoardFiltersChange={setBoardFilters}
+        users={allUsers}
+        labels={allLabels}
+        availableColumnNames={availableColumnNames}
+        activeView={activeView ?? null}
+        onSaveToView={
+          activeView ? () => saveViewMutation.mutate() : undefined
+        }
       />
       <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden bg-muted/40">
         {projects.length === 0 ? (
@@ -539,8 +652,12 @@ export default function BoardPage() {
           </div>
         ) : viewKind === "table" ? (
           <ListView
-            tasks={tasksQuery.data?.results ?? []}
+            tasks={filteredTasks}
             showProject={isAllProjects}
+            sort={boardFilters.sort}
+            onSortChange={(sort) =>
+              setBoardFilters({ ...boardFilters, sort })
+            }
             onTaskClick={(task) => setDialogState({ mode: "edit", task })}
           />
         ) : (
@@ -575,7 +692,7 @@ export default function BoardPage() {
                       strategy={verticalListSortingStrategy}
                     >
                       {itemIds.map((taskId) => {
-                        const task = (tasksQuery.data?.results ?? []).find(
+                        const task = filteredTasks.find(
                           (t) => t.id === taskId,
                         );
                         if (!task) return null;
@@ -610,10 +727,10 @@ export default function BoardPage() {
           </DndContext>
         )}
       </div>
-      {dialogState && (project || projects.length > 0) && (
+      {dialogState && (
         <TaskPanel
           projects={projects}
-          activeProject={project ?? projects[0]}
+          activeProject={project ?? projects[0] ?? null}
           mode={dialogState.mode}
           initialColumnId={
             dialogState.mode === "create"
@@ -669,6 +786,13 @@ function BoardHeader({
   onViewChange,
   onNewTask,
   onManageLabels,
+  boardFilters,
+  onBoardFiltersChange,
+  users,
+  labels,
+  availableColumnNames,
+  activeView,
+  onSaveToView,
 }: {
   projects: Project[];
   project: Project | undefined;
@@ -679,6 +803,13 @@ function BoardHeader({
   onViewChange: (id: number | null) => void;
   onNewTask: () => void;
   onManageLabels: () => void;
+  boardFilters: BoardFilters;
+  onBoardFiltersChange: (next: BoardFilters) => void;
+  users: import("@/lib/types").User[];
+  labels: Label[];
+  availableColumnNames: string[];
+  activeView: SavedView | null;
+  onSaveToView?: () => void;
 }) {
   const qc = useQueryClient();
   const deleteProject = useMutation({
@@ -700,22 +831,26 @@ function BoardHeader({
   }
 
   return (
-    <header className="shrink-0 h-12 flex items-center gap-2 px-4 border-b border-border/80 bg-background">
+    <header className="shrink-0 h-12 flex items-center gap-1.5 px-4 border-b border-border/80 bg-background">
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
             <Button
               variant="outline"
               size="sm"
-              className="h-8 min-w-48 justify-between text-[13px]"
+              className="h-8 min-w-40 justify-between text-[13px] shrink-0"
             >
               {project ? (
-                <>
-                  {project.name}{" "}
-                  <span className="font-mono text-[10px] text-muted-foreground ml-1">
+                <span className="inline-flex items-center gap-1.5 min-w-0">
+                  <span
+                    className="size-2 rounded-full shrink-0"
+                    style={{ background: project.color }}
+                  />
+                  <span className="truncate">{project.name}</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">
                     {project.prefix}
                   </span>
-                </>
+                </span>
               ) : (
                 "All projects"
               )}
@@ -748,6 +883,11 @@ function BoardHeader({
                   ) : (
                     <span className="size-3.5 shrink-0" />
                   )}
+                  <span
+                    className="size-2 rounded-full shrink-0"
+                    style={{ background: p.color }}
+                    aria-hidden
+                  />
                   <span className="truncate">{p.name}</span>
                   <span className="font-mono text-[10px] text-muted-foreground shrink-0">
                     {p.prefix}
@@ -774,28 +914,44 @@ function BoardHeader({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <div className="h-5 w-px bg-border mx-1" />
+      <div className="h-5 w-px bg-border mx-0.5 shrink-0" />
       <ViewSwitcher
         projectId={projectId}
         viewId={viewId}
         onViewChange={onViewChange}
       />
-      <div className="h-5 w-px bg-border mx-1" />
+      <div className="h-5 w-px bg-border mx-0.5 shrink-0" />
+
+      {/* Filter + sort + search inlined into the header row */}
+      <FilterBar
+        filters={boardFilters}
+        onFiltersChange={onBoardFiltersChange}
+        projects={projects}
+        users={users}
+        labels={labels}
+        availableColumns={availableColumnNames}
+        loadedView={activeView}
+        onSaveToView={onSaveToView}
+      />
+
+      <div className="h-5 w-px bg-border mx-0.5 shrink-0" />
       <Button
         variant="outline"
         size="sm"
-        className="h-8 text-[13px]"
+        className="h-8 text-[13px] shrink-0"
         onClick={onManageLabels}
       >
         <Tag className="size-3.5" />
         Labels
       </Button>
-      <div className="ml-auto">
-        <Button size="sm" className="h-8 text-[13px]" onClick={onNewTask}>
-          <Plus className="size-3.5" />
-          New task
-        </Button>
-      </div>
+      <Button
+        size="sm"
+        className="h-8 text-[13px] shrink-0"
+        onClick={onNewTask}
+      >
+        <Plus className="size-3.5" />
+        New task
+      </Button>
     </header>
   );
 }
