@@ -90,19 +90,28 @@ async def _ensure_mcp_lifespan():
 async def _validate_oauth_token(bearer_token: str):
     """Validate an OAuth2 Bearer token via django-oauth-toolkit.
 
-    Returns the Django user if the token is valid, or None.
+    Returns the Django user if the token is valid, or None. Looks up by
+    token_checksum (sha256, indexed) which is how oauth2_provider itself
+    validates — the raw `token` column is an un-indexed TextField.
     """
+    import hashlib
     from oauth2_provider.models import AccessToken
     from django.utils import timezone as tz
+
+    checksum = hashlib.sha256(bearer_token.encode("utf-8")).hexdigest()
     try:
         token_obj = await sync_to_async(
             AccessToken.objects.select_related("user").get
-        )(token=bearer_token)
-        if token_obj.expires < tz.now():
-            return None
-        return token_obj.user
+        )(token_checksum=checksum)
     except AccessToken.DoesNotExist:
+        logger.info("OAuth token not found (checksum=%s...)", checksum[:8])
         return None
+
+    if token_obj.expires < tz.now():
+        logger.info("OAuth token expired for user=%s", token_obj.user_id)
+        return None
+    logger.info("OAuth token valid for user=%s", token_obj.user_id)
+    return token_obj.user
 
 
 async def _handle_mcp(scope, receive, send):
@@ -121,6 +130,12 @@ async def _handle_mcp(scope, receive, send):
     if scope["type"] == "http":
         headers = dict(scope.get("headers", []))
         auth = headers.get(b"authorization", b"").decode()
+        logger.info(
+            "MCP request path=%s method=%s has_auth=%s",
+            scope.get("path"),
+            scope.get("method"),
+            bool(auth),
+        )
 
         if auth.startswith("Bearer "):
             bearer = auth[7:]
