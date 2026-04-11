@@ -113,8 +113,29 @@ def oauth_register(request):
     return JsonResponse(response_data, status=201)
 
 
+def protected_resource_metadata(request):
+    """RFC 9728 OAuth Protected Resource Metadata.
+
+    MCP clients read this to discover which authorization server
+    protects this resource (the MCP endpoint).
+    """
+    base = request.build_absolute_uri("/").rstrip("/")
+    if base.startswith("http://") and not any(
+        h in base for h in ("localhost", "127.0.0.1")
+    ):
+        base = "https://" + base[7:]
+    return JsonResponse({
+        "resource": f"{base}/mcp",
+        "authorization_servers": [base],
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": ["read", "write"],
+    })
+
+
 urlpatterns = [
     path(".well-known/oauth-authorization-server", oauth_metadata),
+    path(".well-known/oauth-protected-resource", protected_resource_metadata),
+    path(".well-known/oauth-protected-resource/mcp", protected_resource_metadata),
     path("oauth/register/", oauth_register),
     path("admin/", admin.site.urls),
     path("api/", include("apps.tasks.urls")),

@@ -17,6 +17,10 @@ SECRET_KEY = "django-insecure--ip3l6p-jti9r8s$sy!lhqi2bzw3ixrwx6(#a=%uf)rz*53+3z
 DEBUG = True
 ALLOWED_HOSTS = ["*"]  # dev only
 
+# Trust X-Forwarded-Proto from Traefik so Django knows requests are HTTPS.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
+
 INSTALLED_APPS = [
     # Daphne must come before django.contrib.staticfiles so that `runserver`
     # is replaced by Daphne's ASGI runner. See channels docs.
