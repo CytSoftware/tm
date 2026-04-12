@@ -3,18 +3,16 @@
 /**
  * Left-rail sidebar — the permanent primary navigation surface for the app.
  *
+ * Two responsive modes:
+ *   Desktop (≥1024px): inline sidebar, toggleable between expanded (w-60)
+ *     and collapsed (w-12, icon-only with tooltips). Toggle via button or ⌘B.
+ *   Mobile (<1024px): sidebar is hidden off-screen, opened as an overlay
+ *     with a backdrop via a hamburger button rendered by Shell.
+ *
  * Sections (v1):
  *   1. Starred projects (only rendered when the user has stars)
  *   2. Projects — non-archived, non-starred (with a "show archived" toggle)
- *   3. Views — saved views (flat list, filtered to the active project + globals)
- *
- * Clicking a project calls `setProjectId(p.id)` then navigates to /board so
- * the sidebar works from any route (including /projects/[id]).
- *
- * Flex layout: the sidebar itself is the top-level flex container; only the
- * middle region (project lists) scrolls, so the Cyt header and the user
- * footer stay pinned. Carries `min-h-0` on the scroll region to respect the
- * no-page-scroll invariant from app/layout.tsx.
+ *   3. Views — saved views (flat list)
  */
 
 import { useMemo, useState } from "react";
@@ -27,6 +25,8 @@ import {
 import {
   ChevronDown,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   LayoutGrid,
   List,
   LogOut,
@@ -39,6 +39,11 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,6 +64,7 @@ import { apiFetch } from "@/lib/api";
 import { meKey, viewsKey } from "@/lib/query-keys";
 import { logout as apiLogout } from "@/lib/auth";
 import { useActiveProject } from "@/lib/active-project";
+import { useSidebar } from "@/lib/sidebar-state";
 import {
   useProjectsQuery,
   useStarProject,
@@ -72,10 +78,25 @@ import type {
   ViewListResponse,
 } from "@/lib/types";
 
-export function Sidebar({ user }: { user: User }) {
+// ────────────────────────────────────────────────────────────────────────
+// Main Sidebar
+// ────────────────────────────────────────────────────────────────────────
+
+type SidebarProps = {
+  user: User;
+  /** Mobile overlay mode — renders full-width with close-on-navigate */
+  mobile?: boolean;
+  onClose?: () => void;
+};
+
+export function Sidebar({ user, mobile, onClose }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { projectId, viewId, setProjectId, setViewId } = useActiveProject();
+  const { collapsed, toggle } = useSidebar();
+
+  // In mobile overlay mode, sidebar is always expanded
+  const isCollapsed = mobile ? false : collapsed;
 
   const projectsQuery = useProjectsQuery();
 
@@ -98,11 +119,7 @@ export function Sidebar({ user }: { user: User }) {
     return { starred, ongoing, archived };
   }, [projectsQuery.data]);
 
-  // Views visible in the sidebar: globals + those scoped to any project the
-  // user can see. We don't filter by active project here on purpose — the
-  // sidebar is a nav surface, not a scoped view.
   const visibleViews = allViews;
-
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -111,6 +128,7 @@ export function Sidebar({ user }: { user: User }) {
     if (!pathname.startsWith("/board")) {
       router.push("/board");
     }
+    onClose?.();
   }
 
   function handleViewClick(v: SavedView) {
@@ -119,46 +137,104 @@ export function Sidebar({ user }: { user: User }) {
     if (!pathname.startsWith("/board")) {
       router.push("/board");
     }
+    onClose?.();
   }
 
   return (
-    <aside className="w-60 shrink-0 h-screen flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+    <aside
+      className={cn(
+        "shrink-0 h-full flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 ease-in-out overflow-hidden",
+        mobile ? "w-60" : isCollapsed ? "w-12" : "w-60",
+      )}
+    >
       {/* Header */}
-      <div className="shrink-0 h-12 flex items-center justify-between px-3 border-b border-sidebar-border">
-        <div className="flex items-center gap-2">
-          <div className="size-6 rounded-md bg-foreground grid place-items-center text-background text-[11px] font-semibold">
-            C
-          </div>
-          <span className="text-[13px] font-semibold tracking-tight">Cyt</span>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          aria-label="New project"
-          onClick={() => setCreateProjectOpen(true)}
-        >
-          <Plus className="size-4" />
-        </Button>
+      <div
+        className={cn(
+          "shrink-0 h-12 flex items-center border-b border-sidebar-border",
+          isCollapsed ? "justify-center px-1" : "justify-between px-3",
+        )}
+      >
+        {isCollapsed ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="size-8 rounded-md bg-foreground grid place-items-center text-background text-[11px] font-semibold"
+                  onClick={toggle}
+                  aria-label="Expand sidebar"
+                >
+                  C
+                </button>
+              }
+            />
+            <TooltipContent side="right">
+              Expand sidebar <kbd className="ml-1 text-[10px]">⌘B</kbd>
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <div className="size-6 rounded-md bg-foreground grid place-items-center text-background text-[11px] font-semibold">
+                C
+              </div>
+              <span className="text-[13px] font-semibold tracking-tight">
+                Cyt
+              </span>
+            </div>
+            <div className="flex items-center gap-0.5">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                aria-label="New project"
+                onClick={() => setCreateProjectOpen(true)}
+              >
+                <Plus className="size-4" />
+              </Button>
+              {!mobile && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        onClick={toggle}
+                        aria-label="Collapse sidebar"
+                      >
+                        <ChevronsLeft className="size-4" />
+                      </Button>
+                    }
+                  />
+                  <TooltipContent side="right">
+                    Collapse <kbd className="ml-1 text-[10px]">⌘B</kbd>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Scrollable section list */}
-      <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-4">
+      <nav className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-1 py-2 space-y-3">
         {starred.length > 0 && (
-          <SidebarSection title="Starred">
+          <SidebarSection title="Starred" collapsed={isCollapsed}>
             {starred.map((p) => (
               <ProjectRow
                 key={p.id}
                 project={p}
                 active={p.id === projectId}
+                collapsed={isCollapsed}
                 onClick={() => handleProjectClick(p.id)}
               />
             ))}
           </SidebarSection>
         )}
 
-        <SidebarSection title="Projects">
-          {ongoing.length === 0 && !projectsQuery.isLoading && (
+        <SidebarSection title="Projects" collapsed={isCollapsed}>
+          {ongoing.length === 0 && !projectsQuery.isLoading && !isCollapsed && (
             <p className="px-2 text-[11px] text-muted-foreground">
               No projects yet.
             </p>
@@ -168,10 +244,11 @@ export function Sidebar({ user }: { user: User }) {
               key={p.id}
               project={p}
               active={p.id === projectId}
+              collapsed={isCollapsed}
               onClick={() => handleProjectClick(p.id)}
             />
           ))}
-          {archived.length > 0 && (
+          {archived.length > 0 && !isCollapsed && (
             <>
               <button
                 type="button"
@@ -191,6 +268,7 @@ export function Sidebar({ user }: { user: User }) {
                     key={p.id}
                     project={p}
                     active={p.id === projectId}
+                    collapsed={isCollapsed}
                     onClick={() => handleProjectClick(p.id)}
                     muted
                   />
@@ -200,34 +278,60 @@ export function Sidebar({ user }: { user: User }) {
         </SidebarSection>
 
         {visibleViews.length > 0 && (
-          <SidebarSection title="Views">
-            {visibleViews.map((v) => (
-              <button
-                key={v.id}
-                type="button"
-                onClick={() => handleViewClick(v)}
-                className={cn(
-                  "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors",
-                  v.id === viewId
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
-                )}
-              >
-                {v.kind === "table" ? (
-                  <List className="size-3.5 shrink-0 text-muted-foreground" />
-                ) : (
-                  <LayoutGrid className="size-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <span className="truncate">{v.name}</span>
-              </button>
-            ))}
+          <SidebarSection title="Views" collapsed={isCollapsed}>
+            {visibleViews.map((v) =>
+              isCollapsed ? (
+                <Tooltip key={v.id}>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        onClick={() => handleViewClick(v)}
+                        className={cn(
+                          "w-full grid place-items-center py-1.5 rounded-md transition-colors",
+                          v.id === viewId
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                            : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
+                        )}
+                      >
+                        {v.kind === "table" ? (
+                          <List className="size-4" />
+                        ) : (
+                          <LayoutGrid className="size-4" />
+                        )}
+                      </button>
+                    }
+                  />
+                  <TooltipContent side="right">{v.name}</TooltipContent>
+                </Tooltip>
+              ) : (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => handleViewClick(v)}
+                  className={cn(
+                    "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors",
+                    v.id === viewId
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
+                  )}
+                >
+                  {v.kind === "table" ? (
+                    <List className="size-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <LayoutGrid className="size-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="truncate">{v.name}</span>
+                </button>
+              ),
+            )}
           </SidebarSection>
         )}
       </nav>
 
       {/* Footer: user + theme */}
-      <div className="shrink-0 border-t border-sidebar-border p-2">
-        <UserFooter user={user} />
+      <div className="shrink-0 border-t border-sidebar-border p-1.5">
+        <UserFooter user={user} collapsed={isCollapsed} />
       </div>
 
       {createProjectOpen && (
@@ -237,13 +341,22 @@ export function Sidebar({ user }: { user: User }) {
   );
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Sub-components
+// ────────────────────────────────────────────────────────────────────────
+
 function SidebarSection({
   title,
+  collapsed,
   children,
 }: {
   title: string;
+  collapsed: boolean;
   children: React.ReactNode;
 }) {
+  if (collapsed) {
+    return <div className="space-y-0.5">{children}</div>;
+  }
   return (
     <div className="space-y-0.5">
       <div className="px-2 mb-1 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
@@ -257,11 +370,13 @@ function SidebarSection({
 function ProjectRow({
   project,
   active,
+  collapsed,
   onClick,
   muted,
 }: {
   project: Project;
   active: boolean;
+  collapsed: boolean;
   onClick: () => void;
   muted?: boolean;
 }) {
@@ -287,6 +402,38 @@ function ProjectRow({
     ) {
       deleteProject.mutate(project.id);
     }
+  }
+
+  if (collapsed) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={onClick}
+              className={cn(
+                "w-full grid place-items-center py-1.5 rounded-md transition-colors",
+                active
+                  ? "bg-sidebar-accent"
+                  : "hover:bg-sidebar-accent/60",
+                muted && "opacity-60",
+              )}
+            >
+              <span
+                className="size-3 rounded-full"
+                style={{ background: project.color }}
+                aria-hidden
+              />
+            </button>
+          }
+        />
+        <TooltipContent side="right">
+          {project.icon ? `${project.icon} ` : ""}
+          {project.name}
+        </TooltipContent>
+      </Tooltip>
+    );
   }
 
   return (
@@ -363,7 +510,13 @@ function ProjectRow({
   );
 }
 
-function UserFooter({ user }: { user: User }) {
+function UserFooter({
+  user,
+  collapsed,
+}: {
+  user: User;
+  collapsed: boolean;
+}) {
   const qc = useQueryClient();
   const [avatarInput, setAvatarInput] = useState(user.avatar_url || "");
 
@@ -387,6 +540,33 @@ function UserFooter({ user }: { user: User }) {
     }
   }
 
+  if (collapsed) {
+    return (
+      <div className="flex flex-col items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="rounded-md p-1 hover:bg-sidebar-accent/60 transition-colors"
+                onClick={handleLogout}
+              >
+                <UserAvatar
+                  username={user.username}
+                  avatarUrl={user.avatar_url}
+                  size="size-6"
+                />
+              </button>
+            }
+          />
+          <TooltipContent side="right">
+            {user.username} — Click to log out
+          </TooltipContent>
+        </Tooltip>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-1">
       <Popover>
@@ -407,7 +587,11 @@ function UserFooter({ user }: { user: User }) {
             </button>
           }
         />
-        <PopoverContent align="start" side="top" className="w-72 p-3 space-y-3">
+        <PopoverContent
+          align="start"
+          side="top"
+          className="w-72 p-3 space-y-3"
+        >
           <div className="flex items-center gap-3">
             <UserAvatar
               username={user.username}
