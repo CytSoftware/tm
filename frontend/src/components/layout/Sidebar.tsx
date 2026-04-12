@@ -358,6 +358,42 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
             ) : undefined
           }
         >
+          {/* Default view row */}
+          {isCollapsed ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={() => { setViewId(null); onClose?.(); }}
+                    className={cn(
+                      "w-full grid place-items-center py-1.5 rounded-md transition-colors",
+                      viewId === null
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
+                    )}
+                  >
+                    <Layers className="size-4" />
+                  </button>
+                }
+              />
+              <TooltipContent side="right">All tasks</TooltipContent>
+            </Tooltip>
+          ) : (
+            <button
+              type="button"
+              onClick={() => { setViewId(null); onClose?.(); }}
+              className={cn(
+                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors",
+                viewId === null
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
+              )}
+            >
+              <Layers className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">All tasks</span>
+            </button>
+          )}
             {visibleViews.map((v) =>
               isCollapsed ? (
                 <Tooltip key={v.id}>
