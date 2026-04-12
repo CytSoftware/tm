@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragEndEvent,
@@ -17,18 +18,9 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { Check, ChevronDown, Plus, Tag, Trash2 } from "lucide-react";
+import { Plus, Settings, Tag } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { ViewSwitcher } from "@/components/views/ViewSwitcher";
 import { KanbanColumn } from "@/components/kanban/Column";
 import { KanbanCard } from "@/components/kanban/Card";
@@ -38,8 +30,9 @@ import { LabelManager } from "@/components/label/LabelManager";
 import { ListView } from "@/components/list/ListView";
 import { CommandPalette } from "@/components/CommandPalette";
 import { apiFetch } from "@/lib/api";
-import { projectsKey, viewsKey } from "@/lib/query-keys";
+import { viewsKey } from "@/lib/query-keys";
 import { useActiveProject } from "@/lib/active-project";
+import { useProjectsQuery } from "@/hooks/use-projects";
 import { useTasksQuery, useMoveTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import { connectProjectSocket } from "@/lib/ws";
@@ -47,7 +40,6 @@ import type {
   Column,
   Label,
   Project,
-  ProjectListResponse,
   Task,
   SavedView,
   ViewListResponse,
@@ -71,11 +63,10 @@ export default function BoardPage() {
   const { projectId, setProjectId, viewId, setViewId } = useActiveProject();
   const queryClient = useQueryClient();
 
-  const projectsQuery = useQuery({
-    queryKey: projectsKey(),
-    queryFn: () => apiFetch<ProjectListResponse>("/api/projects/"),
-  });
-  const projects: Project[] = projectsQuery.data?.results ?? [];
+  const projectsQuery = useProjectsQuery();
+  const projects: Project[] = (projectsQuery.data?.results ?? []).filter(
+    (p) => !p.archived,
+  );
   const project = useMemo(
     () => projects.find((p) => p.id === projectId),
     [projects, projectId],
@@ -512,11 +503,8 @@ export default function BoardPage() {
   return (
     <div className="h-full flex flex-col min-h-0">
       <BoardHeader
-        projects={projects}
         project={project}
         projectId={projectId}
-        onProjectChange={(id) => setProjectId(id)}
-        onNewProject={() => setCreateProjectOpen(true)}
         viewId={viewId}
         onViewChange={setViewId}
         onNewTask={() =>
@@ -660,120 +648,53 @@ export default function BoardPage() {
 }
 
 function BoardHeader({
-  projects,
   project,
   projectId,
-  onProjectChange,
-  onNewProject,
   viewId,
   onViewChange,
   onNewTask,
   onManageLabels,
 }: {
-  projects: Project[];
   project: Project | undefined;
   projectId: number | null;
-  onProjectChange: (id: number | null) => void;
-  onNewProject: () => void;
   viewId: number | null;
   onViewChange: (id: number | null) => void;
   onNewTask: () => void;
   onManageLabels: () => void;
 }) {
-  const qc = useQueryClient();
-  const deleteProject = useMutation({
-    mutationFn: (id: number) =>
-      apiFetch<void>(`/api/projects/${id}/`, { method: "DELETE" }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: projectsKey() });
-    },
-  });
-
-  function handleDeleteProject(p: Project) {
-    if (
-      !confirm(
-        `Delete project "${p.name}" (${p.prefix})?\n\nAll tasks, columns, labels, and recurring templates will be permanently deleted.`,
-      )
-    )
-      return;
-    deleteProject.mutate(p.id);
-  }
+  const router = useRouter();
 
   return (
     <header className="shrink-0 h-12 flex items-center gap-2 px-4 border-b border-border/80 bg-background">
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 min-w-48 justify-between text-[13px]"
-            >
-              {project ? (
-                <>
-                  {project.name}{" "}
-                  <span className="font-mono text-[10px] text-muted-foreground ml-1">
-                    {project.prefix}
-                  </span>
-                </>
-              ) : (
-                "All projects"
-              )}
-              <ChevronDown className="size-3.5 text-muted-foreground" />
-            </Button>
-          }
-        />
-        <DropdownMenuContent align="start" className="w-64">
-          <DropdownMenuGroup>
-            <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Projects
-            </DropdownMenuLabel>
-            <DropdownMenuItem onClick={() => onProjectChange(null)}>
-              {!projectId ? (
-                <Check className="size-3.5 shrink-0" />
-              ) : (
-                <span className="size-3.5 shrink-0" />
-              )}
-              All projects
-            </DropdownMenuItem>
-            {projects.map((p) => (
-              <DropdownMenuItem
-                key={p.id}
-                className="flex items-center justify-between group/item"
-                onClick={() => onProjectChange(p.id)}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  {p.id === projectId ? (
-                    <Check className="size-3.5 shrink-0" />
-                  ) : (
-                    <span className="size-3.5 shrink-0" />
-                  )}
-                  <span className="truncate">{p.name}</span>
-                  <span className="font-mono text-[10px] text-muted-foreground shrink-0">
-                    {p.prefix}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteProject(p);
-                  }}
-                  className="size-6 grid place-items-center rounded opacity-0 group-hover/item:opacity-100 hover:bg-destructive/10 transition-opacity"
-                  aria-label={`Delete ${p.name}`}
-                >
-                  <Trash2 className="size-3 text-destructive" />
-                </button>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={onNewProject}>
-            <Plus className="size-3.5" />
-            New project
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {/* Breadcrumb read-out — the sidebar owns project switching. Click to
+          open the project settings page. */}
+      {project ? (
+        <button
+          type="button"
+          onClick={() => router.push(`/projects/${project.id}`)}
+          className="flex items-center gap-2 min-w-0 h-8 px-2 -ml-2 rounded-md hover:bg-accent/60 transition-colors group"
+        >
+          <span
+            className="size-2.5 rounded-full shrink-0"
+            style={{ background: project.color }}
+            aria-hidden
+          />
+          {project.icon && (
+            <span className="text-[13px] leading-none">{project.icon}</span>
+          )}
+          <span className="text-[13px] font-medium truncate">
+            {project.name}
+          </span>
+          <span className="font-mono text-[10px] text-muted-foreground">
+            {project.prefix}
+          </span>
+          <Settings className="size-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+        </button>
+      ) : (
+        <span className="text-[13px] font-medium text-muted-foreground px-2 -ml-2">
+          All projects
+        </span>
+      )}
       <div className="h-5 w-px bg-border mx-1" />
       <ViewSwitcher
         projectId={projectId}

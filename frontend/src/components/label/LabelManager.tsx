@@ -6,37 +6,16 @@ import { Plus, Trash2, Globe, Folder } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ColorPicker } from "@/components/ui/ColorPicker";
 import { cn } from "@/lib/utils";
-
-/**
- * 24 preset colors that work well on both light and dark backgrounds.
- * Muted, desaturated tones that match a Linear / monochrome-forward design.
- */
-const PRESET_COLORS = [
-  // Row 1: warm
-  "#ef4444", "#f97316", "#f59e0b", "#eab308", "#84cc16", "#22c55e",
-  // Row 2: cool
-  "#14b8a6", "#06b6d4", "#0ea5e9", "#3b82f6", "#6366f1", "#8b5cf6",
-  // Row 3: purple-pink
-  "#a855f7", "#c084fc", "#d946ef", "#ec4899", "#f43f5e", "#fb7185",
-  // Row 4: neutrals + earthy
-  "#78716c", "#a8a29e", "#64748b", "#94a3b8", "#6b7280", "#9ca3af",
-] as const;
 import {
   Dialog,
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { apiFetch } from "@/lib/api";
-import { projectsKey } from "@/lib/query-keys";
-import type { Label, Project, ProjectListResponse } from "@/lib/types";
+import { useProjectsQuery } from "@/hooks/use-projects";
+import type { Label, Project } from "@/lib/types";
 
 type Props = {
   projectId: number | null;
@@ -50,10 +29,7 @@ export function LabelManager({ projectId, projectName, onClose }: Props) {
   const [newColor, setNewColor] = useState("#6366f1");
   const [scopeProjectId, setScopeProjectId] = useState<number | null>(projectId);
 
-  const projectsQuery = useQuery({
-    queryKey: projectsKey(),
-    queryFn: () => apiFetch<ProjectListResponse>("/api/projects/"),
-  });
+  const projectsQuery = useProjectsQuery();
   const projects: Project[] = projectsQuery.data?.results ?? [];
 
   const labelsQuery = useQuery({
@@ -150,23 +126,7 @@ export function LabelManager({ projectId, projectName, onClose }: Props) {
                 <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
                   Color
                 </span>
-                <div className="flex flex-wrap gap-1">
-                  {PRESET_COLORS.map((color) => (
-                    <button
-                      key={color}
-                      type="button"
-                      onClick={() => setNewColor(color)}
-                      className={cn(
-                        "size-6 rounded-full transition-all",
-                        newColor === color
-                          ? "ring-2 ring-foreground ring-offset-2 ring-offset-background scale-110"
-                          : "hover:scale-110",
-                      )}
-                      style={{ background: color }}
-                      aria-label={color}
-                    />
-                  ))}
-                </div>
+                <ColorPicker value={newColor} onChange={setNewColor} />
               </div>
             </div>
             <div className="space-y-1">

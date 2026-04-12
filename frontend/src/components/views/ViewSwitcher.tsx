@@ -32,11 +32,11 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { projectsKey, usersKey, viewsKey } from "@/lib/query-keys";
+import { usersKey, viewsKey } from "@/lib/query-keys";
+import { useProjectsQuery } from "@/hooks/use-projects";
 import type {
   SavedView,
   ViewListResponse,
-  ProjectListResponse,
   Project,
   User,
   Priority,
@@ -234,10 +234,7 @@ function NewViewDialog({
     existingView?.card_display ?? [...ALL_CARD_FIELDS],
   );
 
-  const projectsQuery = useQuery({
-    queryKey: projectsKey(),
-    queryFn: () => apiFetch<ProjectListResponse>("/api/projects/"),
-  });
+  const projectsQuery = useProjectsQuery();
   const projects: Project[] = projectsQuery.data?.results ?? [];
 
   const usersQuery = useQuery({
