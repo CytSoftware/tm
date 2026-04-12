@@ -25,7 +25,6 @@ import {
 import { Plus, Settings, Tag } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { ViewSwitcher } from "@/components/views/ViewSwitcher";
 import { KanbanColumn } from "@/components/kanban/Column";
 import { KanbanCard } from "@/components/kanban/Card";
 import { TaskPanel } from "@/components/task/TaskPanel";
@@ -167,7 +166,8 @@ export default function BoardPage() {
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
-  // orderedItems: Map<columnId, taskId[]> — local ordering state for DnD
+  // orderedItems: Map<columnId, taskId[]> — local ordering state for DnD.
+  // Seeded from tasksByColumn, mutated locally during drag operations.
   const [orderedItems, setOrderedItems] = useState<Map<number, number[]>>(
     new Map(),
   );
@@ -279,8 +279,14 @@ export default function BoardPage() {
     return { displayColumns: virtualCols, tasksByColumn: map };
   }, [filteredTasks, project]);
 
-  // Sync orderedItems from tasksByColumn whenever query data changes
-  useEffect(() => {
+  // Sync orderedItems from tasksByColumn using React's "storing information
+  // from previous renders" pattern. This avoids useEffect loops — we only
+  // re-seed when the actual query data reference or projectId changes.
+  const [orderedSyncKey, setOrderedSyncKey] = useState<unknown>(null);
+  const filterKey = JSON.stringify(boardFilters);
+  const currentSyncKey = `${tasksQuery.dataUpdatedAt}-${projectId}-${viewId}-${filterKey}`;
+  if (currentSyncKey !== orderedSyncKey) {
+    setOrderedSyncKey(currentSyncKey);
     const newMap = new Map<number, number[]>();
     for (const [colId, tasks] of tasksByColumn) {
       newMap.set(
@@ -289,7 +295,7 @@ export default function BoardPage() {
       );
     }
     setOrderedItems(newMap);
-  }, [tasksByColumn]);
+  }
 
   const isAllProjects = !projectId;
 
@@ -610,8 +616,6 @@ export default function BoardPage() {
         projects={projects}
         project={project}
         projectId={projectId}
-        viewId={viewId}
-        onViewChange={setViewId}
         onNewTask={() =>
           setDialogState({ mode: "create", columnId: null })
         }
@@ -769,8 +773,6 @@ function BoardHeader({
   projects,
   project,
   projectId,
-  viewId,
-  onViewChange,
   onNewTask,
   onManageLabels,
   boardFilters,
@@ -784,8 +786,6 @@ function BoardHeader({
   projects: Project[];
   project: Project | undefined;
   projectId: number | null;
-  viewId: number | null;
-  onViewChange: (id: number | null) => void;
   onNewTask: () => void;
   onManageLabels: () => void;
   boardFilters: BoardFilters;
@@ -828,12 +828,6 @@ function BoardHeader({
           All projects
         </span>
       )}
-      <div className="h-5 w-px bg-border mx-0.5 shrink-0" />
-      <ViewSwitcher
-        projectId={projectId}
-        viewId={viewId}
-        onViewChange={onViewChange}
-      />
       <div className="h-5 w-px bg-border mx-0.5 shrink-0" />
 
       {/* Filter + sort + search inlined into the header row */}

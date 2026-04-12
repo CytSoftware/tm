@@ -27,10 +27,12 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Layers,
   LayoutGrid,
   List,
   LogOut,
   MoreHorizontal,
+  Pencil,
   Plus,
   Settings,
   Star,
@@ -58,6 +60,7 @@ import {
 } from "@/components/ui/popover";
 import { UserAvatar } from "@/components/UserAvatar";
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
+import { NewViewDialog } from "@/components/views/ViewSwitcher";
 import { ModeToggle } from "./ModeToggle";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
@@ -92,6 +95,7 @@ type SidebarProps = {
 export function Sidebar({ user, mobile, onClose }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const qc = useQueryClient();
   const { projectId, viewId, setProjectId, setViewId } = useActiveProject();
   const { collapsed, toggle } = useSidebar();
 
@@ -105,6 +109,15 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
     queryFn: () => apiFetch<ViewListResponse>("/api/views/"),
   });
   const allViews: SavedView[] = viewsQuery.data?.results ?? [];
+
+  const deleteView = useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<void>(`/api/views/${id}/`, { method: "DELETE" }),
+    onSuccess: (_data, deletedId) => {
+      qc.invalidateQueries({ queryKey: viewsKey() });
+      if (viewId === deletedId) setViewId(null);
+    },
+  });
 
   const { starred, ongoing, archived } = useMemo(() => {
     const all: Project[] = projectsQuery.data?.results ?? [];
@@ -122,6 +135,16 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
   const visibleViews = allViews;
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [editingView, setEditingView] = useState<SavedView | null>(null);
+  const [createViewOpen, setCreateViewOpen] = useState(false);
+
+  function handleAllProjectsClick() {
+    setProjectId(null);
+    if (!pathname.startsWith("/board")) {
+      router.push("/board");
+    }
+    onClose?.();
+  }
 
   function handleProjectClick(id: number) {
     setProjectId(id);
@@ -183,15 +206,6 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
               </span>
             </div>
             <div className="flex items-center gap-0.5">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7"
-                aria-label="New project"
-                onClick={() => setCreateProjectOpen(true)}
-              >
-                <Plus className="size-4" />
-              </Button>
               {!mobile && (
                 <Tooltip>
                   <TooltipTrigger
@@ -233,7 +247,58 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           </SidebarSection>
         )}
 
-        <SidebarSection title="Projects" collapsed={isCollapsed}>
+        <SidebarSection
+          title="Projects"
+          collapsed={isCollapsed}
+          action={
+            !isCollapsed ? (
+              <button
+                type="button"
+                onClick={() => setCreateProjectOpen(true)}
+                className="size-5 grid place-items-center rounded hover:bg-sidebar-accent/60 transition-colors text-muted-foreground hover:text-sidebar-foreground"
+                aria-label="New project"
+              >
+                <Plus className="size-3.5" />
+              </button>
+            ) : undefined
+          }
+        >
+          {/* All projects row */}
+          {isCollapsed ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={handleAllProjectsClick}
+                    className={cn(
+                      "w-full grid place-items-center py-1.5 rounded-md transition-colors",
+                      projectId === null
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
+                    )}
+                  >
+                    <Layers className="size-4" />
+                  </button>
+                }
+              />
+              <TooltipContent side="right">All projects</TooltipContent>
+            </Tooltip>
+          ) : (
+            <button
+              type="button"
+              onClick={handleAllProjectsClick}
+              className={cn(
+                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors",
+                projectId === null
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
+              )}
+            >
+              <Layers className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">All projects</span>
+            </button>
+          )}
           {ongoing.length === 0 && !projectsQuery.isLoading && !isCollapsed && (
             <p className="px-2 text-[11px] text-muted-foreground">
               No projects yet.
@@ -277,8 +342,22 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           )}
         </SidebarSection>
 
-        {visibleViews.length > 0 && (
-          <SidebarSection title="Views" collapsed={isCollapsed}>
+        <SidebarSection
+          title="Views"
+          collapsed={isCollapsed}
+          action={
+            !isCollapsed ? (
+              <button
+                type="button"
+                onClick={() => setCreateViewOpen(true)}
+                className="size-5 grid place-items-center rounded hover:bg-sidebar-accent/60 transition-colors text-muted-foreground hover:text-sidebar-foreground"
+                aria-label="New view"
+              >
+                <Plus className="size-3.5" />
+              </button>
+            ) : undefined
+          }
+        >
             {visibleViews.map((v) =>
               isCollapsed ? (
                 <Tooltip key={v.id}>
@@ -305,12 +384,19 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
                   <TooltipContent side="right">{v.name}</TooltipContent>
                 </Tooltip>
               ) : (
-                <button
+                <div
                   key={v.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleViewClick(v)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleViewClick(v);
+                    }
+                  }}
                   className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors",
+                    "group w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] cursor-pointer transition-colors",
                     v.id === viewId
                       ? "bg-sidebar-accent text-sidebar-accent-foreground"
                       : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
@@ -321,12 +407,36 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
                   ) : (
                     <LayoutGrid className="size-3.5 shrink-0 text-muted-foreground" />
                   )}
-                  <span className="truncate">{v.name}</span>
-                </button>
+                  <span className="truncate flex-1">{v.name}</span>
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingView(v);
+                      }}
+                      className="size-5 grid place-items-center rounded hover:bg-background/60 transition-colors"
+                      aria-label={`Edit ${v.name}`}
+                    >
+                      <Pencil className="size-3 text-muted-foreground" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(`Delete view "${v.name}"?`))
+                          deleteView.mutate(v.id);
+                      }}
+                      className="size-5 grid place-items-center rounded hover:bg-destructive/10 transition-colors"
+                      aria-label={`Delete ${v.name}`}
+                    >
+                      <Trash2 className="size-3 text-destructive" />
+                    </button>
+                  </div>
+                </div>
               ),
             )}
           </SidebarSection>
-        )}
       </nav>
 
       {/* Footer: user + theme */}
@@ -336,6 +446,27 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
 
       {createProjectOpen && (
         <CreateProjectDialog onClose={() => setCreateProjectOpen(false)} />
+      )}
+      {editingView && (
+        <NewViewDialog
+          currentProjectId={projectId}
+          existingView={editingView}
+          onSaved={(id) => {
+            setEditingView(null);
+            setViewId(id);
+          }}
+          onClose={() => setEditingView(null)}
+        />
+      )}
+      {createViewOpen && (
+        <NewViewDialog
+          currentProjectId={projectId}
+          onSaved={(id) => {
+            setCreateViewOpen(false);
+            setViewId(id);
+          }}
+          onClose={() => setCreateViewOpen(false)}
+        />
       )}
     </aside>
   );
@@ -348,10 +479,12 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
 function SidebarSection({
   title,
   collapsed,
+  action,
   children,
 }: {
   title: string;
   collapsed: boolean;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   if (collapsed) {
@@ -359,8 +492,11 @@ function SidebarSection({
   }
   return (
     <div className="space-y-0.5">
-      <div className="px-2 mb-1 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
-        {title}
+      <div className="px-2 mb-1 flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+          {title}
+        </span>
+        {action}
       </div>
       {children}
     </div>

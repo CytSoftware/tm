@@ -151,6 +151,7 @@ export type BoardFilters = {
   project: number | null;
   priorities: Priority[];
   assigneeIds: number[];
+  includeUnassigned: boolean;
   labelIds: number[];
   columnName: string | null;
   search: string;
@@ -161,6 +162,7 @@ export const EMPTY_BOARD_FILTERS: BoardFilters = {
   project: null,
   priorities: [],
   assigneeIds: [],
+  includeUnassigned: false,
   labelIds: [],
   columnName: null,
   search: "",

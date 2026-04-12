@@ -160,6 +160,12 @@ export function FilterBar({
             }
           />
         ))}
+        {filters.includeUnassigned && (
+          <Chip
+            label="Unassigned"
+            onClear={() => update("includeUnassigned", false)}
+          />
+        )}
         {filters.assigneeIds.map((id) => {
           const u = userById.get(id);
           if (!u) return null;
@@ -374,6 +380,20 @@ function FilterPopover({
 
           <Section label="Assignees">
             <div className="flex flex-wrap gap-1">
+              <button
+                type="button"
+                onClick={() =>
+                  update("includeUnassigned", !filters.includeUnassigned)
+                }
+                className={cn(
+                  "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] transition-colors",
+                  filters.includeUnassigned
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background text-muted-foreground border-border hover:border-foreground/30",
+                )}
+              >
+                Unassigned
+              </button>
               {users.map((u) => {
                 const active = filters.assigneeIds.includes(u.id);
                 return (
@@ -576,6 +596,7 @@ function countActiveFilters(f: BoardFilters): number {
     (f.project != null ? 1 : 0) +
     f.priorities.length +
     f.assigneeIds.length +
+    (f.includeUnassigned ? 1 : 0) +
     f.labelIds.length +
     (f.columnName ? 1 : 0)
   );
@@ -586,6 +607,7 @@ function isEmptyFilters(f: BoardFilters): boolean {
     f.project == null &&
     f.priorities.length === 0 &&
     f.assigneeIds.length === 0 &&
+    !f.includeUnassigned &&
     f.labelIds.length === 0 &&
     !f.columnName &&
     !f.search
@@ -601,9 +623,12 @@ export function boardFiltersFromSavedView(
   const v = view.filters ?? {};
 
   // IDs can be stored as numbers, numeric strings, or username/name strings.
+  // The sentinel "none" means include unassigned tasks.
   // Resolve to numeric ids the UI expects.
+  let includeUnassigned = false;
   const assigneeIds: number[] = [];
   for (const raw of v.assignee ?? []) {
+    if (raw === "none") { includeUnassigned = true; continue; }
     if (typeof raw === "number") assigneeIds.push(raw);
     else if (typeof raw === "string") {
       if (/^\d+$/.test(raw)) assigneeIds.push(Number(raw));
@@ -638,6 +663,7 @@ export function boardFiltersFromSavedView(
     project,
     priorities: (v.priority ?? []) as Priority[],
     assigneeIds,
+    includeUnassigned,
     labelIds,
     columnName,
     search: v.search ?? "",
@@ -653,7 +679,12 @@ export function savedViewPayloadFromFilters(filters: BoardFilters) {
   const payload: Record<string, unknown> = {};
   if (filters.project != null) payload.project = filters.project;
   if (filters.priorities.length > 0) payload.priority = filters.priorities;
-  if (filters.assigneeIds.length > 0) payload.assignee = filters.assigneeIds;
+  if (filters.assigneeIds.length > 0 || filters.includeUnassigned) {
+    const assignee: (number | string)[] = [];
+    if (filters.includeUnassigned) assignee.push("none");
+    assignee.push(...filters.assigneeIds);
+    payload.assignee = assignee;
+  }
   if (filters.labelIds.length > 0) payload.labels = filters.labelIds;
   if (filters.columnName) payload.column = filters.columnName;
   if (filters.search) payload.search = filters.search;
@@ -682,9 +713,13 @@ export function applyBoardFilters(
     // Tasks with no priority are excluded when a priority filter is active.
     result = result.filter((t) => t.priority != null && set.has(t.priority));
   }
-  if (filters.assigneeIds.length > 0) {
+  if (filters.assigneeIds.length > 0 || filters.includeUnassigned) {
     const set = new Set(filters.assigneeIds);
-    result = result.filter((t) => t.assignees.some((u) => set.has(u.id)));
+    result = result.filter((t) => {
+      if (filters.includeUnassigned && t.assignees.length === 0) return true;
+      if (set.size > 0 && t.assignees.some((u) => set.has(u.id))) return true;
+      return false;
+    });
   }
   if (filters.labelIds.length > 0) {
     const set = new Set(filters.labelIds);

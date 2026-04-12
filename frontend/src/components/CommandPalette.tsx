@@ -8,6 +8,7 @@ import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type {
   Task,
+  TaskListResponse,
   Project,
   User,
   Label,
@@ -75,14 +76,49 @@ export function CommandPalette({
 }: Props) {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [searchResults, setSearchResults] = useState<Task[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
   const queryClient = useQueryClient();
 
   // Focus the input on mount
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // Debounced task search
+  useEffect(() => {
+    if (selectedTask) {
+      // Don't search when in task-action mode
+      setSearchResults([]);
+      return;
+    }
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    const trimmed = query.trim();
+    if (!trimmed || trimmed.length < 2) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+    setIsSearching(true);
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await apiFetch<TaskListResponse>(
+          `/api/tasks/?search=${encodeURIComponent(trimmed)}&limit=10`,
+        );
+        setSearchResults(res.results);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 250);
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, [query, selectedTask]);
 
   // Helper: invalidate after mutations
   const invalidate = useCallback(() => {
@@ -131,11 +167,27 @@ export function CommandPalette({
     onClose,
   ]);
 
-  // Filter by query
+  // Build search result actions
+  const searchActions: PaletteAction[] = useMemo(() => {
+    return searchResults.map((t) => ({
+      id: `search-task-${t.id}`,
+      label: `${t.key} — ${t.title}`,
+      keywords: t.project_name ?? "",
+      handler: () => {
+        onClose();
+        onEditTask(t);
+      },
+    }));
+  }, [searchResults, onClose, onEditTask]);
+
+  // Filter by query — combine command actions + search results
   const filtered = useMemo(() => {
-    if (!query.trim()) return actions;
-    return actions.filter((a) => fuzzyMatch(query, a.label + " " + (a.keywords ?? "")));
-  }, [actions, query]);
+    const commandActions = !query.trim()
+      ? actions
+      : actions.filter((a) => fuzzyMatch(query, a.label + " " + (a.keywords ?? "")));
+    if (searchActions.length === 0) return commandActions;
+    return [...searchActions, ...commandActions];
+  }, [actions, searchActions, query]);
 
   // Clamp active index when filtered list changes
   useEffect(() => {
@@ -219,30 +271,53 @@ export function CommandPalette({
 
           {/* Action list */}
           <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
-            {filtered.length === 0 ? (
+            {filtered.length === 0 && !isSearching ? (
               <div className="px-3 py-6 text-center text-sm text-muted-foreground">
                 No matching actions
               </div>
             ) : (
-              filtered.map((action, i) => (
-                <button
-                  key={action.id}
-                  type="button"
-                  className={cn(
-                    "w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] transition-colors cursor-pointer",
-                    i === activeIndex
-                      ? "bg-accent text-accent-foreground"
-                      : "text-foreground hover:bg-accent/50",
-                  )}
-                  onMouseEnter={() => setActiveIndex(i)}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    execute(action);
-                  }}
-                >
-                  <span className="truncate">{action.label}</span>
-                </button>
-              ))
+              <>
+                {filtered.map((action, i) => {
+                  const isFirstSearchResult = i === 0 && searchActions.length > 0;
+                  const isFirstCommand =
+                    searchActions.length > 0 && i === searchActions.length;
+                  return (
+                    <div key={action.id}>
+                      {isFirstSearchResult && (
+                        <div className="px-3 pt-1 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                          Tasks
+                        </div>
+                      )}
+                      {isFirstCommand && (
+                        <div className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                          Commands
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        className={cn(
+                          "w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] transition-colors cursor-pointer",
+                          i === activeIndex
+                            ? "bg-accent text-accent-foreground"
+                            : "text-foreground hover:bg-accent/50",
+                        )}
+                        onMouseEnter={() => setActiveIndex(i)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          execute(action);
+                        }}
+                      >
+                        <span className="truncate">{action.label}</span>
+                      </button>
+                    </div>
+                  );
+                })}
+                {isSearching && (
+                  <div className="px-3 py-2 text-[12px] text-muted-foreground">
+                    Searching tasks...
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

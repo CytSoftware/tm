@@ -142,12 +142,21 @@ def apply_task_filters(
         project = None
 
     # Assignee — matches any task where one of the listed users is in the
-    # task's assignees M2M.
+    # task's assignees M2M.  The sentinel ``"none"`` matches unassigned tasks.
     if assignee_values := filters.get("assignee"):
         if not isinstance(assignee_values, (list, tuple)):
             assignee_values = [assignee_values]
-        ids = _resolve_user_ids(assignee_values, requesting_user)
-        qs = qs.filter(assignees__id__in=ids).distinct() if ids else qs.none()
+        include_none = "none" in assignee_values
+        real_values = [v for v in assignee_values if v != "none"]
+        ids = _resolve_user_ids(real_values, requesting_user) if real_values else []
+        if include_none and ids:
+            qs = qs.filter(Q(assignees__id__in=ids) | Q(assignees__isnull=True)).distinct()
+        elif include_none:
+            qs = qs.filter(assignees__isnull=True)
+        elif ids:
+            qs = qs.filter(assignees__id__in=ids).distinct()
+        else:
+            qs = qs.none()
 
     # Priority
     if priority_values := filters.get("priority"):

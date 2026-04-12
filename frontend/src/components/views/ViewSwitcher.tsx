@@ -199,7 +199,7 @@ export function ViewSwitcher({ projectId, viewId, onViewChange }: Props) {
   );
 }
 
-function NewViewDialog({
+export function NewViewDialog({
   currentProjectId,
   existingView,
   onSaved,
@@ -220,8 +220,13 @@ function NewViewDialog({
   const [priorities, setPriorities] = useState<Priority[]>(
     (existingView?.filters?.priority as Priority[]) ?? [],
   );
+  const [includeUnassigned, setIncludeUnassigned] = useState(
+    ((existingView?.filters?.assignee as (string | number)[]) ?? []).includes("none"),
+  );
   const [assigneeIds, setAssigneeIds] = useState<number[]>(
-    ((existingView?.filters?.assignee as (string | number)[]) ?? []).map(Number),
+    ((existingView?.filters?.assignee as (string | number)[]) ?? [])
+      .filter((v) => v !== "none")
+      .map(Number),
   );
   const [labelIds, setLabelIds] = useState<number[]>(
     ((existingView?.filters?.labels as (string | number)[]) ?? []).map(Number),
@@ -308,7 +313,12 @@ function NewViewDialog({
     const filters: Record<string, unknown> = {};
     if (filterProjectId) filters.project = filterProjectId;
     if (priorities.length > 0) filters.priority = priorities;
-    if (assigneeIds.length > 0) filters.assignee = assigneeIds;
+    if (assigneeIds.length > 0 || includeUnassigned) {
+      const assignee: (number | string)[] = [];
+      if (includeUnassigned) assignee.push("none");
+      assignee.push(...assigneeIds);
+      filters.assignee = assignee;
+    }
     if (labelIds.length > 0) filters.labels = labelIds;
     const payload = {
       name,
@@ -329,255 +339,267 @@ function NewViewDialog({
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent
-        className="max-w-2xl p-0 gap-0 flex flex-col overflow-hidden max-h-[85vh]"
+        className="sm:max-w-4xl max-w-4xl w-[95vw] p-0 gap-0 flex flex-col overflow-hidden max-h-[85vh]"
         showCloseButton={false}
       >
-        <div className="shrink-0 px-5 pt-5 pb-4 border-b border-border/60">
-          <DialogTitle className="text-[15px] tracking-tight">
+        <div className="shrink-0 px-6 pt-5 pb-4 border-b border-border/60">
+          <DialogTitle className="text-base font-semibold tracking-tight">
             {isEdit ? "Edit view" : "New view"}
           </DialogTitle>
           <p className="mt-1 text-[12px] text-muted-foreground">
             {isEdit
               ? "Update this view's filters, sort, and display settings."
-              : "Save a filtered + sorted view of the board."}
+              : "Configure filters, sorting, and display for a saved board view."}
           </p>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-5 py-4 space-y-3">
-          {/* Name + View type — side by side */}
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Name">
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="High priority, mine"
-                autoFocus
-                className="h-9 text-[13px]"
-              />
-            </Field>
-            <Field label="View type">
-              <Select
-                value={viewKind}
-                onValueChange={(v) => setViewKind(v as "board" | "table")}
-                items={viewKindItems}
-              >
-                <SelectTrigger className="h-9 text-[13px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="board">Board</SelectItem>
-                  <SelectItem value="table">List</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
 
-          {/* Project — full width */}
-          <Field label="Project">
-            <Select
-              value={filterProjectId != null ? String(filterProjectId) : ""}
-              onValueChange={(v) =>
-                setFilterProjectId(v === "" ? null : Number(v))
-              }
-              items={projectItems}
-            >
-              <SelectTrigger className="h-9 text-[13px]">
-                <SelectValue placeholder="All projects" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">All projects</SelectItem>
-                {projects.map((p) => (
-                  <SelectItem key={p.id} value={String(p.id)}>
-                    {p.name} ({p.prefix})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-
-          {/* Priority + Assignees — side by side */}
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Priority">
-              <div className="flex flex-wrap gap-1.5">
-                {PRIORITY_ORDER.map((p) => {
-                  const active = priorities.includes(p);
-                  return (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() =>
-                        setPriorities(
-                          active
-                            ? priorities.filter((x) => x !== p)
-                            : [...priorities, p],
-                        )
-                      }
-                      className={`rounded border px-2 py-1 text-[12px] transition-colors ${
-                        active
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-background text-muted-foreground border-border hover:border-foreground/30"
-                      }`}
-                    >
-                      {PRIORITY_LABELS[p]}
-                    </button>
-                  );
-                })}
-              </div>
-            </Field>
-            <Field label="Assignees">
-              <div className="flex flex-wrap gap-1.5">
-                {users.map((u) => {
-                  const active = assigneeIds.includes(u.id);
-                  return (
-                    <button
-                      key={u.id}
-                      type="button"
-                      onClick={() =>
-                        setAssigneeIds(
-                          active
-                            ? assigneeIds.filter((x) => x !== u.id)
-                            : [...assigneeIds, u.id],
-                        )
-                      }
-                      className={`rounded border px-2 py-1 text-[12px] transition-colors ${
-                        active
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-background text-muted-foreground border-border hover:border-foreground/30"
-                      }`}
-                    >
-                      {u.username}
-                    </button>
-                  );
-                })}
-                {users.length === 0 && (
-                  <span className="text-[11px] text-muted-foreground">
-                    No users found.
-                  </span>
-                )}
-              </div>
-            </Field>
-          </div>
-
-          {/* Labels — full width */}
-          {labels.length > 0 && (
-            <Field label="Labels">
-              <div className="flex flex-wrap gap-1.5">
-                {labels.map((l) => {
-                  const active = labelIds.includes(l.id);
-                  return (
-                    <button
-                      key={l.id}
-                      type="button"
-                      onClick={() =>
-                        setLabelIds(
-                          active
-                            ? labelIds.filter((x) => x !== l.id)
-                            : [...labelIds, l.id],
-                        )
-                      }
-                      className="rounded border px-2 py-1 text-[12px] transition-colors"
-                      style={{
-                        background: active ? `${l.color}30` : undefined,
-                        color: active ? l.color : undefined,
-                        borderColor: active ? `${l.color}60` : undefined,
-                      }}
-                    >
-                      {l.name}
-                    </button>
-                  );
-                })}
-              </div>
-            </Field>
-          )}
-
-          {/* Sort by + Direction — side by side */}
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Sort by">
-              <Select
-                value={sortField}
-                onValueChange={(v) => setSortField(v as SortField)}
-                items={sortFieldItems}
-              >
-                <SelectTrigger className="h-9 text-[13px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SORT_FIELDS.map((f) => (
-                    <SelectItem key={f} value={f}>
-                      {SORT_FIELD_LABELS[f]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Direction">
-              <Select
-                value={sortDir}
-                onValueChange={(v) => setSortDir(v as "asc" | "desc")}
-                items={sortDirItems}
-              >
-                <SelectTrigger className="h-9 text-[13px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="asc">Ascending</SelectItem>
-                  <SelectItem value="desc">Descending</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
-
-          {/* Card fields + Shared — side by side */}
-          <div className="grid grid-cols-2 gap-3">
-            {viewKind === "board" && (
-              <Field label="Card fields">
-                <div className="grid grid-cols-2 gap-1">
-                  {ALL_CARD_FIELDS.map((field) => {
-                    const active = cardFields.includes(field);
-                    return (
-                      <button
-                        key={field}
-                        type="button"
-                        className={cn(
-                          "flex items-center gap-2 rounded px-2 py-1.5 text-[12px] transition-colors",
-                          active
-                            ? "bg-accent text-foreground"
-                            : "text-muted-foreground hover:bg-accent/50",
-                        )}
-                        onClick={() => toggleCardField(field)}
-                      >
-                        <div
-                          className={cn(
-                            "size-3.5 rounded-sm border flex items-center justify-center text-[9px]",
-                            active
-                              ? "bg-primary border-primary text-primary-foreground"
-                              : "border-input",
-                          )}
-                        >
-                          {active && "✓"}
-                        </div>
-                        {CARD_FIELD_LABELS[field]}
-                      </button>
-                    );
-                  })}
-                </div>
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-6 py-5">
+          <div className="grid grid-cols-2 gap-x-8 gap-y-5">
+            {/* ── Left column: basics ── */}
+            <div className="space-y-4">
+              <Field label="Name">
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="High priority, mine"
+                  autoFocus
+                  className="h-9 text-[13px]"
+                />
               </Field>
-            )}
-            <div className={cn("flex items-stretch", viewKind !== "board" && "col-span-2")}>
-              <div className="flex items-center justify-between rounded-md border border-border/80 p-3 w-full">
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="View type">
+                  <Select
+                    value={viewKind}
+                    onValueChange={(v) => setViewKind(v as "board" | "table")}
+                    items={viewKindItems}
+                  >
+                    <SelectTrigger className="h-9 text-[13px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="board">Board</SelectItem>
+                      <SelectItem value="table">List</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Project">
+                  <Select
+                    value={filterProjectId != null ? String(filterProjectId) : ""}
+                    onValueChange={(v) =>
+                      setFilterProjectId(v === "" ? null : Number(v))
+                    }
+                    items={projectItems}
+                  >
+                    <SelectTrigger className="h-9 text-[13px]">
+                      <SelectValue placeholder="All projects" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">All projects</SelectItem>
+                      {projects.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.name} ({p.prefix})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Sort by">
+                  <Select
+                    value={sortField}
+                    onValueChange={(v) => setSortField(v as SortField)}
+                    items={sortFieldItems}
+                  >
+                    <SelectTrigger className="h-9 text-[13px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SORT_FIELDS.map((f) => (
+                        <SelectItem key={f} value={f}>
+                          {SORT_FIELD_LABELS[f]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Direction">
+                  <Select
+                    value={sortDir}
+                    onValueChange={(v) => setSortDir(v as "asc" | "desc")}
+                    items={sortDirItems}
+                  >
+                    <SelectTrigger className="h-9 text-[13px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="asc">Ascending</SelectItem>
+                      <SelectItem value="desc">Descending</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border border-border/80 px-4 py-3">
                 <div>
-                  <span className="text-[13px] font-medium">
-                    Shared with everyone
-                  </span>
+                  <span className="text-[13px] font-medium">Shared</span>
                   <p className="text-[11px] text-muted-foreground">
-                    Other users will see this view in their view picker.
+                    Visible to all team members.
                   </p>
                 </div>
                 <Switch checked={shared} onCheckedChange={setShared} />
               </div>
             </div>
+
+            {/* ── Right column: filters & display ── */}
+            <div className="space-y-4">
+              <Field label="Priority">
+                <div className="flex flex-wrap gap-1.5">
+                  {PRIORITY_ORDER.map((p) => {
+                    const active = priorities.includes(p);
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() =>
+                          setPriorities(
+                            active
+                              ? priorities.filter((x) => x !== p)
+                              : [...priorities, p],
+                          )
+                        }
+                        className={cn(
+                          "rounded-md border px-3 py-1.5 text-[12px] font-medium transition-colors",
+                          active
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-background text-muted-foreground border-border hover:border-foreground/30",
+                        )}
+                      >
+                        {PRIORITY_LABELS[p]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Field>
+
+              <Field label="Assignees">
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setIncludeUnassigned(!includeUnassigned)}
+                    className={cn(
+                      "rounded-md border px-3 py-1.5 text-[12px] transition-colors",
+                      includeUnassigned
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background text-muted-foreground border-border hover:border-foreground/30",
+                    )}
+                  >
+                    Unassigned
+                  </button>
+                  {users.map((u) => {
+                    const active = assigneeIds.includes(u.id);
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() =>
+                          setAssigneeIds(
+                            active
+                              ? assigneeIds.filter((x) => x !== u.id)
+                              : [...assigneeIds, u.id],
+                          )
+                        }
+                        className={cn(
+                          "rounded-md border px-3 py-1.5 text-[12px] transition-colors",
+                          active
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-background text-muted-foreground border-border hover:border-foreground/30",
+                        )}
+                      >
+                        {u.username}
+                      </button>
+                    );
+                  })}
+                  {users.length === 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      No users found.
+                    </span>
+                  )}
+                </div>
+              </Field>
+
+              {labels.length > 0 && (
+                <Field label="Labels">
+                  <div className="flex flex-wrap gap-1.5">
+                    {labels.map((l) => {
+                      const active = labelIds.includes(l.id);
+                      return (
+                        <button
+                          key={l.id}
+                          type="button"
+                          onClick={() =>
+                            setLabelIds(
+                              active
+                                ? labelIds.filter((x) => x !== l.id)
+                                : [...labelIds, l.id],
+                            )
+                          }
+                          className="rounded-md border px-3 py-1.5 text-[12px] transition-colors"
+                          style={{
+                            background: active ? `${l.color}20` : undefined,
+                            color: active ? l.color : undefined,
+                            borderColor: active ? `${l.color}50` : undefined,
+                          }}
+                        >
+                          {l.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+              )}
+
+              {viewKind === "board" && (
+                <Field label="Card fields">
+                  <div className="grid grid-cols-2 gap-1">
+                    {ALL_CARD_FIELDS.map((field) => {
+                      const active = cardFields.includes(field);
+                      return (
+                        <button
+                          key={field}
+                          type="button"
+                          className={cn(
+                            "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors",
+                            active
+                              ? "bg-accent text-foreground"
+                              : "text-muted-foreground hover:bg-accent/50",
+                          )}
+                          onClick={() => toggleCardField(field)}
+                        >
+                          <div
+                            className={cn(
+                              "size-3.5 rounded-sm border flex items-center justify-center text-[9px]",
+                              active
+                                ? "bg-primary border-primary text-primary-foreground"
+                                : "border-input",
+                            )}
+                          >
+                            {active && "✓"}
+                          </div>
+                          {CARD_FIELD_LABELS[field]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+              )}
+            </div>
           </div>
         </div>
-        <div className="shrink-0 px-5 py-3 border-t border-border/60 flex items-center justify-end gap-2">
+
+        <div className="shrink-0 px-6 py-3.5 border-t border-border/60 flex items-center justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onClose}>
             Cancel
           </Button>
