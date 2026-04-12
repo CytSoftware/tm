@@ -175,6 +175,8 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
 class ProjectViewSet(viewsets.ModelViewSet):
     queryset = Project.objects.all().prefetch_related("columns")
     serializer_class = ProjectSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["archived"]
 
     @action(detail=True, methods=["get"])
     def columns(self, request, pk=None):
@@ -191,6 +193,28 @@ class ProjectViewSet(viewsets.ModelViewSet):
             models.Q(project=project) | models.Q(project__isnull=True)
         ).order_by("project_id", "name")
         return Response(LabelSerializer(labels, many=True).data)
+
+    @action(detail=True, methods=["post"])
+    def star(self, request, pk=None):
+        """Star this project for the current user."""
+        from .models import UserProfile
+
+        project = self.get_object()
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        profile.starred_projects.add(project)
+        serializer = self.get_serializer(project)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"])
+    def unstar(self, request, pk=None):
+        """Unstar this project for the current user."""
+        from .models import UserProfile
+
+        project = self.get_object()
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        profile.starred_projects.remove(project)
+        serializer = self.get_serializer(project)
+        return Response(serializer.data)
 
 
 class ColumnViewSet(viewsets.ModelViewSet):
