@@ -200,11 +200,13 @@ def generate_due_instances(now: datetime | None = None) -> list[Task]:
     templates = list(
         RecurringTaskTemplate.objects.select_for_update()
         .filter(active=True, next_run_at__lte=now)
-        .select_related("project", "column", "assignee", "created_by")
+        .select_related("project", "column", "created_by")
+        .prefetch_related("assignees", "labels")
     )
 
     for tpl in templates:
         tpl_label_ids = list(tpl.labels.values_list("id", flat=True))
+        tpl_assignee_ids = list(tpl.assignees.values_list("id", flat=True))
         iterations = 0
 
         while (
@@ -219,7 +221,6 @@ def generate_due_instances(now: datetime | None = None) -> list[Task]:
                 column=tpl.column,
                 title=tpl.title,
                 description=tpl.description,
-                assignee=tpl.assignee,
                 priority=tpl.priority,
                 story_points=tpl.story_points,
                 reporter=tpl.created_by,
@@ -230,6 +231,8 @@ def generate_due_instances(now: datetime | None = None) -> list[Task]:
             task.save()  # fires the key-generation logic
             if tpl_label_ids:
                 task.labels.set(tpl_label_ids)
+            if tpl_assignee_ids:
+                task.assignees.set(tpl_assignee_ids)
 
             broadcast_task_event(
                 tpl.project_id,

@@ -168,12 +168,12 @@ def _task_dict(t: Task, *, include_description: bool = True) -> dict[str, Any]:
         "id": t.id,
         "key": t.key,
         "title": t.title,
-        "project": t.project.prefix,
+        "project": t.project.prefix if t.project_id else None,
         "column": t.column.name if t.column_id else None,
         "column_id": t.column_id,
         "priority": t.priority,
         "story_points": t.story_points,
-        "assignee": t.assignee.username if t.assignee_id else None,
+        "assignees": [u.username for u in t.assignees.all()],
         "labels": [label.name for label in t.labels.all()],
         "position": t.position,
         "due_at": t.due_at.isoformat() if t.due_at else None,
@@ -192,7 +192,7 @@ def _template_dict(tpl: RecurringTaskTemplate) -> dict[str, Any]:
         "project": tpl.project.prefix,
         "title": tpl.title,
         "description": tpl.description,
-        "assignee": tpl.assignee.username if tpl.assignee_id else None,
+        "assignees": [u.username for u in tpl.assignees.all()],
         "labels": [label.name for label in tpl.labels.all()],
         "priority": tpl.priority,
         "story_points": tpl.story_points,
@@ -266,7 +266,7 @@ def create_task(
     project: str | int,
     title: str,
     description: str = "",
-    assignee: str | int | None = None,
+    assignees: list[str | int] | None = None,
     priority: str | None = None,
     labels: list[str | int] | None = None,
     story_points: int | None = None,
@@ -275,7 +275,7 @@ def create_task(
 ) -> dict[str, Any]:
     proj = _resolve_project(project)
     col = _resolve_column(proj, column)
-    user = _resolve_user(assignee) if assignee else None
+    assignee_users = [_resolve_user(ref) for ref in assignees] if assignees else []
     reporter = _resolve_reporter_for_mcp(mcp_user)
 
     task = Task(
@@ -283,8 +283,7 @@ def create_task(
         column=col,
         title=title,
         description=description or "",
-        assignee=user,
-        priority=_normalize_priority(priority) or Priority.MEDIUM,
+        priority=_normalize_priority(priority),
         story_points=story_points,
         reporter=reporter,
         position=_next_bottom_position(col),
@@ -292,6 +291,8 @@ def create_task(
     task.save()
     if labels:
         task.labels.set(_resolve_labels(proj, labels))
+    if assignee_users:
+        task.assignees.set(assignee_users)
 
     broadcast_task_event(
         proj.id, "task.created", {"key": task.key, "id": task.id}
@@ -304,7 +305,7 @@ def update_task(
     key: str,
     title: str | None = None,
     description: str | None = None,
-    assignee: str | int | None = None,
+    assignees: list[str | int] | None = None,
     priority: str | None = None,
     labels: list[str | int] | None = None,
     story_points: int | None = None,
@@ -324,14 +325,13 @@ def update_task(
     if story_points is not None:
         task.story_points = story_points
         dirty = True
-    if assignee is not None:
-        task.assignee = _resolve_user(assignee)
-        dirty = True
 
     if dirty:
         task.save()
     if labels is not None:
         task.labels.set(_resolve_labels(task.project, labels))
+    if assignees is not None:
+        task.assignees.set([_resolve_user(ref) for ref in assignees])
 
     broadcast_task_event(
         task.project_id, "task.updated", {"key": task.key, "id": task.id}
@@ -442,7 +442,7 @@ def create_recurring_task(
     dtstart: str | None = None,
     timezone_name: str = "UTC",
     description: str = "",
-    assignee: str | int | None = None,
+    assignees: list[str | int] | None = None,
     priority: str | None = None,
     labels: list[str | int] | None = None,
     story_points: int | None = None,
@@ -451,7 +451,7 @@ def create_recurring_task(
 ) -> dict[str, Any]:
     proj = _resolve_project(project)
     col = _resolve_column(proj, column)
-    user = _resolve_user(assignee) if assignee else None
+    assignee_users = [_resolve_user(ref) for ref in assignees] if assignees else []
     reporter = _resolve_reporter_for_mcp(mcp_user)
 
     rrule = parse_schedule(schedule)
@@ -463,8 +463,7 @@ def create_recurring_task(
         column=col,
         title=title,
         description=description or "",
-        assignee=user,
-        priority=_normalize_priority(priority) or Priority.MEDIUM,
+        priority=_normalize_priority(priority),
         story_points=story_points,
         rrule=rrule,
         dtstart=start,
@@ -476,6 +475,8 @@ def create_recurring_task(
     tpl.save()
     if labels:
         tpl.labels.set(_resolve_labels(proj, labels))
+    if assignee_users:
+        tpl.assignees.set(assignee_users)
     return _template_dict(tpl)
 
 
@@ -483,8 +484,8 @@ def list_recurring_tasks(
     project: str | int | None = None, active: bool | None = None
 ) -> list[dict[str, Any]]:
     qs = RecurringTaskTemplate.objects.all().select_related(
-        "project", "column", "assignee", "created_by"
-    ).prefetch_related("labels")
+        "project", "column", "created_by"
+    ).prefetch_related("labels", "assignees")
     if project is not None:
         qs = qs.filter(project=_resolve_project(project))
     if active is not None:
@@ -497,7 +498,7 @@ def update_recurring_task(
     id: int,
     title: str | None = None,
     description: str | None = None,
-    assignee: str | int | None = None,
+    assignees: list[str | int] | None = None,
     priority: str | None = None,
     story_points: int | None = None,
     schedule: str | None = None,
@@ -514,8 +515,6 @@ def update_recurring_task(
         tpl.priority = _normalize_priority(priority) or tpl.priority
     if story_points is not None:
         tpl.story_points = story_points
-    if assignee is not None:
-        tpl.assignee = _resolve_user(assignee)
     if column is not None:
         tpl.column = _resolve_column(tpl.project, column)
 
@@ -528,6 +527,8 @@ def update_recurring_task(
         tpl.next_run_at = compute_initial_next_run(rrule, start)
 
     tpl.save()
+    if assignees is not None:
+        tpl.assignees.set([_resolve_user(ref) for ref in assignees])
     return _template_dict(tpl)
 
 

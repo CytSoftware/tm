@@ -67,8 +67,9 @@ async def list_tasks(
     """List tasks matching the given filters.
 
     Arguments are all optional. ``project`` accepts a prefix like ``"CYT"`` or
-    a numeric id. ``assignee`` accepts a username. ``priority`` is a list like
-    ``["HIGH", "URGENT"]``. ``labels`` and ``column`` accept names.
+    a numeric id. ``assignee`` accepts a username (matches tasks where that
+    user is one of the assignees). ``priority`` is a list like ``["P1", "P2"]``
+    (P1 is highest). ``labels`` and ``column`` accept names.
     """
     return await _async(tools.list_tasks)(
         project=project,
@@ -91,7 +92,7 @@ async def create_task(
     project: str | int,
     title: str,
     description: str = "",
-    assignee: str | int | None = None,
+    assignees: list[str | int] | None = None,
     priority: str | None = None,
     labels: list[str] | None = None,
     story_points: int | None = None,
@@ -100,13 +101,16 @@ async def create_task(
     """Create a new task in ``project``.
 
     Omitting ``column`` places the task in the project's first non-done column
-    (typically "Todo"). Omitting ``priority`` defaults to ``MEDIUM``.
+    (typically "Todo"). Omitting ``priority`` leaves the task without one (it
+    sorts last in priority-desc order). ``assignees`` is a list of usernames or
+    ids — a task can have zero or many assignees. Priority values when set:
+    ``P1`` (highest), ``P2``, ``P3``, ``P4`` (lowest).
     """
     return await _async(tools.create_task)(
         project=project,
         title=title,
         description=description,
-        assignee=assignee,
+        assignees=assignees,
         priority=priority,
         labels=labels,
         story_points=story_points,
@@ -120,17 +124,21 @@ async def update_task(
     key: str,
     title: str | None = None,
     description: str | None = None,
-    assignee: str | int | None = None,
+    assignees: list[str | int] | None = None,
     priority: str | None = None,
     labels: list[str] | None = None,
     story_points: int | None = None,
 ) -> dict[str, Any]:
-    """Update any subset of a task's fields. Omitted fields are left unchanged."""
+    """Update any subset of a task's fields. Omitted fields are left unchanged.
+
+    ``assignees`` replaces the full assignee list (pass an empty list to
+    unassign everyone). Priority values: ``P1`` (highest) … ``P4`` (lowest).
+    """
     return await _async(tools.update_task)(
         key=key,
         title=title,
         description=description,
-        assignee=assignee,
+        assignees=assignees,
         priority=priority,
         labels=labels,
         story_points=story_points,
@@ -196,7 +204,7 @@ async def create_recurring_task(
     dtstart: str | None = None,
     timezone_name: str = "UTC",
     description: str = "",
-    assignee: str | int | None = None,
+    assignees: list[str | int] | None = None,
     priority: str | None = None,
     labels: list[str] | None = None,
     story_points: int | None = None,
@@ -224,7 +232,7 @@ async def create_recurring_task(
         dtstart=dtstart,
         timezone_name=timezone_name,
         description=description,
-        assignee=assignee,
+        assignees=assignees,
         priority=priority,
         labels=labels,
         story_points=story_points,
@@ -246,7 +254,7 @@ async def update_recurring_task(
     id: int,
     title: str | None = None,
     description: str | None = None,
-    assignee: str | int | None = None,
+    assignees: list[str | int] | None = None,
     priority: str | None = None,
     story_points: int | None = None,
     schedule: str | None = None,
@@ -254,12 +262,13 @@ async def update_recurring_task(
     column: str | int | None = None,
 ) -> dict[str, Any]:
     """Update any subset of a template's fields. Changing ``schedule`` or
-    ``dtstart`` recomputes ``next_run_at``."""
+    ``dtstart`` recomputes ``next_run_at``. ``assignees`` replaces the
+    template's assignee list in full."""
     return await _async(tools.update_recurring_task)(
         id=id,
         title=title,
         description=description,
-        assignee=assignee,
+        assignees=assignees,
         priority=priority,
         story_points=story_points,
         schedule=schedule,

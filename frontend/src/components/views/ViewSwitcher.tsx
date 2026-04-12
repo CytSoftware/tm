@@ -48,6 +48,9 @@ import {
   PRIORITY_ORDER,
   ALL_CARD_FIELDS,
   CARD_FIELD_LABELS,
+  SORT_FIELDS,
+  SORT_FIELD_LABELS,
+  type SortField,
 } from "@/lib/types";
 
 type Props = {
@@ -224,9 +227,9 @@ function NewViewDialog({
     ((existingView?.filters?.labels as (string | number)[]) ?? []).map(Number),
   );
   const [shared, setShared] = useState(existingView?.shared ?? false);
-  const [sortField, setSortField] = useState<
-    "updated_at" | "priority" | "title"
-  >((existingView?.sort?.[0]?.field as "updated_at" | "priority" | "title") ?? "updated_at");
+  const [sortField, setSortField] = useState<SortField>(
+    (existingView?.sort?.[0]?.field as SortField) ?? "updated_at",
+  );
   const [sortDir, setSortDir] = useState<"asc" | "desc">(
     existingView?.sort?.[0]?.dir ?? "desc",
   );
@@ -263,11 +266,7 @@ function NewViewDialog({
     }),
     [projects],
   );
-  const sortFieldItems = {
-    updated_at: "Last updated",
-    priority: "Priority",
-    title: "Title",
-  };
+  const sortFieldItems = SORT_FIELD_LABELS;
   const sortDirItems = { asc: "Ascending", desc: "Descending" };
   const viewKindItems = { board: "Board", table: "List" };
 
@@ -495,18 +494,18 @@ function NewViewDialog({
             <Field label="Sort by">
               <Select
                 value={sortField}
-                onValueChange={(v) =>
-                  setSortField(v as "updated_at" | "priority" | "title")
-                }
+                onValueChange={(v) => setSortField(v as SortField)}
                 items={sortFieldItems}
               >
                 <SelectTrigger className="h-9 text-[13px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="updated_at">Last updated</SelectItem>
-                  <SelectItem value="priority">Priority</SelectItem>
-                  <SelectItem value="title">Title</SelectItem>
+                  {SORT_FIELDS.map((f) => (
+                    <SelectItem key={f} value={f}>
+                      {SORT_FIELD_LABELS[f]}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </Field>

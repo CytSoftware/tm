@@ -16,9 +16,11 @@ from .models import Task
 class TaskFilter(filters.FilterSet):
     project = filters.NumberFilter(field_name="project_id")
     column = filters.NumberFilter(field_name="column_id")
-    assignee = filters.NumberFilter(field_name="assignee_id")
+    assignee = filters.NumberFilter(
+        field_name="assignees__id", distinct=True
+    )
     priority = filters.CharFilter(field_name="priority")
-    label = filters.NumberFilter(field_name="labels__id")
+    label = filters.NumberFilter(field_name="labels__id", distinct=True)
     search = filters.CharFilter(method="filter_search")
 
     class Meta:

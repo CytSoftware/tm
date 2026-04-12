@@ -22,6 +22,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { UserAvatar } from "@/components/UserAvatar";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { RecurrencePicker, type RecurrenceState } from "./RecurrencePicker";
 import { useCreateTask, useUpdateTask, useDeleteTask } from "@/hooks/use-tasks";
@@ -34,13 +35,15 @@ import type {
   Priority,
   Label as LabelType,
   RecurringTaskTemplate,
+  User,
 } from "@/lib/types";
 import { PRIORITY_LABELS, PRIORITY_ORDER } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Props = {
   projects: Project[];
-  activeProject: Project;
+  /** Pre-selected project for "create" mode. Null means "start in Inbox". */
+  activeProject: Project | null;
   mode: "create" | "edit";
   task?: Task;
   initialColumnId?: number;
@@ -59,18 +62,22 @@ export function TaskPanel({
   const usersQuery = useUsersQuery();
   const users = usersQuery.data ?? [];
 
-  const initialProjectId =
-    mode === "edit" ? task!.project : activeProject.id;
-  const [projectId, setProjectId] = useState<number>(initialProjectId);
+  // projectId === null means "Inbox" (projectless task).
+  const initialProjectId: number | null =
+    mode === "edit" ? task!.project : activeProject?.id ?? null;
+  const [projectId, setProjectId] = useState<number | null>(initialProjectId);
   const selectedProject = useMemo(
-    () => projects.find((p) => p.id === projectId) ?? activeProject,
+    () =>
+      projectId == null
+        ? null
+        : projects.find((p) => p.id === projectId) ?? activeProject,
     [projects, projectId, activeProject],
   );
 
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
-  const [priority, setPriority] = useState<Priority>(
-    task?.priority ?? "MEDIUM",
+  const [priority, setPriority] = useState<Priority | null>(
+    task?.priority ?? null,
   );
   const [storyPoints, setStoryPoints] = useState<string>(
     task?.story_points != null ? String(task.story_points) : "",
@@ -78,14 +85,18 @@ export function TaskPanel({
   const [dueAt, setDueAt] = useState<string>(
     task?.due_at ? task.due_at.slice(0, 16) : "",
   );
-  const [assigneeId, setAssigneeId] = useState<number | null>(
-    task?.assignee?.id ?? null,
+  const [assigneeIds, setAssigneeIds] = useState<number[]>(
+    task?.assignees?.map((u) => u.id) ?? [],
   );
   const [labelIds, setLabelIds] = useState<number[]>(
     task?.labels.map((l) => l.id) ?? [],
   );
 
-  const pickDefaultColumn = (p: Project, currentColName?: string) => {
+  const pickDefaultColumn = (
+    p: Project | null,
+    currentColName?: string,
+  ): number | null => {
+    if (!p) return null;
     // When switching projects, try to find a column with the same name first
     if (currentColName) {
       const sameNameCol = p.columns.find((c) => c.name === currentColName);
@@ -93,22 +104,24 @@ export function TaskPanel({
     }
     return (
       p.columns.find((c) => c.id === initialColumnId)?.id ??
-      task?.column.id ??
+      task?.column?.id ??
       p.columns.find((c) => c.name === "Todo")?.id ??
       p.columns.find((c) => !c.is_done)?.id ??
       p.columns[0]?.id ??
-      0
+      null
     );
   };
 
-  const [columnId, setColumnId] = useState<number>(
+  const [columnId, setColumnId] = useState<number | null>(
     pickDefaultColumn(selectedProject),
   );
 
   useEffect(() => {
-    // When project changes, remap the column to one in the new project
-    const currentCol = selectedProject.columns.find((c) => c.id === columnId);
-    const currentColName = currentCol?.name ?? task?.column.name;
+    // When project changes, remap the column to one in the new project (or
+    // clear it entirely if we're moving into the Inbox).
+    const currentCol =
+      selectedProject?.columns.find((c) => c.id === columnId) ?? null;
+    const currentColName = currentCol?.name ?? task?.column?.name;
     setColumnId(pickDefaultColumn(selectedProject, currentColName));
     // Keep global labels (project=null), drop project-scoped ones from the old project
     setLabelIds((prev) =>
@@ -118,7 +131,7 @@ export function TaskPanel({
       }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProject.id]);
+  }, [selectedProject?.id]);
 
   const [recurrence, setRecurrence] = useState<RecurrenceState>({
     enabled: false,
@@ -129,18 +142,25 @@ export function TaskPanel({
     dtstartLocal: defaultDtstartLocal(),
   });
 
-  // Fetch labels for the selected project
+  // Fetch labels for the selected project (or global labels when in the Inbox)
   const labelsQuery = useQuery({
-    queryKey: ["labels", selectedProject.id],
+    queryKey: ["labels", selectedProject?.id ?? "global"],
     queryFn: () =>
-      apiFetch<LabelType[]>(`/api/projects/${selectedProject.id}/labels/`),
-    enabled: !!selectedProject.id,
+      selectedProject
+        ? apiFetch<LabelType[]>(`/api/projects/${selectedProject.id}/labels/`)
+        : apiFetch<{ results: LabelType[] }>("/api/labels/").then((r) =>
+            r.results.filter((l) => l.project == null),
+          ),
   });
   const availableLabels = labelsQuery.data ?? [];
 
-  const createTask = useCreateTask(selectedProject.id);
-  const updateTask = useUpdateTask(selectedProject.id);
-  const deleteTask = useDeleteTask(selectedProject.id);
+  // Mutations key on a concrete project id for cache invalidation; fall back
+  // to 0 for Inbox tasks (the hooks only use this for their onSuccess cache
+  // invalidation, which harmlessly invalidates the "all tasks" list too).
+  const mutationKeyProjectId = selectedProject?.id ?? 0;
+  const createTask = useCreateTask(mutationKeyProjectId);
+  const updateTask = useUpdateTask(mutationKeyProjectId);
+  const deleteTask = useDeleteTask(mutationKeyProjectId);
 
   const createRecurring = useMutation({
     mutationFn: (payload: unknown) =>
@@ -149,12 +169,14 @@ export function TaskPanel({
         body: payload,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: recurringKey(selectedProject.id),
-      });
-      queryClient.invalidateQueries({
-        queryKey: taskListKey(selectedProject.id),
-      });
+      if (selectedProject) {
+        queryClient.invalidateQueries({
+          queryKey: recurringKey(selectedProject.id),
+        });
+        queryClient.invalidateQueries({
+          queryKey: taskListKey(selectedProject.id),
+        });
+      }
     },
   });
 
@@ -165,15 +187,18 @@ export function TaskPanel({
 
   const projectItems = useMemo(
     () =>
-      Object.fromEntries(
-        projects.map((p) => [String(p.id), `${p.name} (${p.prefix})`]),
-      ) as Record<string, React.ReactNode>,
+      ({
+        "": "No project (Inbox)",
+        ...Object.fromEntries(
+          projects.map((p) => [String(p.id), `${p.name} (${p.prefix})`]),
+        ),
+      }) as Record<string, React.ReactNode>,
     [projects],
   );
   const columnItems = useMemo(
     () =>
       Object.fromEntries(
-        selectedProject.columns
+        (selectedProject?.columns ?? [])
           .slice()
           .sort((a, b) => a.order - b.order)
           .map((c) => [String(c.id), c.name]),
@@ -182,25 +207,23 @@ export function TaskPanel({
   );
   const priorityItems = useMemo(
     () =>
-      Object.fromEntries(
-        PRIORITY_ORDER.map((p) => [p, PRIORITY_LABELS[p]]),
-      ) as Record<string, React.ReactNode>,
+      ({
+        "": "No priority",
+        ...Object.fromEntries(
+          PRIORITY_ORDER.map((p) => [p, PRIORITY_LABELS[p]]),
+        ),
+      }) as Record<string, React.ReactNode>,
     [],
-  );
-  const assigneeItems = useMemo(
-    () => ({
-      "": "Unassigned",
-      ...Object.fromEntries(
-        users.map((u) => [String(u.id), u.username]),
-      ),
-    }),
-    [users],
   );
 
   async function handleSubmit() {
     if (!title.trim()) return;
 
     if (mode === "create" && recurrence.enabled) {
+      if (!selectedProject) {
+        alert("Recurring tasks need a project.");
+        return;
+      }
       const rrule = buildRrule(recurrence);
       if (!rrule) return;
       await createRecurring.mutateAsync({
@@ -215,20 +238,21 @@ export function TaskPanel({
         timezone:
           Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
         active: true,
+        assignee_ids: assigneeIds,
       });
       onClose();
       return;
     }
 
     const payload: Record<string, unknown> = {
-      project_id: selectedProject.id,
-      column_id: columnId,
+      project_id: selectedProject?.id ?? null,
+      column_id: selectedProject ? columnId : null,
       title,
       description,
       priority,
       story_points: storyPoints === "" ? null : Number(storyPoints),
       due_at: dueAt ? new Date(dueAt).toISOString() : null,
-      assignee_id: assigneeId,
+      assignee_ids: assigneeIds,
       label_ids: labelIds,
     };
 
@@ -237,10 +261,12 @@ export function TaskPanel({
     } else if (task) {
       await updateTask.mutateAsync({ key: task.key, ...payload } as any);
       // If project changed, also invalidate the old project's task list
-      if (task.project !== selectedProject.id) {
-        queryClient.invalidateQueries({
-          queryKey: taskListKey(task.project),
-        });
+      if (task.project !== selectedProject?.id) {
+        if (task.project != null) {
+          queryClient.invalidateQueries({
+            queryKey: taskListKey(task.project),
+          });
+        }
         queryClient.invalidateQueries({ queryKey: projectsKey() });
       }
     }
@@ -305,55 +331,69 @@ export function TaskPanel({
           <div className="w-64 shrink-0 border-r border-border/60 overflow-y-auto scrollbar-none p-4 space-y-1">
             <PropRow label="Project">
               <Select
-                value={String(projectId)}
-                onValueChange={(v) => setProjectId(Number(v))}
+                value={projectId != null ? String(projectId) : ""}
+                onValueChange={(v) =>
+                  setProjectId(v === "" ? null : Number(v))
+                }
                 items={projectItems}
               >
                 <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
-                  <SelectValue />
+                  <SelectValue placeholder="No project (Inbox)" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="">No project (Inbox)</SelectItem>
                   {projects.map((p) => (
                     <SelectItem key={p.id} value={String(p.id)}>
-                      {p.name} ({p.prefix})
+                      <span className="inline-flex items-center gap-2">
+                        <span
+                          className="size-2 rounded-full"
+                          style={{ background: p.color }}
+                        />
+                        {p.name} ({p.prefix})
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </PropRow>
 
-            <PropRow label="Status">
-              <Select
-                value={String(columnId)}
-                onValueChange={(v) => setColumnId(Number(v))}
-                items={columnItems}
-              >
-                <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {selectedProject.columns
-                    .slice()
-                    .sort((a, b) => a.order - b.order)
-                    .map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </PropRow>
+            {selectedProject && columnId != null && (
+              <PropRow label="Status">
+                <Select
+                  value={String(columnId)}
+                  onValueChange={(v) => setColumnId(Number(v))}
+                  items={columnItems}
+                >
+                  <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectedProject.columns
+                      .slice()
+                      .sort((a, b) => a.order - b.order)
+                      .map((c) => (
+                        <SelectItem key={c.id} value={String(c.id)}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </PropRow>
+            )}
 
             <PropRow label="Priority">
               <Select
-                value={priority}
-                onValueChange={(v) => setPriority(v as Priority)}
+                value={priority ?? ""}
+                onValueChange={(v) =>
+                  setPriority(v === "" ? null : (v as Priority))
+                }
                 items={priorityItems}
               >
                 <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
-                  <SelectValue />
+                  <SelectValue placeholder="No priority" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="">No priority</SelectItem>
                   {PRIORITY_ORDER.map((p) => (
                     <SelectItem key={p} value={p}>
                       {PRIORITY_LABELS[p]}
@@ -363,27 +403,18 @@ export function TaskPanel({
               </Select>
             </PropRow>
 
-            <PropRow label="Assignee">
-              <Select
-                value={assigneeId != null ? String(assigneeId) : ""}
-                onValueChange={(v) =>
-                  setAssigneeId(v === "" ? null : Number(v))
-                }
-                items={assigneeItems}
-              >
-                <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
-                  <SelectValue placeholder="Unassigned" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">Unassigned</SelectItem>
-                  {users.map((u) => (
-                    <SelectItem key={u.id} value={String(u.id)}>
-                      {u.username}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </PropRow>
+            <div className="flex items-start min-h-[32px]">
+              <span className="w-[72px] shrink-0 text-[12px] text-muted-foreground pl-1 pt-1.5">
+                Assignees
+              </span>
+              <div className="flex-1 min-w-0">
+                <AssigneePicker
+                  available={users}
+                  selected={assigneeIds}
+                  onChange={setAssigneeIds}
+                />
+              </div>
+            </div>
 
             <PropRow label="Points">
               <Input
@@ -513,6 +544,91 @@ function PropRow({
         {label}
       </span>
       <div className="w-[160px] shrink-0">{children}</div>
+    </div>
+  );
+}
+
+function AssigneePicker({
+  available,
+  selected,
+  onChange,
+}: {
+  available: User[];
+  selected: number[];
+  onChange: (ids: number[]) => void;
+}) {
+  if (available.length === 0) {
+    return (
+      <p className="text-[11px] text-muted-foreground pl-1">
+        No users available.
+      </p>
+    );
+  }
+
+  function toggle(id: number) {
+    onChange(
+      selected.includes(id)
+        ? selected.filter((x) => x !== id)
+        : [...selected, id],
+    );
+  }
+
+  const selectedUsers = available.filter((u) => selected.includes(u.id));
+
+  return (
+    <div className="space-y-1.5">
+      {selectedUsers.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {selectedUsers.map((u) => (
+            <button
+              key={u.id}
+              type="button"
+              onClick={() => toggle(u.id)}
+              className="inline-flex items-center gap-1 rounded-full bg-accent/60 hover:bg-accent pl-0.5 pr-1.5 py-0.5 text-[11px] transition-colors"
+              title={`Unassign ${u.username}`}
+            >
+              <UserAvatar
+                username={u.username}
+                avatarUrl={u.avatar_url}
+                size="size-4"
+              />
+              {u.username}
+              <X className="size-2.5 text-muted-foreground" />
+            </button>
+          ))}
+        </div>
+      )}
+      <Popover>
+        <PopoverTrigger
+          render={
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[11px] text-muted-foreground w-full justify-start"
+            >
+              + Add assignee
+            </Button>
+          }
+        />
+        <PopoverContent className="w-52 p-1" align="start">
+          {available.map((u) => (
+            <button
+              key={u.id}
+              type="button"
+              onClick={() => toggle(u.id)}
+              className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] hover:bg-accent transition-colors"
+            >
+              <Checkbox checked={selected.includes(u.id)} />
+              <UserAvatar
+                username={u.username}
+                avatarUrl={u.avatar_url}
+                size="size-4"
+              />
+              {u.username}
+            </button>
+          ))}
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

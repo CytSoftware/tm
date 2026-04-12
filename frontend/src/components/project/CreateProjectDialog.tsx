@@ -15,6 +15,7 @@ import { ColorPicker } from "@/components/ui/ColorPicker";
 import { ApiError } from "@/lib/api";
 import { useActiveProject } from "@/lib/active-project";
 import { useCreateProject } from "@/hooks/use-projects";
+import { PROJECT_COLOR_PALETTE } from "@/lib/colors";
 
 type Props = {
   onClose: () => void;
@@ -26,7 +27,7 @@ export function CreateProjectDialog({ onClose }: Props) {
   const [prefix, setPrefix] = useState("");
   const [prefixTouched, setPrefixTouched] = useState(false);
   const [description, setDescription] = useState("");
-  const [color, setColor] = useState("#6366f1");
+  const [color, setColor] = useState<string>(PROJECT_COLOR_PALETTE[0]);
   const [icon, setIcon] = useState("");
 
   // Auto-derive a prefix from the name until the user edits it themselves.

@@ -29,10 +29,11 @@ from .id_generation import generate_task_key
 
 
 class Priority(models.TextChoices):
-    LOW = "LOW", "Low"
-    MEDIUM = "MEDIUM", "Medium"
-    HIGH = "HIGH", "High"
-    URGENT = "URGENT", "Urgent"
+    # P1 = highest (was URGENT), P4 = lowest (was LOW).
+    P1 = "P1", "P1"
+    P2 = "P2", "P2"
+    P3 = "P3", "P3"
+    P4 = "P4", "P4"
 
 
 class TimestampedModel(models.Model):
@@ -54,7 +55,7 @@ class Project(TimestampedModel):
     color = models.CharField(
         max_length=9,
         default="#6366f1",
-        help_text="CSS hex color used to theme the project in the sidebar.",
+        help_text="CSS hex color used to badge the project in cards and pickers.",
     )
     icon = models.CharField(
         max_length=8,
@@ -148,27 +149,39 @@ class Task(TimestampedModel):
     )
 
     project = models.ForeignKey(
-        Project, on_delete=models.CASCADE, related_name="tasks"
+        Project,
+        on_delete=models.CASCADE,
+        related_name="tasks",
+        null=True,
+        blank=True,
+        help_text="Null means the task lives in the 'Inbox' (no project).",
     )
     column = models.ForeignKey(
-        Column, on_delete=models.CASCADE, related_name="tasks"
+        Column,
+        on_delete=models.CASCADE,
+        related_name="tasks",
+        null=True,
+        blank=True,
+        help_text="Null for projectless tasks.",
     )
     position = models.FloatField(
         default=1000.0,
         help_text="Sort order within a column. Midpoint insertion strategy.",
     )
 
-    assignee = models.ForeignKey(
+    assignees = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
         related_name="assigned_tasks",
+        blank=True,
     )
     labels = models.ManyToManyField(Label, related_name="tasks", blank=True)
 
     priority = models.CharField(
-        max_length=8, choices=Priority.choices, default=Priority.MEDIUM
+        max_length=8,
+        choices=Priority.choices,
+        null=True,
+        blank=True,
+        default=None,
     )
     story_points = models.PositiveSmallIntegerField(null=True, blank=True)
 
@@ -191,7 +204,6 @@ class Task(TimestampedModel):
         ordering = ["project_id", "column_id", "position", "id"]
         indexes = [
             models.Index(fields=["project", "column", "position"]),
-            models.Index(fields=["project", "assignee"]),
             models.Index(fields=["project", "updated_at"]),
             models.Index(fields=["recurrence_template", "created_at"]),
         ]
@@ -203,8 +215,14 @@ class Task(TimestampedModel):
         # Generate the human-readable key the first time the row is saved.
         if self._state.adding and not self.key:
             with transaction.atomic():
-                self.key = generate_task_key(self.project)
-                return super().save(*args, **kwargs)
+                if self.project_id:
+                    self.key = generate_task_key(self.project)
+                    return super().save(*args, **kwargs)
+                # Projectless task — save once to obtain an id, then stamp
+                # the key as "INBOX-<id>" so it's still globally unique.
+                super().save(*args, **kwargs)
+                self.key = f"INBOX-{self.id:03d}"
+                return super().save(update_fields=["key", "updated_at"])
         return super().save(*args, **kwargs)
 
 
@@ -217,19 +235,21 @@ class RecurringTaskTemplate(TimestampedModel):
     title = models.CharField(max_length=300)
     description = models.TextField(blank=True, default="")
 
-    assignee = models.ForeignKey(
+    assignees = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
         related_name="assigned_recurring_templates",
+        blank=True,
     )
     labels = models.ManyToManyField(
         Label, related_name="recurring_templates", blank=True
     )
 
     priority = models.CharField(
-        max_length=8, choices=Priority.choices, default=Priority.MEDIUM
+        max_length=8,
+        choices=Priority.choices,
+        null=True,
+        blank=True,
+        default=None,
     )
     story_points = models.PositiveSmallIntegerField(null=True, blank=True)
 
@@ -297,7 +317,7 @@ class View(TimestampedModel):
     filters = models.JSONField(
         default=dict,
         blank=True,
-        help_text='e.g. {"assignee": [1,2], "priority": ["HIGH","URGENT"], "labels": [3]}',
+        help_text='e.g. {"assignee": [1,2], "priority": ["P1","P2"], "labels": [3]}',
     )
     sort = models.JSONField(
         default=list,
@@ -339,7 +359,13 @@ class UserProfile(models.Model):
     avatar_url = models.URLField(
         blank=True,
         default="",
-        help_text="URL to a profile picture (Gravatar, GitHub avatar, etc.).",
+        help_text="External URL (Gravatar, GitHub, etc.). Used when no file is uploaded.",
+    )
+    avatar_image = models.ImageField(
+        upload_to="avatars/",
+        null=True,
+        blank=True,
+        help_text="Uploaded profile picture. Takes precedence over avatar_url.",
     )
     starred_projects = models.ManyToManyField(
         Project,
@@ -350,6 +376,16 @@ class UserProfile(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.user.username} profile"
+
+    @property
+    def effective_avatar_url(self) -> str:
+        """Return the best avatar URL — uploaded file first, external URL second."""
+        if self.avatar_image:
+            try:
+                return self.avatar_image.url
+            except ValueError:
+                return ""
+        return self.avatar_url or ""
 
 
 @receiver(post_save, sender=settings.AUTH_USER_MODEL)

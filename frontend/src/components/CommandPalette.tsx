@@ -257,10 +257,10 @@ export function CommandPalette({
 
 const COLUMNS = ["Backlog", "Todo", "In Progress", "In Review", "Done"];
 const PRIORITIES: { value: Priority; label: string }[] = [
-  { value: "LOW", label: "Low" },
-  { value: "MEDIUM", label: "Medium" },
-  { value: "HIGH", label: "High" },
-  { value: "URGENT", label: "Urgent" },
+  { value: "P1", label: "P1" },
+  { value: "P2", label: "P2" },
+  { value: "P3", label: "P3" },
+  { value: "P4", label: "P4" },
 ];
 
 function buildTaskActions(
@@ -283,7 +283,7 @@ function buildTaskActions(
 
   // Move to → column
   for (const col of availableColumns) {
-    if (col.id === task.column.id) continue; // skip current column
+    if (col.id === task.column?.id) continue; // skip current column
     actions.push({
       id: `move-${col.id}`,
       label: `Move to \u2192 ${col.name}`,
@@ -316,19 +316,40 @@ function buildTaskActions(
       },
     });
   }
-
-  // Assign to → user
-  for (const u of users) {
-    if (task.assignee?.id === u.id) continue;
+  if (task.priority != null) {
     actions.push({
-      id: `assign-${u.id}`,
-      label: `Assign to \u2192 ${u.username}`,
-      keywords: "assign user",
+      id: "priority-clear",
+      label: "Clear priority",
+      keywords: "priority clear remove none",
       handler: async () => {
         onClose();
         await apiFetch(`/api/tasks/${task.key}/`, {
           method: "PATCH",
-          body: { assignee_id: u.id },
+          body: { priority: null },
+        });
+        invalidate();
+      },
+    });
+  }
+
+  // Assignees — for each user, show "Add" or "Remove" depending on state.
+  const currentAssigneeIds = new Set(task.assignees.map((u) => u.id));
+  for (const u of users) {
+    const isAssigned = currentAssigneeIds.has(u.id);
+    actions.push({
+      id: `assign-${u.id}`,
+      label: isAssigned
+        ? `Unassign \u2192 ${u.username}`
+        : `Add assignee \u2192 ${u.username}`,
+      keywords: "assign user",
+      handler: async () => {
+        onClose();
+        const next = isAssigned
+          ? [...currentAssigneeIds].filter((id) => id !== u.id)
+          : [...currentAssigneeIds, u.id];
+        await apiFetch(`/api/tasks/${task.key}/`, {
+          method: "PATCH",
+          body: { assignee_ids: next },
         });
         invalidate();
       },

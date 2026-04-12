@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,32 @@ import { Label } from "@/components/ui/label";
 import { login } from "@/lib/auth";
 import { meKey } from "@/lib/query-keys";
 
+/**
+ * LoginPage wraps LoginForm in a Suspense boundary because LoginForm uses
+ * useSearchParams(), which forces CSR bailout. Without Suspense, Next's
+ * static prerender on `/login` errors out with `missing-suspense-with-csr-bailout`.
+ */
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginShell />}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginShell() {
+  // Identical chrome to LoginForm's output so there's no layout shift while
+  // the router suspends.
+  return (
+    <div className="h-screen flex items-center justify-center bg-background">
+      <div className="w-full max-w-[360px] space-y-5 rounded-xl border border-border/80 bg-card p-6" />
+    </div>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -20,6 +44,24 @@ export default function LoginPage() {
     mutationFn: () => login(username, password),
     onSuccess: async (user) => {
       queryClient.setQueryData(meKey(), user);
+      // If there's a `next` URL (e.g. from an OAuth authorize redirect),
+      // send the user back there after login. Only allow URLs to the
+      // same root domain to prevent open-redirect attacks.
+      const next = searchParams.get("next");
+      if (next) {
+        try {
+          const url = new URL(next, window.location.origin);
+          const isAllowed =
+            url.hostname === window.location.hostname ||
+            url.hostname.endsWith(".cytsoftware.com");
+          if (isAllowed) {
+            window.location.href = url.toString();
+            return;
+          }
+        } catch {
+          // Fall through to default redirect
+        }
+      }
       router.replace("/board");
     },
   });

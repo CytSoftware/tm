@@ -17,6 +17,10 @@ SECRET_KEY = "django-insecure--ip3l6p-jti9r8s$sy!lhqi2bzw3ixrwx6(#a=%uf)rz*53+3z
 DEBUG = True
 ALLOWED_HOSTS = ["*"]  # dev only
 
+# Trust X-Forwarded-Proto from Traefik so Django knows requests are HTTPS.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
+
 INSTALLED_APPS = [
     # Daphne must come before django.contrib.staticfiles so that `runserver`
     # is replaced by Daphne's ASGI runner. See channels docs.
@@ -102,6 +106,12 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Uploaded media (currently just user profile pictures). In dev we serve
+# these via Django; in production they'd go to S3 or a reverse-proxy static
+# mount. The URL is relative; the frontend prepends NEXT_PUBLIC_API_URL.
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
 STORAGES = {
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
@@ -148,7 +158,12 @@ _cors_env = _os.environ.get("CORS_ALLOWED_ORIGINS", "")
 CORS_ALLOWED_ORIGINS = (
     [o.strip() for o in _cors_env.split(",") if o.strip()]
     if _cors_env
-    else ["http://localhost:3000", "http://127.0.0.1:3000"]
+    else [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ]
 )
 CORS_ALLOW_CREDENTIALS = True
 
@@ -156,7 +171,12 @@ _csrf_env = _os.environ.get("CSRF_TRUSTED_ORIGINS", "")
 CSRF_TRUSTED_ORIGINS = (
     [o.strip() for o in _csrf_env.split(",") if o.strip()]
     if _csrf_env
-    else ["http://localhost:3000", "http://127.0.0.1:3000"]
+    else [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ]
 )
 
 # Cross-subdomain cookie settings.

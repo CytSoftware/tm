@@ -55,7 +55,7 @@ export function TaskDialog({
   // On edit, the task's project is the source of truth and is not reassignable
   // (task keys are project-prefixed, so reparenting would break CYT-001).
   const initialProjectId =
-    mode === "edit" ? task!.project : activeProject.id;
+    mode === "edit" ? task!.project ?? activeProject.id : activeProject.id;
   const [projectId, setProjectId] = useState<number>(initialProjectId);
   const selectedProject = useMemo(
     () => projects.find((p) => p.id === projectId) ?? activeProject,
@@ -65,7 +65,7 @@ export function TaskDialog({
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [priority, setPriority] = useState<Priority>(
-    task?.priority ?? "MEDIUM",
+    (task?.priority ?? "P3") as Priority,
   );
   const [storyPoints, setStoryPoints] = useState<string>(
     task?.story_points != null ? String(task.story_points) : "",
@@ -74,7 +74,7 @@ export function TaskDialog({
   const pickDefaultColumn = (p: Project) => {
     return (
       p.columns.find((c) => c.id === initialColumnId)?.id ??
-      task?.column.id ??
+      task?.column?.id ??
       p.columns.find((c) => c.name === "Todo")?.id ??
       p.columns.find((c) => !c.is_done)?.id ??
       p.columns[0]?.id ??
