@@ -51,12 +51,23 @@ class Project(TimestampedModel):
         unique=True,
         help_text="Used as the human task key prefix, e.g. 'CYT' → CYT-001.",
     )
-    task_counter = models.PositiveIntegerField(default=0)
+    description = models.TextField(blank=True, default="")
     color = models.CharField(
         max_length=9,
         default="#6366f1",
         help_text="CSS hex color used to badge the project in cards and pickers.",
     )
+    icon = models.CharField(
+        max_length=8,
+        blank=True,
+        default="",
+        help_text="Single emoji or short string shown next to the project name.",
+    )
+    archived = models.BooleanField(
+        default=False,
+        help_text="Archived projects are hidden from the default sidebar list.",
+    )
+    task_counter = models.PositiveIntegerField(default=0)
 
     class Meta:
         ordering = ["name"]
@@ -355,6 +366,12 @@ class UserProfile(models.Model):
         null=True,
         blank=True,
         help_text="Uploaded profile picture. Takes precedence over avatar_url.",
+    )
+    starred_projects = models.ManyToManyField(
+        Project,
+        blank=True,
+        related_name="starred_by",
+        help_text="Projects this user has pinned to the top of their sidebar.",
     )
 
     def __str__(self) -> str:  # pragma: no cover

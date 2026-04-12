@@ -66,6 +66,7 @@ class ColumnSerializer(serializers.ModelSerializer):
 
 class ProjectSerializer(serializers.ModelSerializer):
     columns = ColumnSerializer(many=True, read_only=True)
+    is_starred = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -73,13 +74,32 @@ class ProjectSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "prefix",
+            "description",
             "color",
+            "icon",
+            "archived",
             "task_counter",
             "columns",
+            "is_starred",
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("task_counter", "created_at", "updated_at")
+        read_only_fields = (
+            "task_counter",
+            "is_starred",
+            "created_at",
+            "updated_at",
+        )
+
+    def get_is_starred(self, obj: Project) -> bool:
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        profile = getattr(user, "profile", None)
+        if profile is None:
+            return False
+        return profile.starred_projects.filter(pk=obj.pk).exists()
 
 
 # ---------------------------------------------------------------------------

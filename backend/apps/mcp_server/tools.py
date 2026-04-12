@@ -130,6 +130,10 @@ def _project_dict(p: Project) -> dict[str, Any]:
         "id": p.id,
         "name": p.name,
         "prefix": p.prefix,
+        "description": p.description,
+        "color": p.color,
+        "icon": p.icon,
+        "archived": p.archived,
         "task_counter": p.task_counter,
     }
 

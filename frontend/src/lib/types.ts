@@ -47,9 +47,13 @@ export type Project = {
   id: number;
   name: string;
   prefix: string;
+  description: string;
   color: string;
+  icon: string;
+  archived: boolean;
   task_counter: number;
   columns: Column[];
+  is_starred: boolean;
   created_at: string;
   updated_at: string;
 };
