@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Trash2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,7 @@ import {
 import { UserAvatar } from "@/components/UserAvatar";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { RecurrencePicker, type RecurrenceState } from "./RecurrencePicker";
+import { TimeInColumn, formatDuration } from "./TimeInColumn";
 import { useCreateTask, useUpdateTask, useDeleteTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import { apiFetch } from "@/lib/api";
@@ -35,6 +36,7 @@ import type {
   Priority,
   Label as LabelType,
   RecurringTaskTemplate,
+  StateTransition,
   User,
 } from "@/lib/types";
 import { PRIORITY_LABELS, PRIORITY_ORDER } from "@/lib/types";
@@ -381,6 +383,15 @@ export function TaskPanel({
               </PropRow>
             )}
 
+            {mode === "edit" && task?.current_column_since && (
+              <div className="flex items-start min-h-[22px]">
+                <span className="w-[72px] shrink-0 text-[12px] text-muted-foreground pl-1" />
+                <div className="flex-1 min-w-0 pl-1.5">
+                  <TimeInColumn task={task} size="sm" durationOnly />
+                </div>
+              </div>
+            )}
+
             <PropRow label="Priority">
               <Select
                 value={priority ?? ""}
@@ -471,6 +482,12 @@ export function TaskPanel({
                     />
                   </div>
                 )}
+              </div>
+            )}
+
+            {mode === "edit" && task && (
+              <div className="pt-2 mt-2 border-t border-border/40">
+                <TransitionHistory taskKey={task.key} />
               </div>
             )}
           </div>
@@ -711,6 +728,92 @@ function LabelPicker({
           ))}
         </PopoverContent>
       </Popover>
+    </div>
+  );
+}
+
+function TransitionHistory({ taskKey }: { taskKey: string }) {
+  const [open, setOpen] = useState(false);
+  const query = useQuery({
+    queryKey: ["task-transitions", taskKey],
+    queryFn: () =>
+      apiFetch<StateTransition[]>(`/api/tasks/${taskKey}/transitions/`),
+    enabled: open,
+    staleTime: 10_000,
+  });
+
+  const entries = query.data ?? [];
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 w-full px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+      >
+        {open ? (
+          <ChevronDown className="size-3" />
+        ) : (
+          <ChevronRight className="size-3" />
+        )}
+        <span className="uppercase tracking-wide">History</span>
+        {entries.length > 0 && (
+          <span className="ml-auto text-[10px] text-muted-foreground/70 tabular-nums">
+            {entries.length}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="mt-1 pl-5 pr-1 space-y-1">
+          {query.isLoading && (
+            <p className="text-[11px] text-muted-foreground">Loading...</p>
+          )}
+          {!query.isLoading && entries.length === 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              No column changes yet.
+            </p>
+          )}
+          {entries.map((t) => (
+            <TransitionRow key={t.id} transition={t} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TransitionRow({ transition }: { transition: StateTransition }) {
+  const from = transition.from_column?.name;
+  const to = transition.to_column?.name ?? "—";
+  const actor =
+    transition.triggered_by?.username ??
+    (transition.source === "recurring"
+      ? "recurring"
+      : transition.source === "backfill"
+        ? "backfill"
+        : transition.source === "mcp"
+          ? "agent"
+          : "system");
+  const when = formatDuration(transition.at);
+  return (
+    <div className="flex items-start gap-1.5 text-[11px] leading-tight">
+      <span className="size-1 rounded-full bg-muted-foreground/40 mt-1.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <span className="text-foreground">
+          {from ? (
+            <>
+              {from} <span className="text-muted-foreground">→</span> {to}
+            </>
+          ) : (
+            <>
+              <span className="text-muted-foreground">Placed in</span> {to}
+            </>
+          )}
+        </span>
+        <div className="text-muted-foreground/80">
+          {actor} · {when} ago
+        </div>
+      </div>
     </div>
   );
 }

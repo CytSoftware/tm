@@ -10,6 +10,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { UserAvatar } from "@/components/UserAvatar";
+import { TimeInColumn } from "@/components/task/TimeInColumn";
 import { cn } from "@/lib/utils";
 import { withAlpha } from "@/lib/colors";
 import type { Task, Priority, CardField, User } from "@/lib/types";
@@ -194,9 +195,10 @@ export function KanbanCard({
         </div>
       )}
 
-      {/* Footer: assignees + due date */}
+      {/* Footer: assignees + time-in-column + due date */}
       {((showAssignee && task.assignees.length > 0) ||
-        (showDueDate && task.due_at)) && (
+        (showDueDate && task.due_at) ||
+        task.current_column_since) && (
         <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-border/40">
           <div className="flex items-center gap-1.5 min-w-0">
             {showAssignee && task.assignees.length > 0 && (
@@ -204,6 +206,7 @@ export function KanbanCard({
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0 text-[11px] text-muted-foreground/70">
+            <TimeInColumn task={task} durationOnly />
             {showDueDate && task.due_at && (
               <div className="flex items-center gap-1">
                 <CalendarDays className="size-3" />

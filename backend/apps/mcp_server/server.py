@@ -156,7 +156,9 @@ async def move_task(
     ``position`` accepts ``"top"``, ``"bottom"`` (default), or an explicit
     numeric value.
     """
-    return await _async(tools.move_task)(key=key, column=column, position=position)
+    return await _async(tools.move_task)(
+        key=key, column=column, position=position, mcp_user=_get_mcp_user()
+    )
 
 
 @mcp.tool()

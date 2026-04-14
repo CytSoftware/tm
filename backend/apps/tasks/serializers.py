@@ -15,9 +15,11 @@ from .models import (
     Label,
     Project,
     RecurringTaskTemplate,
+    StateTransition,
     Task,
     View,
 )
+from .transitions import compute_staleness
 
 User = get_user_model()
 
@@ -123,6 +125,11 @@ class TaskReadSerializer(serializers.ModelSerializer):
         source="project.color", read_only=True, default=None
     )
     is_recurring_instance = serializers.SerializerMethodField()
+    # ``current_column_since`` comes from a queryset annotation added by
+    # ``base_task_queryset``. May be null for tasks without a column or
+    # legacy tasks whose transitions have been purged.
+    current_column_since = serializers.DateTimeField(read_only=True, allow_null=True)
+    staleness = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
@@ -147,11 +154,47 @@ class TaskReadSerializer(serializers.ModelSerializer):
             "due_at",
             "created_at",
             "updated_at",
+            "current_column_since",
+            "staleness",
         )
         read_only_fields = fields  # the write serializer is separate
 
     def get_is_recurring_instance(self, obj: Task) -> bool:
         return obj.recurrence_template_id is not None
+
+    def get_staleness(self, obj: Task) -> str | None:
+        thresholds = self.context.get("staleness_thresholds")
+        return compute_staleness(obj, thresholds=thresholds)
+
+
+class StateTransitionSerializer(serializers.ModelSerializer):
+    from_column = ColumnSerializer(read_only=True)
+    to_column = ColumnSerializer(read_only=True)
+    triggered_by = UserSerializer(read_only=True)
+
+    class Meta:
+        model = StateTransition
+        fields = (
+            "id",
+            "from_column",
+            "to_column",
+            "at",
+            "triggered_by",
+            "source",
+        )
+        read_only_fields = fields
+
+
+class StalenessSettingsSerializer(serializers.Serializer):
+    """Shape of the staleness settings endpoint response/payload.
+
+    ``thresholds`` maps a column name (matched case-sensitively) to a dict
+    with integer ``yellow_days`` and ``red_days``. A column can omit either
+    key to disable that tier. Done columns are always excluded from
+    staleness regardless of the map.
+    """
+
+    thresholds = serializers.JSONField()
 
 
 class TaskWriteSerializer(serializers.ModelSerializer):

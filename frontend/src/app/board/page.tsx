@@ -189,14 +189,16 @@ export default function BoardPage() {
     [allTasks, boardFilters],
   );
 
-  // Build column list + task grouping. Projectless tasks land in an Inbox
-  // bucket (in the "all projects" view only; the single-project view hides
-  // them because they don't belong to any column in the project).
+  // Build column list + task grouping. Projectless / columnless tasks are
+  // skipped on the board — they have no column to live in. They still appear
+  // in the List view and can be edited via the task panel or command palette.
   const { displayColumns, tasksByColumn } = useMemo(() => {
     const tasks = filteredTasks;
 
     if (project) {
       // Single project — group by column id, skip projectless/columnless tasks.
+      // Iteration preserves the order of `filteredTasks`, which is already
+      // sorted by the user's chosen sort (via applyBoardSort).
       const map = new Map<number, Task[]>();
       for (const t of tasks) {
         if (!t.column || t.project !== project.id) continue;
@@ -204,8 +206,6 @@ export default function BoardPage() {
         arr.push(t);
         map.set(t.column.id, arr);
       }
-      for (const arr of map.values())
-        arr.sort((a, b) => a.position - b.position);
       return {
         displayColumns: project.columns
           .slice()
@@ -215,40 +215,26 @@ export default function BoardPage() {
     }
 
     // All projects — group by column name, always include standard columns.
+    // Tasks without a column are skipped (no visual home on the Kanban).
     const byName = new Map<string, Task[]>();
-
-    // Seed all standard column names so empty ones appear
     for (const std of STANDARD_COLUMNS) {
       byName.set(std.name, []);
     }
 
-    // A synthetic "Inbox" bucket for projectless / columnless tasks.
-    const INBOX = "Inbox";
-    const inboxTasks: Task[] = [];
-
     for (const t of tasks) {
-      if (!t.column) {
-        inboxTasks.push(t);
-        continue;
-      }
+      if (!t.column) continue;
       const name = t.column.name;
       const arr = byName.get(name) ?? [];
       arr.push(t);
       byName.set(name, arr);
     }
-    for (const arr of byName.values())
-      arr.sort((a, b) => a.position - b.position);
-    inboxTasks.sort((a, b) => a.position - b.position);
 
-    // Sort columns by standard order, unknowns at the end
+    // Sort columns by standard order, unknowns at the end. Use negative
+    // synthetic IDs so they don't clash with real column IDs.
     const names = [...byName.keys()].sort(
       (a, b) =>
         (STANDARD_COL_ORDER[a] ?? 99) - (STANDARD_COL_ORDER[b] ?? 99),
     );
-
-    // Use negative synthetic IDs so they don't clash with real column IDs.
-    // Inbox always gets id -100 so it's visually distinct from the project
-    // virtual columns (-1..-N).
     const virtualCols: Column[] = names.map((name, i) => ({
       id: -(i + 1),
       project: 0,
@@ -256,24 +242,10 @@ export default function BoardPage() {
       order: STANDARD_COL_ORDER[name] ?? 50 + i,
       is_done: name === "Done",
     }));
-    if (inboxTasks.length > 0) {
-      virtualCols.unshift({
-        id: -100,
-        project: 0,
-        name: INBOX,
-        order: -1,
-        is_done: false,
-      });
-    }
 
-    // Re-key the task map from name to the virtual column's synthetic ID.
     const map = new Map<number, Task[]>();
     for (const vc of virtualCols) {
-      if (vc.name === INBOX) {
-        map.set(vc.id, inboxTasks);
-      } else {
-        map.set(vc.id, byName.get(vc.name) ?? []);
-      }
+      map.set(vc.id, byName.get(vc.name) ?? []);
     }
 
     return { displayColumns: virtualCols, tasksByColumn: map };
@@ -539,8 +511,8 @@ export default function BoardPage() {
     );
     if (!movingTask) return;
 
-    // Projectless (Inbox) tasks can't be moved via drag — the API requires
-    // a column id and Inbox has none. Ignore the drop.
+    // Projectless tasks can't be moved via drag — the API requires a
+    // column id and they have none. Ignore the drop.
     if (movingTask.project == null) return;
 
     // Find which column the task ended up in (from orderedItems)

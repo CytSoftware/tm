@@ -417,3 +417,117 @@ def _seed_default_columns(sender, instance: Project, created: bool, **kwargs):
     Column.objects.bulk_create(
         [Column(project=instance, **col) for col in DEFAULT_COLUMNS]
     )
+
+
+# ---------------------------------------------------------------------------
+# Time-in-state tracking
+# ---------------------------------------------------------------------------
+
+
+class TransitionSource(models.TextChoices):
+    USER = "user", "User"
+    MCP = "mcp", "MCP"
+    RECURRING = "recurring", "Recurring generator"
+    BACKFILL = "backfill", "Backfill"
+
+
+class StateTransition(models.Model):
+    """Immutable log of every column change for a task.
+
+    Each record answers: "at time ``at``, task moved from ``from_column`` to
+    ``to_column``, triggered by ``triggered_by`` via ``source``." Used to
+    compute time-in-column durations and staleness.
+    """
+
+    task = models.ForeignKey(
+        "Task", on_delete=models.CASCADE, related_name="transitions"
+    )
+    from_column = models.ForeignKey(
+        Column,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transitions_from",
+    )
+    to_column = models.ForeignKey(
+        Column,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transitions_to",
+    )
+    at = models.DateTimeField()
+    triggered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="triggered_transitions",
+    )
+    source = models.CharField(
+        max_length=16,
+        choices=TransitionSource.choices,
+        default=TransitionSource.USER,
+    )
+
+    class Meta:
+        ordering = ["task_id", "at", "id"]
+        indexes = [
+            models.Index(fields=["task", "at"]),
+            models.Index(fields=["task", "to_column"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        frm = self.from_column.name if self.from_column_id else "∅"
+        to = self.to_column.name if self.to_column_id else "∅"
+        return f"{self.task_id}: {frm} → {to} @ {self.at.isoformat()}"
+
+
+# Default global thresholds applied to columns by name. Columns not listed
+# here (and all ``is_done=True`` columns) never trigger a stale badge.
+DEFAULT_STALE_THRESHOLDS: dict[str, dict[str, int]] = {
+    "Backlog": {"yellow_days": 14, "red_days": 30},
+    "Todo": {"yellow_days": 5, "red_days": 10},
+    "In Progress": {"yellow_days": 5, "red_days": 10},
+    "In Review": {"yellow_days": 3, "red_days": 7},
+}
+
+
+class StaleThresholdConfig(models.Model):
+    """Singleton — global yellow/red thresholds keyed by column name.
+
+    Keyed by name (not id) so the config applies uniformly to same-named
+    columns across every project. "Done" columns (and any column not listed
+    in ``thresholds``) are never considered stale regardless of configuration.
+    """
+
+    SINGLETON_PK = 1
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=SINGLETON_PK)
+    thresholds = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            'Map of column name → {"yellow_days": N, "red_days": M}. '
+            'Columns with is_done=True are always excluded.'
+        ),
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "stale threshold config"
+        verbose_name_plural = "stale threshold config"
+
+    def save(self, *args, **kwargs):
+        # Enforce singleton — force the primary key regardless of what the
+        # caller passed. ``get_or_create`` in ``load()`` is the normal path.
+        self.id = self.SINGLETON_PK
+        return super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls) -> "StaleThresholdConfig":
+        obj, _ = cls.objects.get_or_create(
+            id=cls.SINGLETON_PK,
+            defaults={"thresholds": DEFAULT_STALE_THRESHOLDS.copy()},
+        )
+        return obj

@@ -80,6 +80,27 @@ export type Task = {
   due_at: string | null;
   created_at: string;
   updated_at: string;
+  /** ISO timestamp of the most recent transition *into* the current column.
+   *  Null for columnless tasks or legacy rows with no transition log. */
+  current_column_since: string | null;
+  /** Derived staleness badge: yellow = past yellow_days, red = past red_days.
+   *  Null means not configured or in a Done column. */
+  staleness: "yellow" | "red" | null;
+};
+
+export type StateTransition = {
+  id: number;
+  from_column: Column | null;
+  to_column: Column | null;
+  at: string;
+  triggered_by: User | null;
+  source: "user" | "mcp" | "recurring" | "backfill";
+};
+
+export type StalenessSettings = {
+  thresholds: Record<string, { yellow_days?: number; red_days?: number }>;
+  defaults: Record<string, { yellow_days?: number; red_days?: number }>;
+  updated_at: string;
 };
 
 export type TaskListResponse = {
@@ -120,7 +141,15 @@ export type SavedViewFilters = {
 };
 
 export type SavedViewSort = Array<{
-  field: "created_at" | "updated_at" | "due_at" | "title" | "position" | "story_points" | "priority";
+  field:
+    | "created_at"
+    | "updated_at"
+    | "due_at"
+    | "title"
+    | "position"
+    | "story_points"
+    | "priority"
+    | "staleness";
   dir: "asc" | "desc";
 }>;
 
@@ -131,6 +160,7 @@ export const SORT_FIELDS: SortField[] = [
   "created_at",
   "due_at",
   "priority",
+  "staleness",
   "title",
   "story_points",
   "position",
@@ -141,6 +171,7 @@ export const SORT_FIELD_LABELS: Record<SortField, string> = {
   created_at: "Created",
   due_at: "Due date",
   priority: "Priority",
+  staleness: "Staleness",
   title: "Title",
   story_points: "Story points",
   position: "Manual order",

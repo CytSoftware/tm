@@ -27,7 +27,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from .models import Column, RecurringTaskTemplate, Task
+from .models import Column, RecurringTaskTemplate, Task, TransitionSource
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +191,9 @@ def generate_due_instances(now: datetime | None = None) -> list[Task]:
     Safe to call from the management command and the lazy middleware
     concurrently — ``select_for_update`` + SQLite's file lock serialize writes.
     """
-    # Local import to avoid pulling channels into non-web code paths.
+    # Local imports to avoid pulling channels/transitions into non-web paths.
     from .broadcast import broadcast_task_event
+    from .transitions import record_transition
 
     now = now or timezone.now()
     created: list[Task] = []
@@ -233,6 +234,14 @@ def generate_due_instances(now: datetime | None = None) -> list[Task]:
                 task.labels.set(tpl_label_ids)
             if tpl_assignee_ids:
                 task.assignees.set(tpl_assignee_ids)
+
+            record_transition(
+                task,
+                from_column=None,
+                to_column=tpl.column,
+                user=tpl.created_by,
+                source=TransitionSource.RECURRING,
+            )
 
             broadcast_task_event(
                 tpl.project_id,

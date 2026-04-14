@@ -729,12 +729,16 @@ export function applyBoardFilters(
     result = result.filter((t) => t.column?.name === filters.columnName);
   }
   if (filters.search) {
-    const q = filters.search.toLowerCase();
-    result = result.filter(
-      (t) =>
-        t.title.toLowerCase().includes(q) ||
-        t.key.toLowerCase().includes(q),
-    );
+    // Word-AND matching — every whitespace-separated token must appear in
+    // either key or title. Mirrors the backend's `apply_task_filters`
+    // behavior so the board search feels consistent with the command palette.
+    const words = filters.search.toLowerCase().split(/\s+/).filter(Boolean);
+    if (words.length > 0) {
+      result = result.filter((t) => {
+        const hay = `${t.key} ${t.title}`.toLowerCase();
+        return words.every((w) => hay.includes(w));
+      });
+    }
   }
   return applyBoardSort(result, filters.sort);
 }
@@ -771,10 +775,24 @@ export function applyBoardSort(
       case "position":
         cmp = a.position - b.position;
         break;
+      case "staleness":
+        // Oldest current_column_since first = "most stale first" (asc).
+        // Null sorts last regardless of direction.
+        cmp = stalenessCmp(a, b);
+        break;
     }
     return cmp * mul;
   });
   return arr;
+}
+
+function stalenessCmp(a: import("@/lib/types").Task, b: import("@/lib/types").Task): number {
+  const aTs = a.current_column_since;
+  const bTs = b.current_column_since;
+  if (aTs == null && bTs == null) return 0;
+  if (aTs == null) return 1;
+  if (bTs == null) return -1;
+  return aTs.localeCompare(bTs);
 }
 
 function priorityRank(p: Priority | null): number {

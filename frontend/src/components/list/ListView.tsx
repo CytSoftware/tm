@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { UserAvatar } from "@/components/UserAvatar";
+import { TimeInColumn } from "@/components/task/TimeInColumn";
 import { PRIORITY_LABELS } from "@/lib/types";
 import type { SavedViewSort, SortField, Task } from "@/lib/types";
 import { withAlpha } from "@/lib/colors";
@@ -37,16 +38,21 @@ type TableCol =
   | "labels"
   | "points"
   | "due_at"
-  | "updated_at";
+  | "updated_at"
+  | "staleness";
 
 /** Columns that map directly to a backend SortField. */
-const SORTABLE_COLS: Record<Exclude<TableCol, "assignee" | "labels" | "column">, SortField> = {
+const SORTABLE_COLS: Record<
+  Exclude<TableCol, "assignee" | "labels" | "column">,
+  SortField
+> = {
   key: "title", // no backend sort for key; reuse title as the visible fallback
   title: "title",
   priority: "priority",
   points: "story_points",
   due_at: "due_at",
   updated_at: "updated_at",
+  staleness: "staleness",
 };
 
 type Props = {
@@ -98,6 +104,11 @@ export function ListView({
         case "position":
           cmp = a.position - b.position;
           break;
+        case "staleness":
+          // Oldest current_column_since first = "most stale first" (asc).
+          // Null sorts last regardless of direction.
+          cmp = stalenessCmp(a, b);
+          break;
       }
       return cmp * mul;
     });
@@ -145,6 +156,9 @@ export function ListView({
             </SortableHead>
             <SortableHead col="due_at" sort={sort} onClick={toggleSort}>
               Due
+            </SortableHead>
+            <SortableHead col="staleness" sort={sort} onClick={toggleSort}>
+              In column
             </SortableHead>
             <SortableHead col="updated_at" sort={sort} onClick={toggleSort}>
               Updated
@@ -236,6 +250,9 @@ export function ListView({
                     })
                   : ""}
               </TableCell>
+              <TableCell className="text-[12px]">
+                <TimeInColumn task={task} size="sm" durationOnly />
+              </TableCell>
               <TableCell className="text-[12px] text-muted-foreground">
                 {new Date(task.updated_at).toLocaleDateString(undefined, {
                   month: "short",
@@ -247,7 +264,7 @@ export function ListView({
           {sorted.length === 0 && (
             <TableRow>
               <TableCell
-                colSpan={9}
+                colSpan={10}
                 className="text-center text-muted-foreground py-8"
               >
                 No tasks found.
@@ -258,6 +275,17 @@ export function ListView({
       </Table>
     </div>
   );
+}
+
+/** "Most stale first" compare — earliest `current_column_since` sorts first.
+ *  Tasks without a timestamp always sort after tasks that have one. */
+function stalenessCmp(a: Task, b: Task): number {
+  const aTs = a.current_column_since;
+  const bTs = b.current_column_since;
+  if (aTs == null && bTs == null) return 0;
+  if (aTs == null) return 1;
+  if (bTs == null) return -1;
+  return aTs.localeCompare(bTs);
 }
 
 function SortableHead({

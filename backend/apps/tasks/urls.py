@@ -15,6 +15,7 @@ from .views import (
     MeView,
     ProjectViewSet,
     RecurringTaskViewSet,
+    StalenessSettingsView,
     TaskViewSet,
     UserViewSet,
     ViewViewSet,
@@ -37,6 +38,11 @@ urlpatterns = [
     path("auth/logout/", LogoutView.as_view(), name="logout"),
     path("auth/me/", MeView.as_view(), name="me"),
     path("internal/broadcast/", internal_broadcast, name="internal-broadcast"),
+    path(
+        "settings/staleness/",
+        StalenessSettingsView.as_view(),
+        name="staleness-settings",
+    ),
     path("schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "schema/swagger/",

@@ -29,6 +29,7 @@ from apps.tasks.models import (
     Project,
     RecurringTaskTemplate,
     Task,
+    TransitionSource,
     View,
 )
 from apps.tasks.query import (
@@ -41,6 +42,7 @@ from apps.tasks.recurring import (
     preview_occurrences,
     validate_rrule,
 )
+from apps.tasks.transitions import record_transition
 
 User = get_user_model()
 
@@ -164,6 +166,9 @@ def _user_dict(u) -> dict[str, Any] | None:
 
 
 def _task_dict(t: Task, *, include_description: bool = True) -> dict[str, Any]:
+    from apps.tasks.transitions import compute_staleness
+
+    since = getattr(t, "current_column_since", None)
     data = {
         "id": t.id,
         "key": t.key,
@@ -180,6 +185,8 @@ def _task_dict(t: Task, *, include_description: bool = True) -> dict[str, Any]:
         "created_at": t.created_at.isoformat(),
         "updated_at": t.updated_at.isoformat(),
         "recurrence_template_id": t.recurrence_template_id,
+        "current_column_since": since.isoformat() if since else None,
+        "staleness": compute_staleness(t),
     }
     if include_description:
         data["description"] = t.description
@@ -294,6 +301,14 @@ def create_task(
     if assignee_users:
         task.assignees.set(assignee_users)
 
+    record_transition(
+        task,
+        from_column=None,
+        to_column=col,
+        user=mcp_user,
+        source=TransitionSource.MCP,
+    )
+
     broadcast_task_event(
         proj.id, "task.created", {"key": task.key, "id": task.id}
     )
@@ -344,8 +359,10 @@ def move_task(
     key: str,
     column: str | int,
     position: str | float | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
     task = base_task_queryset().get(key=key)
+    old_column = task.column
     col = _resolve_column(task.project, column)
     task.column = col
 
@@ -362,6 +379,14 @@ def move_task(
             ) from e
 
     task.save(update_fields=["column", "position", "updated_at"])
+    if (old_column.id if old_column else None) != col.id:
+        record_transition(
+            task,
+            from_column=old_column,
+            to_column=col,
+            user=mcp_user,
+            source=TransitionSource.MCP,
+        )
     broadcast_task_event(
         task.project_id,
         "task.moved",

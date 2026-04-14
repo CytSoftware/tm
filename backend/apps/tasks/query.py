@@ -31,9 +31,9 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping
 
 from django.contrib.auth import get_user_model
-from django.db.models import Case, IntegerField, Q, QuerySet, When
+from django.db.models import Case, IntegerField, OuterRef, Q, QuerySet, Subquery, When
 
-from .models import Label, Priority, Project, Task
+from .models import Label, Priority, Project, StateTransition, Task
 
 User = get_user_model()
 
@@ -53,16 +53,35 @@ SORTABLE_FIELDS = {
     "position",
     "story_points",
     "priority",  # special-cased into a Case/When rank
+    # "staleness" sorts by `current_column_since` asc = most stale first;
+    # tasks that never transitioned into their current column (or have no
+    # column) sort last regardless of direction thanks to NULL handling.
+    "staleness",
+    "current_column_since",
 }
 
 
 def base_task_queryset() -> QuerySet[Task]:
-    """Pre-joined task queryset used by every code path."""
+    """Pre-joined task queryset used by every code path.
+
+    Annotates ``current_column_since`` — the ``at`` timestamp of the most
+    recent :class:`StateTransition` whose ``to_column`` matches the task's
+    current column. Tasks that haven't transitioned into their current
+    column (e.g. legacy tasks not yet backfilled) get ``NULL``.
+    """
+    latest_entry = (
+        StateTransition.objects.filter(
+            task=OuterRef("pk"), to_column=OuterRef("column")
+        )
+        .order_by("-at")
+        .values("at")[:1]
+    )
     return (
         Task.objects.select_related(
             "project", "column", "reporter", "recurrence_template"
         )
         .prefetch_related("labels", "assignees")
+        .annotate(current_column_since=Subquery(latest_entry))
         .order_by("project_id", "column__order", "position", "id")
     )
 
@@ -179,11 +198,15 @@ def apply_task_filters(
         elif isinstance(raw_column, str):
             qs = qs.filter(column__name__iexact=raw_column)
 
-    # Free-text search (key + title)
+    # Free-text search (key + title). Whitespace-separated words are ANDed:
+    # every token must appear somewhere in either key or title. This turns
+    # a query like "auth login" into a match for "Login via Auth flow" even
+    # though those words aren't adjacent. Falls back to substring match when
+    # the query has no whitespace.
     if search := filters.get("search"):
-        if isinstance(search, str) and search.strip():
-            q = search.strip()
-            qs = qs.filter(Q(key__icontains=q) | Q(title__icontains=q))
+        if isinstance(search, str) and (stripped := search.strip()):
+            for word in stripped.split():
+                qs = qs.filter(Q(key__icontains=word) | Q(title__icontains=word))
 
     return qs
 
@@ -207,6 +230,11 @@ def apply_task_sort(
         if field == "priority":
             needs_priority_rank = True
             order_fields.append(f"{prefix}_priority_rank")
+        elif field == "staleness":
+            # "Most stale first" = oldest current_column_since first, so
+            # "asc" (the button label users will read as "most stale first")
+            # maps to current_column_since ASC. Invert for desc.
+            order_fields.append(f"{prefix}current_column_since")
         else:
             order_fields.append(f"{prefix}{field}")
 

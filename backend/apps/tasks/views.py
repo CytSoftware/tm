@@ -21,10 +21,16 @@ from .models import (
     Label,
     Project,
     RecurringTaskTemplate,
+    StaleThresholdConfig,
     Task,
+    TransitionSource,
     View,
 )
 from .query import base_task_queryset, filter_and_sort_tasks
+from .transitions import (
+    invalidate_stale_thresholds,
+    record_transition,
+)
 from .serializers import (
     ColumnSerializer,
     CsrfResponseSerializer,
@@ -34,12 +40,15 @@ from .serializers import (
     RecurringPreviewSerializer,
     RecurringTaskTemplateReadSerializer,
     RecurringTaskTemplateWriteSerializer,
+    StalenessSettingsSerializer,
+    StateTransitionSerializer,
     TaskMoveSerializer,
     TaskReadSerializer,
     TaskWriteSerializer,
     UserSerializer,
     ViewSerializer,
 )
+from .transitions import get_stale_thresholds
 from drf_spectacular.utils import extend_schema
 
 User = get_user_model()
@@ -162,6 +171,72 @@ def internal_broadcast(request):
 
 
 # ---------------------------------------------------------------------------
+# Staleness settings (global singleton)
+# ---------------------------------------------------------------------------
+
+
+class StalenessSettingsView(APIView):
+    """GET/PATCH the global stale-threshold config.
+
+    Readable by any authenticated user (so the frontend can render badges);
+    only editable by staff so a regular user can't accidentally turn
+    staleness off for the whole team.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = StalenessSettingsSerializer
+
+    @extend_schema(responses=StalenessSettingsSerializer)
+    def get(self, request):
+        from .models import DEFAULT_STALE_THRESHOLDS
+
+        config = StaleThresholdConfig.load()
+        return Response(
+            {
+                "thresholds": config.thresholds or {},
+                "defaults": DEFAULT_STALE_THRESHOLDS,
+                "updated_at": config.updated_at,
+            }
+        )
+
+    @extend_schema(
+        request=StalenessSettingsSerializer, responses=StalenessSettingsSerializer
+    )
+    def patch(self, request):
+        if not request.user.is_staff:
+            return Response(
+                {"detail": "Only staff can change staleness settings."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        payload = StalenessSettingsSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        thresholds = payload.validated_data.get("thresholds") or {}
+        if not isinstance(thresholds, dict):
+            raise ValidationError({"thresholds": "Must be an object."})
+
+        # Light validation: each value must be a dict; days must be
+        # non-negative integers if present. Unknown keys pass through.
+        for col_name, rules in thresholds.items():
+            if not isinstance(rules, dict):
+                raise ValidationError(
+                    {col_name: "Expected an object with yellow_days/red_days."}
+                )
+            for key in ("yellow_days", "red_days"):
+                if key in rules and rules[key] is not None:
+                    value = rules[key]
+                    if not isinstance(value, int) or value < 0:
+                        raise ValidationError(
+                            {col_name: f"{key} must be a non-negative integer."}
+                        )
+
+        config = StaleThresholdConfig.load()
+        config.thresholds = thresholds
+        config.save(update_fields=["thresholds", "updated_at"])
+        invalidate_stale_thresholds()
+        return Response({"thresholds": config.thresholds})
+
+
+# ---------------------------------------------------------------------------
 # Read-only reference data
 # ---------------------------------------------------------------------------
 
@@ -263,18 +338,46 @@ class TaskViewSet(viewsets.ModelViewSet):
         return qs
 
     def get_serializer_class(self):
-        if self.action in {"list", "retrieve"}:
+        if self.action in {"list", "retrieve", "move"}:
             return TaskReadSerializer
         return TaskWriteSerializer
 
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        # Load staleness thresholds once per request so each task's
+        # ``staleness`` SerializerMethodField doesn't hit the in-process
+        # cache individually.
+        ctx["staleness_thresholds"] = get_stale_thresholds()
+        return ctx
+
     def perform_create(self, serializer):
         task = serializer.save(reporter=self.request.user)
+        if task.column_id:
+            record_transition(
+                task,
+                from_column=None,
+                to_column=task.column,
+                user=self.request.user,
+                source=TransitionSource.USER,
+            )
         broadcast_task_event(
             task.project_id, "task.created", {"key": task.key, "id": task.id}
         )
 
     def perform_update(self, serializer):
+        # Capture old column before the update so we can record the
+        # transition if the PATCH changed it.
+        instance = serializer.instance
+        old_column = instance.column if instance else None
         task = serializer.save()
+        if task.column_id != (old_column.id if old_column else None):
+            record_transition(
+                task,
+                from_column=old_column,
+                to_column=task.column,
+                user=self.request.user,
+                source=TransitionSource.USER,
+            )
         broadcast_task_event(
             task.project_id, "task.updated", {"key": task.key, "id": task.id}
         )
@@ -284,6 +387,22 @@ class TaskViewSet(viewsets.ModelViewSet):
         key = instance.key
         instance.delete()
         broadcast_task_event(project_id, "task.deleted", {"key": key})
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="transitions",
+        serializer_class=StateTransitionSerializer,
+    )
+    def transitions(self, request, key=None):
+        """Return the ordered state-transition log for a task."""
+        task = self.get_object()
+        qs = (
+            task.transitions.all()
+            .select_related("from_column", "to_column", "triggered_by")
+            .order_by("at", "id")
+        )
+        return Response(StateTransitionSerializer(qs, many=True).data)
 
     @action(detail=True, methods=["post"], serializer_class=TaskMoveSerializer)
     def move(self, request, key=None):
@@ -307,6 +426,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 {"column_id": "Column does not belong to the task's project."}
             )
 
+        old_column = task.column
         with transaction.atomic():
             task.column = column
             if data.get("position") is not None:
@@ -321,13 +441,26 @@ class TaskViewSet(viewsets.ModelViewSet):
                     task_id=task.id,
                 )
             task.save(update_fields=["column", "position", "updated_at"])
+            if (old_column.id if old_column else None) != column.id:
+                record_transition(
+                    task,
+                    from_column=old_column,
+                    to_column=column,
+                    user=request.user,
+                    source=TransitionSource.USER,
+                )
 
         broadcast_task_event(
             task.project_id,
             "task.moved",
             {"key": task.key, "id": task.id, "column_id": column.id},
         )
-        return Response(TaskReadSerializer(task).data)
+        # Re-fetch through ``get_queryset`` so the ``current_column_since``
+        # annotation is populated for the response.
+        fresh = self.get_queryset().get(pk=task.pk)
+        return Response(
+            TaskReadSerializer(fresh, context=self.get_serializer_context()).data
+        )
 
 
 def _compute_position(

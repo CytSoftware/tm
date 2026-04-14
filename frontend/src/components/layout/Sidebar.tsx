@@ -690,6 +690,7 @@ function UserFooter({
   collapsed: boolean;
 }) {
   const qc = useQueryClient();
+  const router = useRouter();
   const [avatarInput, setAvatarInput] = useState(user.avatar_url || "");
 
   const updateAvatar = useMutation({
@@ -715,6 +716,21 @@ function UserFooter({
   if (collapsed) {
     return (
       <div className="flex flex-col items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="rounded-md p-1 hover:bg-sidebar-accent/60 transition-colors"
+                onClick={() => router.push("/settings/staleness")}
+                aria-label="Staleness settings"
+              >
+                <Settings className="size-4 text-muted-foreground" />
+              </button>
+            }
+          />
+          <TooltipContent side="right">Staleness settings</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -808,6 +824,22 @@ function UserFooter({
           </div>
         </PopoverContent>
       </Popover>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={() => router.push("/settings/staleness")}
+              aria-label="Staleness settings"
+            >
+              <Settings className="size-3.5" />
+            </Button>
+          }
+        />
+        <TooltipContent>Staleness settings</TooltipContent>
+      </Tooltip>
       <ModeToggle />
       <Button
         variant="ghost"
