@@ -32,6 +32,7 @@ import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import { LabelManager } from "@/components/label/LabelManager";
 import { ListView } from "@/components/list/ListView";
 import { CommandPalette } from "@/components/CommandPalette";
+import { DeclutterDialog } from "@/components/declutter/DeclutterDialog";
 import {
   FilterBar,
   applyBoardFilters,
@@ -165,6 +166,7 @@ export default function BoardPage() {
   const [activeId, setActiveId] = useState<number | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [declutterOpen, setDeclutterOpen] = useState(false);
 
   // orderedItems: Map<columnId, taskId[]> — local ordering state for DnD.
   // Seeded from tasksByColumn, mutated locally during drag operations.
@@ -294,7 +296,13 @@ export default function BoardPage() {
       }
 
       // Skip when palette or any dialog is open
-      if (paletteOpen || dialogState || createProjectOpen || labelManagerOpen) {
+      if (
+        paletteOpen ||
+        dialogState ||
+        createProjectOpen ||
+        labelManagerOpen ||
+        declutterOpen
+      ) {
         return;
       }
 
@@ -420,6 +428,7 @@ export default function BoardPage() {
     dialogState,
     createProjectOpen,
     labelManagerOpen,
+    declutterOpen,
     viewKind,
   ]);
 
@@ -651,6 +660,7 @@ export default function BoardPage() {
                             })
                         : undefined
                     }
+                    onDeclutter={() => setDeclutterOpen(true)}
                   >
                     <SortableContext
                       items={itemIds}
@@ -737,6 +747,13 @@ export default function BoardPage() {
           onSwitchView={(id) => setViewId(id)}
         />
       )}
+      <DeclutterDialog
+        open={declutterOpen}
+        onOpenChange={setDeclutterOpen}
+        tasks={tasksQuery.data?.results ?? []}
+        projects={projects}
+        scopeProjectId={projectId}
+      />
     </div>
   );
 }

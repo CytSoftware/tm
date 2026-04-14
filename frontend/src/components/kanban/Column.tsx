@@ -2,7 +2,7 @@
 
 import { ReactNode } from "react";
 import { useDroppable } from "@dnd-kit/core";
-import { Plus } from "lucide-react";
+import { Plus, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -13,9 +13,19 @@ type Props = {
   tasks: Task[];
   children: ReactNode;
   onAddTask?: () => void;
+  /** Tinder-style backlog triage. Renders a button only when the column is
+   *  named "Backlog" — parent passes the same handler to every column and
+   *  this component decides whether to show it. */
+  onDeclutter?: () => void;
 };
 
-export function KanbanColumn({ column, tasks, children, onAddTask }: Props) {
+export function KanbanColumn({
+  column,
+  tasks,
+  children,
+  onAddTask,
+  onDeclutter,
+}: Props) {
   // Make the column body a droppable so empty columns still accept drops.
   const { setNodeRef, isOver } = useDroppable({
     id: `col-${column.id}`,
@@ -38,20 +48,37 @@ export function KanbanColumn({ column, tasks, children, onAddTask }: Props) {
             {tasks.length}
           </span>
         </div>
-        {onAddTask && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6 text-muted-foreground hover:text-foreground"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAddTask();
-            }}
-            aria-label={`Add task to ${column.name}`}
-          >
-            <Plus className="size-3.5" />
-          </Button>
-        )}
+        <div className="flex items-center gap-0.5">
+          {onDeclutter && column.name === "Backlog" && tasks.length > 0 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 text-muted-foreground hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeclutter();
+              }}
+              aria-label="Declutter backlog"
+              title="Declutter backlog"
+            >
+              <Sparkles className="size-3.5" />
+            </Button>
+          )}
+          {onAddTask && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 text-muted-foreground hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddTask();
+              }}
+              aria-label={`Add task to ${column.name}`}
+            >
+              <Plus className="size-3.5" />
+            </Button>
+          )}
+        </div>
       </header>
       <div
         ref={setNodeRef}
