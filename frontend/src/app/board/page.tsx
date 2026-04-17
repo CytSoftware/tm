@@ -27,7 +27,6 @@ import { Plus, Settings, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { KanbanColumn } from "@/components/kanban/Column";
 import { KanbanCard } from "@/components/kanban/Card";
-import { TaskPanel } from "@/components/task/TaskPanel";
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import { LabelManager } from "@/components/label/LabelManager";
 import { ListView } from "@/components/list/ListView";
@@ -42,6 +41,7 @@ import {
 import { apiFetch } from "@/lib/api";
 import { viewsKey } from "@/lib/query-keys";
 import { useActiveProject } from "@/lib/active-project";
+import { useTaskDialog } from "@/lib/task-dialog";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import { useTasksQuery, useMoveTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
@@ -156,11 +156,7 @@ export default function BoardPage() {
     },
   });
 
-  const [dialogState, setDialogState] = useState<
-    | { mode: "create"; columnId: number | null }
-    | { mode: "edit"; task: Task }
-    | null
-  >(null);
+  const taskDialog = useTaskDialog();
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [labelManagerOpen, setLabelManagerOpen] = useState(false);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -298,7 +294,7 @@ export default function BoardPage() {
       // Skip when palette or any dialog is open
       if (
         paletteOpen ||
-        dialogState ||
+        taskDialog.isOpen ||
         createProjectOpen ||
         labelManagerOpen ||
         declutterOpen
@@ -400,7 +396,7 @@ export default function BoardPage() {
         case "Enter": {
           e.preventDefault();
           if (selectedTask) {
-            setDialogState({ mode: "edit", task: selectedTask });
+            taskDialog.openTask(selectedTask);
           }
           break;
         }
@@ -425,7 +421,7 @@ export default function BoardPage() {
     displayColumns,
     orderedItems,
     paletteOpen,
-    dialogState,
+    taskDialog,
     createProjectOpen,
     labelManagerOpen,
     declutterOpen,
@@ -597,9 +593,7 @@ export default function BoardPage() {
         projects={projects}
         project={project}
         projectId={projectId}
-        onNewTask={() =>
-          setDialogState({ mode: "create", columnId: null })
-        }
+        onNewTask={() => taskDialog.createTask({ columnId: null })}
         onManageLabels={() => setLabelManagerOpen(true)}
         boardFilters={boardFilters}
         onBoardFiltersChange={setBoardFilters}
@@ -632,7 +626,7 @@ export default function BoardPage() {
             onSortChange={(sort) =>
               setBoardFilters({ ...boardFilters, sort })
             }
-            onTaskClick={(task) => setDialogState({ mode: "edit", task })}
+            onTaskClick={(task) => taskDialog.openTask(task)}
           />
         ) : (
           <DndContext
@@ -654,10 +648,7 @@ export default function BoardPage() {
                     onAddTask={
                       project
                         ? () =>
-                            setDialogState({
-                              mode: "create",
-                              columnId: col.id,
-                            })
+                            taskDialog.createTask({ columnId: col.id })
                         : undefined
                     }
                     onDeclutter={() => setDeclutterOpen(true)}
@@ -678,9 +669,7 @@ export default function BoardPage() {
                             isSelected={task.id === selectedTaskId}
                             showProject={isAllProjects}
                             visibleFields={cardDisplay}
-                            onClick={() =>
-                              setDialogState({ mode: "edit", task })
-                            }
+                            onClick={() => taskDialog.openTask(task)}
                           />
                         );
                       })}
@@ -702,22 +691,6 @@ export default function BoardPage() {
           </DndContext>
         )}
       </div>
-      {dialogState && (
-        <TaskPanel
-          projects={projects}
-          activeProject={project ?? projects[0] ?? null}
-          mode={dialogState.mode}
-          initialColumnId={
-            dialogState.mode === "create"
-              ? dialogState.columnId ?? undefined
-              : undefined
-          }
-          task={
-            dialogState.mode === "edit" ? dialogState.task : undefined
-          }
-          onClose={() => setDialogState(null)}
-        />
-      )}
       {createProjectOpen && (
         <CreateProjectDialog onClose={() => setCreateProjectOpen(false)} />
       )}
@@ -737,10 +710,8 @@ export default function BoardPage() {
           labels={allLabels}
           views={viewsQuery.data?.results ?? []}
           onClose={() => setPaletteOpen(false)}
-          onEditTask={(task) => setDialogState({ mode: "edit", task })}
-          onCreateTask={() =>
-            setDialogState({ mode: "create", columnId: null })
-          }
+          onEditTask={(task) => taskDialog.openTask(task)}
+          onCreateTask={() => taskDialog.createTask({ columnId: null })}
           onCreateProject={() => setCreateProjectOpen(true)}
           onCreateLabel={() => setLabelManagerOpen(true)}
           onSwitchProject={(id) => setProjectId(id)}

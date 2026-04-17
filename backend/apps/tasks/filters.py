@@ -30,6 +30,8 @@ class TaskFilter(filters.FilterSet):
     def filter_search(self, queryset, name, value):
         if not value:
             return queryset
-        return queryset.filter(key__icontains=value) | queryset.filter(
-            title__icontains=value
+        return (
+            queryset.filter(key__icontains=value)
+            | queryset.filter(title__icontains=value)
+            | queryset.filter(description__icontains=value)
         )

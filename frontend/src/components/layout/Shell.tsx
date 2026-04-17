@@ -3,13 +3,15 @@
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Menu } from "lucide-react";
+import { Menu, Search as SearchIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { GlobalSearch } from "@/components/GlobalSearch";
 import { meKey } from "@/lib/query-keys";
 import { fetchMe } from "@/lib/auth";
 import { ensureCsrfCookie } from "@/lib/api";
 import { useSidebar } from "@/lib/sidebar-state";
+import { TaskDialogProvider } from "@/lib/task-dialog";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { Sidebar } from "./Sidebar";
 
@@ -36,26 +38,42 @@ export function Shell({ children }: { children: ReactNode }) {
 
   // Mobile overlay state (not persisted — always starts closed)
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Global search overlay (Cmd/Ctrl+K)
+  const [searchOpen, setSearchOpen] = useState(false);
 
   // Close mobile overlay on navigation
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
 
+  // Close global search on navigation — result clicks already close it, but
+  // this also covers sidebar clicks behind the backdrop etc.
+  useEffect(() => {
+    setSearchOpen(false);
+  }, [pathname]);
+
   useEffect(() => {
     ensureCsrfCookie().catch(() => {});
   }, []);
 
-  // ⌘B / Ctrl+B toggle
+  // Keyboard shortcuts:
+  //   ⌘B / Ctrl+B  toggle sidebar
+  //   ⌘K / Ctrl+K  toggle global search
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "b") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
         e.preventDefault();
         if (isDesktop) {
           toggle();
         } else {
           setMobileOpen((v) => !v);
         }
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+        return;
       }
     },
     [isDesktop, toggle],
@@ -97,62 +115,77 @@ export function Shell({ children }: { children: ReactNode }) {
   // ── Desktop layout ──────────────────────────────────────────────────
   if (isDesktop) {
     return (
-      <div className="h-screen flex overflow-hidden">
-        <Sidebar user={user} />
-        <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-background">
-          {children}
-        </main>
-      </div>
+      <TaskDialogProvider>
+        <div className="h-screen flex overflow-hidden">
+          <Sidebar user={user} />
+          <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-background">
+            {children}
+          </main>
+        </div>
+        <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+      </TaskDialogProvider>
     );
   }
 
   // ── Mobile layout ───────────────────────────────────────────────────
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
-      {/* Thin mobile top-bar with hamburger */}
-      <header className="shrink-0 h-11 flex items-center gap-2 px-3 border-b border-border/80 bg-background">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-8"
-          onClick={() => setMobileOpen(true)}
-          aria-label="Open sidebar"
-        >
-          <Menu className="size-4" />
-        </Button>
-        <div className="flex items-center gap-1.5">
-          <div className="size-5 rounded-[4px] bg-foreground grid place-items-center text-background text-[9px] font-semibold">
-            C
+    <TaskDialogProvider>
+      <div className="h-screen flex flex-col overflow-hidden">
+        {/* Thin mobile top-bar with hamburger */}
+        <header className="shrink-0 h-11 flex items-center gap-2 px-3 border-b border-border/80 bg-background">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            onClick={() => setMobileOpen(true)}
+            aria-label="Open sidebar"
+          >
+            <Menu className="size-4" />
+          </Button>
+          <div className="flex items-center gap-1.5 flex-1">
+            <div className="size-5 rounded-[4px] bg-foreground grid place-items-center text-background text-[9px] font-semibold">
+              C
+            </div>
+            <span className="text-[13px] font-semibold tracking-tight">
+              Cyt
+            </span>
           </div>
-          <span className="text-[13px] font-semibold tracking-tight">
-            Cyt
-          </span>
-        </div>
-      </header>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            onClick={() => setSearchOpen(true)}
+            aria-label="Search"
+          >
+            <SearchIcon className="size-4" />
+          </Button>
+        </header>
 
-      <main className="flex-1 min-h-0 flex flex-col overflow-hidden bg-background">
-        {children}
-      </main>
+        <main className="flex-1 min-h-0 flex flex-col overflow-hidden bg-background">
+          {children}
+        </main>
 
-      {/* Overlay sidebar */}
-      {mobileOpen && (
-        <>
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 z-40 bg-black/50 transition-opacity"
-            onClick={() => setMobileOpen(false)}
-            aria-hidden
-          />
-          {/* Sidebar panel */}
-          <div className="fixed inset-y-0 left-0 z-50 w-60 animate-in slide-in-from-left duration-200">
-            <Sidebar
-              user={user}
-              mobile
-              onClose={() => setMobileOpen(false)}
+        {/* Overlay sidebar */}
+        {mobileOpen && (
+          <>
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 z-40 bg-black/50 transition-opacity"
+              onClick={() => setMobileOpen(false)}
+              aria-hidden
             />
-          </div>
-        </>
-      )}
-    </div>
+            {/* Sidebar panel */}
+            <div className="fixed inset-y-0 left-0 z-50 w-60 animate-in slide-in-from-left duration-200">
+              <Sidebar
+                user={user}
+                mobile
+                onClose={() => setMobileOpen(false)}
+              />
+            </div>
+          </>
+        )}
+      </div>
+      <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+    </TaskDialogProvider>
   );
 }
