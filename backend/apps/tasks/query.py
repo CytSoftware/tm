@@ -198,15 +198,16 @@ def apply_task_filters(
         elif isinstance(raw_column, str):
             qs = qs.filter(column__name__iexact=raw_column)
 
-    # Free-text search (key + title). Whitespace-separated words are ANDed:
-    # every token must appear somewhere in either key or title. This turns
-    # a query like "auth login" into a match for "Login via Auth flow" even
-    # though those words aren't adjacent. Falls back to substring match when
-    # the query has no whitespace.
+    # Free-text search (key + title + description). Whitespace-separated
+    # words are ANDed: every token must appear somewhere across those fields.
     if search := filters.get("search"):
         if isinstance(search, str) and (stripped := search.strip()):
             for word in stripped.split():
-                qs = qs.filter(Q(key__icontains=word) | Q(title__icontains=word))
+                qs = qs.filter(
+                    Q(key__icontains=word)
+                    | Q(title__icontains=word)
+                    | Q(description__icontains=word)
+                )
 
     return qs
 
