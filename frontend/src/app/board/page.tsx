@@ -24,7 +24,7 @@ import {
   attachClosestEdge,
   extractClosestEdge,
 } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
-import { Plus, Settings, Tag } from "lucide-react";
+import { Plus, Repeat, Settings, Tag } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { KanbanColumn } from "@/components/kanban/Column";
@@ -32,6 +32,7 @@ import { KanbanCard } from "@/components/kanban/Card";
 import { TaskPanel } from "@/components/task/TaskPanel";
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import { LabelManager } from "@/components/label/LabelManager";
+import { RecurringManager } from "@/components/recurring/RecurringManager";
 import { ListView } from "@/components/list/ListView";
 import { CommandPalette } from "@/components/CommandPalette";
 import { DeclutterDialog } from "@/components/declutter/DeclutterDialog";
@@ -286,6 +287,7 @@ export default function BoardPage() {
   >(null);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [labelManagerOpen, setLabelManagerOpen] = useState(false);
+  const [recurringManagerOpen, setRecurringManagerOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [declutterOpen, setDeclutterOpen] = useState(false);
@@ -404,6 +406,7 @@ export default function BoardPage() {
         dialogState ||
         createProjectOpen ||
         labelManagerOpen ||
+        recurringManagerOpen ||
         declutterOpen
       ) {
         return;
@@ -531,6 +534,7 @@ export default function BoardPage() {
     dialogState,
     createProjectOpen,
     labelManagerOpen,
+    recurringManagerOpen,
     declutterOpen,
     viewKind,
   ]);
@@ -698,6 +702,7 @@ export default function BoardPage() {
           setDialogState({ mode: "create", columnId: null })
         }
         onManageLabels={() => setLabelManagerOpen(true)}
+        onManageRecurring={() => setRecurringManagerOpen(true)}
         boardFilters={boardFilters}
         onBoardFiltersChange={setBoardFilters}
         users={allUsers}
@@ -805,22 +810,24 @@ export default function BoardPage() {
           </div>
         )}
       </div>
-      {dialogState && (
-        <TaskPanel
-          projects={projects}
-          activeProject={project ?? projects[0] ?? null}
-          mode={dialogState.mode}
-          initialColumnId={
-            dialogState.mode === "create"
-              ? dialogState.columnId ?? undefined
-              : undefined
-          }
-          task={
-            dialogState.mode === "edit" ? dialogState.task : undefined
-          }
-          onClose={() => setDialogState(null)}
-        />
-      )}
+      {dialogState &&
+        (dialogState.mode === "create" ? (
+          <TaskPanel
+            projects={projects}
+            activeProject={project ?? projects[0] ?? null}
+            mode="create"
+            initialColumnId={dialogState.columnId ?? undefined}
+            onClose={() => setDialogState(null)}
+          />
+        ) : (
+          <TaskPanel
+            projects={projects}
+            activeProject={project ?? projects[0] ?? null}
+            mode="edit"
+            task={dialogState.task}
+            onClose={() => setDialogState(null)}
+          />
+        ))}
       {createProjectOpen && (
         <CreateProjectDialog onClose={() => setCreateProjectOpen(false)} />
       )}
@@ -829,6 +836,13 @@ export default function BoardPage() {
           projectId={project?.id ?? null}
           projectName={project?.name ?? null}
           onClose={() => setLabelManagerOpen(false)}
+        />
+      )}
+      {recurringManagerOpen && (
+        <RecurringManager
+          projectId={project?.id ?? null}
+          projects={projects}
+          onClose={() => setRecurringManagerOpen(false)}
         />
       )}
       {paletteOpen && (
@@ -867,6 +881,7 @@ function BoardHeader({
   projectId,
   onNewTask,
   onManageLabels,
+  onManageRecurring,
   boardFilters,
   onBoardFiltersChange,
   users,
@@ -880,6 +895,7 @@ function BoardHeader({
   projectId: number | null;
   onNewTask: () => void;
   onManageLabels: () => void;
+  onManageRecurring: () => void;
   boardFilters: BoardFilters;
   onBoardFiltersChange: (next: BoardFilters) => void;
   users: import("@/lib/types").User[];
@@ -943,6 +959,15 @@ function BoardHeader({
       >
         <Tag className="size-3.5" />
         Labels
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-8 text-[13px] shrink-0"
+        onClick={onManageRecurring}
+      >
+        <Repeat className="size-3.5" />
+        Recurring
       </Button>
       <Button
         size="sm"

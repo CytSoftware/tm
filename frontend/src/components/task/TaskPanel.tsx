@@ -24,12 +24,17 @@ import {
 } from "@/components/ui/popover";
 import { UserAvatar } from "@/components/UserAvatar";
 import { DescriptionEditor } from "./DescriptionEditor";
-import { RecurrencePicker, type RecurrenceState } from "./RecurrencePicker";
+import {
+  RecurrencePicker,
+  buildRrule,
+  parseRruleToState,
+  type RecurrenceState,
+} from "./RecurrencePicker";
 import { TimeInColumn, formatDuration } from "./TimeInColumn";
 import { useCreateTask, useUpdateTask, useDeleteTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import { apiFetch } from "@/lib/api";
-import { projectsKey, recurringKey, taskListKey } from "@/lib/query-keys";
+import { projectsKey, taskListKey } from "@/lib/query-keys";
 import type {
   Project,
   Task,
@@ -46,27 +51,41 @@ type Props = {
   projects: Project[];
   /** Pre-selected project for "create" mode. Null means "start in Inbox". */
   activeProject: Project | null;
-  mode: "create" | "edit";
-  task?: Task;
-  initialColumnId?: number;
   onClose: () => void;
-};
+} & (
+  | { mode: "create"; task?: never; template?: never; initialColumnId?: number }
+  | { mode: "edit"; task: Task; template?: never; initialColumnId?: never }
+  | {
+      mode: "edit-recurring";
+      template: RecurringTaskTemplate;
+      task?: never;
+      initialColumnId?: never;
+    }
+);
 
-export function TaskPanel({
-  projects,
-  activeProject,
-  mode,
-  task,
-  initialColumnId,
-  onClose,
-}: Props) {
+export function TaskPanel(props: Props) {
+  const {
+    projects,
+    activeProject,
+    mode,
+    onClose,
+  } = props;
+  const task = props.mode === "edit" ? props.task : undefined;
+  const template =
+    props.mode === "edit-recurring" ? props.template : undefined;
+  const initialColumnId =
+    props.mode === "create" ? props.initialColumnId : undefined;
   const queryClient = useQueryClient();
   const usersQuery = useUsersQuery();
   const users = usersQuery.data ?? [];
 
-  // projectId === null means "Inbox" (projectless task).
-  const initialProjectId: number | null =
-    mode === "edit" ? task!.project : activeProject?.id ?? null;
+  // projectId === null means "Inbox" (projectless task). Templates always
+  // have a project — they can't live in the Inbox.
+  const initialProjectId: number | null = task
+    ? task.project
+    : template
+      ? template.project
+      : activeProject?.id ?? null;
   const [projectId, setProjectId] = useState<number | null>(initialProjectId);
   const selectedProject = useMemo(
     () =>
@@ -76,23 +95,28 @@ export function TaskPanel({
     [projects, projectId, activeProject],
   );
 
-  const [title, setTitle] = useState(task?.title ?? "");
-  const [description, setDescription] = useState(task?.description ?? "");
+  // Source of shared fields (title, priority, assignees, etc.). Both
+  // Task and RecurringTaskTemplate share this shape.
+  const seed = task ?? template;
+  const [title, setTitle] = useState(seed?.title ?? "");
+  const [description, setDescription] = useState(seed?.description ?? "");
   const [priority, setPriority] = useState<Priority | null>(
-    task?.priority ?? null,
+    seed?.priority ?? null,
   );
   const [storyPoints, setStoryPoints] = useState<string>(
-    task?.story_points != null ? String(task.story_points) : "",
+    seed?.story_points != null ? String(seed.story_points) : "",
   );
   const [dueAt, setDueAt] = useState<string>(
     task?.due_at ? task.due_at.slice(0, 16) : "",
   );
   const [assigneeIds, setAssigneeIds] = useState<number[]>(
-    task?.assignees?.map((u) => u.id) ?? [],
+    seed?.assignees?.map((u) => u.id) ?? [],
   );
   const [labelIds, setLabelIds] = useState<number[]>(
-    task?.labels.map((l) => l.id) ?? [],
+    seed?.labels.map((l) => l.id) ?? [],
   );
+  // Only meaningful in `edit-recurring` mode. Controls pause/resume.
+  const [active, setActive] = useState<boolean>(template?.active ?? true);
 
   const pickDefaultColumn = (
     p: Project | null,
@@ -107,6 +131,7 @@ export function TaskPanel({
     return (
       p.columns.find((c) => c.id === initialColumnId)?.id ??
       task?.column?.id ??
+      template?.column?.id ??
       p.columns.find((c) => c.name === "Todo")?.id ??
       p.columns.find((c) => !c.is_done)?.id ??
       p.columns[0]?.id ??
@@ -135,14 +160,18 @@ export function TaskPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
 
-  const [recurrence, setRecurrence] = useState<RecurrenceState>({
-    enabled: false,
-    preset: "daily",
-    weekdays: ["MO"],
-    monthDay: 1,
-    customRrule: "",
-    dtstartLocal: defaultDtstartLocal(),
-  });
+  const [recurrence, setRecurrence] = useState<RecurrenceState>(() =>
+    template
+      ? parseRruleToState(template.rrule, template.dtstart)
+      : {
+          enabled: false,
+          preset: "daily",
+          weekdays: ["MO"],
+          monthDay: 1,
+          customRrule: "",
+          dtstartLocal: defaultDtstartLocal(),
+        },
+  );
 
   // Fetch labels for the selected project (or global labels when in the Inbox)
   const labelsQuery = useQuery({
@@ -171,10 +200,10 @@ export function TaskPanel({
         body: payload,
       }),
     onSuccess: () => {
+      // Invalidate the whole "recurring" prefix so RecurringManager's
+      // "all" scope refetches too, not only the per-project listing.
+      queryClient.invalidateQueries({ queryKey: ["recurring"] });
       if (selectedProject) {
-        queryClient.invalidateQueries({
-          queryKey: recurringKey(selectedProject.id),
-        });
         queryClient.invalidateQueries({
           queryKey: taskListKey(selectedProject.id),
         });
@@ -182,10 +211,37 @@ export function TaskPanel({
     },
   });
 
+  const updateRecurring = useMutation({
+    mutationFn: (payload: unknown) =>
+      apiFetch<RecurringTaskTemplate>(
+        `/api/recurring-tasks/${template?.id}/`,
+        { method: "PATCH", body: payload },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["recurring"] });
+      if (template?.project != null) {
+        queryClient.invalidateQueries({
+          queryKey: taskListKey(template.project),
+        });
+      }
+    },
+  });
+
+  const deleteRecurring = useMutation({
+    mutationFn: () =>
+      apiFetch<void>(`/api/recurring-tasks/${template?.id}/`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["recurring"] });
+    },
+  });
+
   const saving =
     createTask.isPending ||
     updateTask.isPending ||
-    createRecurring.isPending;
+    createRecurring.isPending ||
+    updateRecurring.isPending;
 
   const projectItems = useMemo(
     () =>
@@ -220,6 +276,29 @@ export function TaskPanel({
 
   async function handleSubmit() {
     if (!title.trim()) return;
+
+    if (mode === "edit-recurring" && template) {
+      const rrule = buildRrule(recurrence);
+      if (!rrule || !recurrence.dtstartLocal) return;
+      const payload: Record<string, unknown> = {
+        title,
+        description,
+        priority,
+        story_points: storyPoints === "" ? null : Number(storyPoints),
+        column_id: columnId,
+        assignee_ids: assigneeIds,
+        label_ids: labelIds,
+        rrule,
+        dtstart: new Date(recurrence.dtstartLocal).toISOString(),
+        active,
+      };
+      if (projectId != null && projectId !== template.project) {
+        payload.project_id = projectId;
+      }
+      await updateRecurring.mutateAsync(payload);
+      onClose();
+      return;
+    }
 
     if (mode === "create" && recurrence.enabled) {
       if (!selectedProject) {
@@ -276,6 +355,18 @@ export function TaskPanel({
   }
 
   async function handleDelete() {
+    if (mode === "edit-recurring" && template) {
+      if (
+        !confirm(
+          `Delete recurring template "${template.title}"?\n\nFuture instances will stop being generated. Tasks already created by this template are kept.`,
+        )
+      ) {
+        return;
+      }
+      await deleteRecurring.mutateAsync();
+      onClose();
+      return;
+    }
     if (!task) return;
     if (!confirm(`Delete ${task.key}?`)) return;
     await deleteTask.mutateAsync(task.key);
@@ -307,10 +398,12 @@ export function TaskPanel({
           <h2 className="text-[15px] font-semibold tracking-tight">
             {mode === "create"
               ? "New task"
-              : `${task?.key} — ${task?.title}`}
+              : mode === "edit-recurring"
+                ? `Recurring — ${template?.title ?? ""}`
+                : `${task?.key} — ${task?.title}`}
           </h2>
           <div className="flex items-center gap-2">
-            {mode === "edit" && (
+            {mode !== "create" && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -439,14 +532,16 @@ export function TaskPanel({
               />
             </PropRow>
 
-            <PropRow label="Deadline">
-              <Input
-                type="datetime-local"
-                value={dueAt}
-                onChange={(e) => setDueAt(e.target.value)}
-                className="h-7 text-[12px] border-0 bg-transparent px-1.5 hover:bg-accent/60 rounded w-full"
-              />
-            </PropRow>
+            {mode !== "edit-recurring" && (
+              <PropRow label="Deadline">
+                <Input
+                  type="datetime-local"
+                  value={dueAt}
+                  onChange={(e) => setDueAt(e.target.value)}
+                  className="h-7 text-[12px] border-0 bg-transparent px-1.5 hover:bg-accent/60 rounded w-full"
+                />
+              </PropRow>
+            )}
 
             <div className="pt-2">
               <span className="text-[11px] uppercase tracking-wide text-muted-foreground px-1">
@@ -482,6 +577,23 @@ export function TaskPanel({
                     />
                   </div>
                 )}
+              </div>
+            )}
+
+            {mode === "edit-recurring" && (
+              <div className="pt-2 mt-2 border-t border-border/40">
+                <div className="flex items-center justify-between px-1 py-1">
+                  <span className="text-[11px] text-muted-foreground">
+                    Active
+                  </span>
+                  <Switch checked={active} onCheckedChange={setActive} />
+                </div>
+                <div className="mt-1">
+                  <RecurrencePicker
+                    state={recurrence}
+                    onChange={setRecurrence}
+                  />
+                </div>
               </div>
             )}
 
@@ -829,22 +941,3 @@ function defaultDtstartLocal(): string {
   );
 }
 
-function buildRrule(state: RecurrenceState): string | null {
-  if (!state.enabled) return null;
-  switch (state.preset) {
-    case "daily":
-      return "FREQ=DAILY";
-    case "weekdays":
-      return "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR";
-    case "weekly": {
-      const days = state.weekdays.join(",");
-      return days ? `FREQ=WEEKLY;BYDAY=${days}` : "FREQ=WEEKLY";
-    }
-    case "monthly":
-      return `FREQ=MONTHLY;BYMONTHDAY=${state.monthDay}`;
-    case "custom":
-      return state.customRrule.trim() || null;
-    default:
-      return null;
-  }
-}

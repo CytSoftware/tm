@@ -177,7 +177,7 @@ export function RecurrencePicker({ state, onChange }: Props) {
   );
 }
 
-function buildRrule(state: RecurrenceState): string | null {
+export function buildRrule(state: RecurrenceState): string | null {
   switch (state.preset) {
     case "daily":
       return "FREQ=DAILY";
@@ -192,4 +192,71 @@ function buildRrule(state: RecurrenceState): string | null {
     case "custom":
       return state.customRrule.trim() || null;
   }
+}
+
+/**
+ * Reverse of `buildRrule` — classify an existing RRULE + dtstart into the
+ * picker's state shape. Unrecognized rules fall back to "custom" with the
+ * raw RRULE preserved so round-tripping doesn't corrupt anything.
+ */
+export function parseRruleToState(
+  rrule: string,
+  dtstartIso: string,
+): RecurrenceState {
+  const base: RecurrenceState = {
+    enabled: true,
+    preset: "custom",
+    weekdays: ["MO"],
+    monthDay: 1,
+    customRrule: rrule,
+    dtstartLocal: isoToLocalDatetime(dtstartIso),
+  };
+
+  const parts = Object.fromEntries(
+    rrule
+      .split(";")
+      .map((p) => p.split("="))
+      .filter((kv): kv is [string, string] => kv.length === 2)
+      .map(([k, v]) => [k.toUpperCase(), v]),
+  );
+  const freq = parts.FREQ;
+  const byday = parts.BYDAY;
+  const bymonthday = parts.BYMONTHDAY;
+
+  if (freq === "DAILY" && !byday && !bymonthday) {
+    return { ...base, preset: "daily", customRrule: "" };
+  }
+  if (freq === "WEEKLY") {
+    if (byday === "MO,TU,WE,TH,FR") {
+      return { ...base, preset: "weekdays", customRrule: "" };
+    }
+    const days = byday
+      ? (byday.split(",").filter((d) =>
+          ["MO", "TU", "WE", "TH", "FR", "SA", "SU"].includes(d),
+        ) as Weekday[])
+      : [];
+    return {
+      ...base,
+      preset: "weekly",
+      weekdays: days.length > 0 ? days : ["MO"],
+      customRrule: "",
+    };
+  }
+  if (freq === "MONTHLY" && bymonthday) {
+    const n = Number(bymonthday);
+    if (Number.isFinite(n) && n >= 1 && n <= 31) {
+      return { ...base, preset: "monthly", monthDay: n, customRrule: "" };
+    }
+  }
+  return base;
+}
+
+function isoToLocalDatetime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
 }

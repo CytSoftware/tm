@@ -678,8 +678,8 @@ class ViewViewSet(viewsets.ModelViewSet):
 class RecurringTaskViewSet(viewsets.ModelViewSet):
     queryset = (
         RecurringTaskTemplate.objects.all()
-        .select_related("project", "column", "assignee", "created_by")
-        .prefetch_related("labels")
+        .select_related("project", "column", "created_by")
+        .prefetch_related("labels", "assignees")
     )
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["project", "active"]
