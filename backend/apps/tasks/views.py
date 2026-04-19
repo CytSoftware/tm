@@ -86,7 +86,7 @@ class LoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
         login(request, user)
-        return Response(UserSerializer(user).data)
+        return Response(UserSerializer(user, context={"request": request}).data)
 
 
 class LogoutView(APIView):
@@ -112,9 +112,25 @@ class MeView(APIView):
                 {"detail": "Not authenticated."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
-        return Response(UserSerializer(request.user).data)
+        return Response(
+            UserSerializer(request.user, context={"request": request}).data
+        )
 
-    @extend_schema(request={"application/json": {"type": "object", "properties": {"avatar_url": {"type": "string"}}}})
+    @extend_schema(
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {"avatar_url": {"type": "string"}},
+            },
+            "multipart/form-data": {
+                "type": "object",
+                "properties": {
+                    "avatar_image": {"type": "string", "format": "binary"},
+                    "avatar_url": {"type": "string"},
+                },
+            },
+        }
+    )
     def patch(self, request):
         if not request.user.is_authenticated:
             return Response(
@@ -124,11 +140,112 @@ class MeView(APIView):
         from .models import UserProfile
 
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
+
+        avatar_image = request.FILES.get("avatar_image")
+        if avatar_image is not None:
+            _validate_uploaded_image(avatar_image)
+            # Clearing the URL keeps `effective_avatar_url` coherent: once a
+            # user uploads a file, the URL column no longer represents them.
+            profile.avatar_image = avatar_image
+            profile.avatar_url = ""
+            profile.save(update_fields=["avatar_image", "avatar_url"])
+
         avatar_url = request.data.get("avatar_url")
-        if avatar_url is not None:
+        if avatar_url is not None and avatar_image is None:
             profile.avatar_url = avatar_url
-            profile.save(update_fields=["avatar_url"])
-        return Response(UserSerializer(request.user).data)
+            # Replacing with an external URL discards any prior uploaded file
+            # so the effective-url logic picks the URL.
+            if profile.avatar_image:
+                profile.avatar_image.delete(save=False)
+                profile.avatar_image = None
+            profile.save(update_fields=["avatar_url", "avatar_image"])
+
+        return Response(
+            UserSerializer(request.user, context={"request": request}).data
+        )
+
+
+# ---------------------------------------------------------------------------
+# Image upload endpoint (task description images, etc.)
+# ---------------------------------------------------------------------------
+
+_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+_UPLOAD_ALLOWED_EXT = {"png", "jpg", "jpeg", "gif", "webp", "svg"}
+
+
+def _validate_uploaded_image(file_obj) -> None:
+    if file_obj.size > _UPLOAD_MAX_BYTES:
+        raise ValidationError({"file": "Image must be ≤ 10 MB."})
+    ctype = (file_obj.content_type or "").lower()
+    if not ctype.startswith("image/"):
+        raise ValidationError({"file": "Only image uploads are allowed."})
+    name = (file_obj.name or "").lower()
+    ext = name.rsplit(".", 1)[-1] if "." in name else ""
+    if ext not in _UPLOAD_ALLOWED_EXT:
+        raise ValidationError({"file": f"Unsupported file extension: .{ext}"})
+
+
+class UploadImageView(APIView):
+    """Accept a single image file, persist to MEDIA_ROOT, return its URL.
+
+    The description editor posts here when the user picks a file, pastes an
+    image, or drops one onto the editor. Tasks don't get a dedicated
+    Attachment model in Phase 1 — the returned URL is embedded directly in
+    the task description's TipTap JSON.
+    """
+
+    serializer_class = None
+
+    @extend_schema(
+        request={
+            "multipart/form-data": {
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string", "format": "binary"},
+                },
+                "required": ["file"],
+            }
+        },
+        responses={
+            201: {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "name": {"type": "string"},
+                    "size": {"type": "integer"},
+                },
+            }
+        },
+    )
+    def post(self, request):
+        file_obj = request.FILES.get("file")
+        if file_obj is None:
+            raise ValidationError({"file": "No file provided."})
+        _validate_uploaded_image(file_obj)
+
+        import os
+        import uuid
+
+        from django.conf import settings
+        from django.core.files.storage import default_storage
+
+        ext = file_obj.name.rsplit(".", 1)[-1].lower()
+        rel_path = os.path.join(
+            "uploads", str(request.user.id), f"{uuid.uuid4().hex}.{ext}"
+        )
+        saved_path = default_storage.save(rel_path, file_obj)
+        # default_storage.url() returns a relative /media/... path. The
+        # frontend is on a different origin, so hand back an absolute URL.
+        rel_url = default_storage.url(saved_path)
+        absolute = request.build_absolute_uri(rel_url)
+        return Response(
+            {
+                "url": absolute,
+                "name": file_obj.name,
+                "size": file_obj.size,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 @api_view(["POST"])

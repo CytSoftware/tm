@@ -15,7 +15,7 @@
  *   3. Views — saved views (flat list)
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import {
   useMutation,
@@ -40,7 +40,6 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Tooltip,
   TooltipContent,
@@ -691,17 +690,25 @@ function UserFooter({
 }) {
   const qc = useQueryClient();
   const router = useRouter();
-  const [avatarInput, setAvatarInput] = useState(user.avatar_url || "");
+  const avatarFileRef = useRef<HTMLInputElement | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
 
-  const updateAvatar = useMutation({
-    mutationFn: (url: string) =>
-      apiFetch<User>("/api/auth/me/", {
+  const uploadAvatar = useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("avatar_image", file);
+      return apiFetch<User>("/api/auth/me/", {
         method: "PATCH",
-        body: { avatar_url: url },
-      }),
+        body: form,
+      });
+    },
     onSuccess: (data) => {
       qc.setQueryData(meKey(), data);
       qc.invalidateQueries({ queryKey: ["users"] });
+      setAvatarError(null);
+    },
+    onError: (err) => {
+      setAvatarError(err instanceof Error ? err.message : "Upload failed.");
     },
   });
 
@@ -797,30 +804,34 @@ function UserFooter({
           </div>
           <div className="space-y-1">
             <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              Avatar URL
+              Avatar
             </span>
-            <form
-              className="flex gap-1.5"
-              onSubmit={(e) => {
-                e.preventDefault();
-                updateAvatar.mutate(avatarInput);
-              }}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] w-full"
+              onClick={() => avatarFileRef.current?.click()}
+              disabled={uploadAvatar.isPending}
             >
-              <Input
-                value={avatarInput}
-                onChange={(e) => setAvatarInput(e.target.value)}
-                placeholder="https://..."
-                className="h-7 text-[12px]"
-              />
-              <Button
-                type="submit"
-                size="sm"
-                className="h-7 text-[11px]"
-                disabled={updateAvatar.isPending}
-              >
-                Save
-              </Button>
-            </form>
+              {uploadAvatar.isPending ? "Uploading..." : "Upload image"}
+            </Button>
+            <input
+              ref={avatarFileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) uploadAvatar.mutate(file);
+              }}
+            />
+            {avatarError && (
+              <div className="text-[11px] text-destructive">
+                {avatarError}
+              </div>
+            )}
           </div>
         </PopoverContent>
       </Popover>

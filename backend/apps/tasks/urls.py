@@ -17,6 +17,7 @@ from .views import (
     RecurringTaskViewSet,
     StalenessSettingsView,
     TaskViewSet,
+    UploadImageView,
     UserViewSet,
     ViewViewSet,
     csrf_view,
@@ -37,6 +38,7 @@ urlpatterns = [
     path("auth/login/", LoginView.as_view(), name="login"),
     path("auth/logout/", LogoutView.as_view(), name="logout"),
     path("auth/me/", MeView.as_view(), name="me"),
+    path("uploads/", UploadImageView.as_view(), name="upload-image"),
     path("internal/broadcast/", internal_broadcast, name="internal-broadcast"),
     path(
         "settings/staleness/",

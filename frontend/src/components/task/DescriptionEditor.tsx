@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEffect, useRef, useState } from "react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import LinkExtension from "@tiptap/extension-link";
@@ -18,8 +18,10 @@ import {
   Undo,
   Redo,
   ImageIcon,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { uploadImage } from "@/lib/api";
 
 type Props = {
   value: string;
@@ -28,6 +30,16 @@ type Props = {
 
 export function DescriptionEditor({ value, onChange }: Props) {
   const isInternalUpdate = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Held in a ref so the editor's paste/drop callbacks (captured once on
+  // mount) always see the latest uploader without re-instantiating the
+  // editor on every render.
+  const insertImagesRef = useRef<((files: File[]) => Promise<void>) | null>(
+    null,
+  );
 
   const editor = useEditor({
     extensions: [
@@ -38,7 +50,7 @@ export function DescriptionEditor({ value, onChange }: Props) {
         inline: false,
         allowBase64: true,
         HTMLAttributes: {
-          class: "max-w-full h-auto rounded",
+          class: "max-w-full h-auto rounded cursor-zoom-in",
         },
       }),
     ],
@@ -53,8 +65,64 @@ export function DescriptionEditor({ value, onChange }: Props) {
         class:
           "prose prose-sm max-w-none dark:prose-invert min-h-[200px] p-3 focus-visible:outline-none",
       },
+      handlePaste: (_view, event) => {
+        const files = filesFromClipboard(event.clipboardData);
+        if (files.length === 0) return false;
+        event.preventDefault();
+        void insertImagesRef.current?.(files);
+        return true;
+      },
+      handleDrop: (_view, event) => {
+        const files = filesFromDataTransfer(
+          (event as DragEvent).dataTransfer,
+        );
+        if (files.length === 0) return false;
+        event.preventDefault();
+        void insertImagesRef.current?.(files);
+        return true;
+      },
+      handleDoubleClickOn: (_view, _pos, node) => {
+        if (node.type.name === "image") {
+          const src = node.attrs.src as string | undefined;
+          if (src) window.open(src, "_blank", "noopener,noreferrer");
+          return true;
+        }
+        return false;
+      },
     },
   });
+
+  useEffect(() => {
+    if (!editor) {
+      insertImagesRef.current = null;
+      return;
+    }
+    insertImagesRef.current = (files) => uploadAndInsert(editor, files);
+  }, [editor]);
+
+  async function uploadAndInsert(ed: Editor, files: File[]) {
+    setUploadError(null);
+    setUploading(true);
+    try {
+      for (const file of files) {
+        const { url } = await uploadImage(file);
+        ed.chain().focus().setImage({ src: url, alt: file.name }).run();
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Upload failed.";
+      setUploadError(msg);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? []);
+    // Reset so picking the same file twice still fires `onChange`.
+    e.target.value = "";
+    if (picked.length === 0 || !editor) return;
+    void uploadAndInsert(editor, picked);
+  }
 
   // Sync external value changes into the editor (e.g. when opening a task
   // with existing description). Skip if the change originated from typing.
@@ -153,16 +221,24 @@ export function DescriptionEditor({ value, onChange }: Props) {
           <Link className="size-3.5" />
         </ToolbarButton>
         <ToolbarButton
-          onClick={() => {
-            const url = window.prompt("Image URL");
-            if (url) {
-              editor.chain().focus().setImage({ src: url }).run();
-            }
-          }}
-          title="Insert image"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          title="Upload image (or paste / drop into editor)"
         >
-          <ImageIcon className="size-3.5" />
+          {uploading ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <ImageIcon className="size-3.5" />
+          )}
         </ToolbarButton>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={onPickFile}
+        />
         <div className="w-px h-4 bg-border mx-1" />
         <ToolbarButton
           onClick={() => editor.chain().focus().undo().run()}
@@ -183,8 +259,37 @@ export function DescriptionEditor({ value, onChange }: Props) {
       <div className="flex-1 min-h-0 overflow-y-auto">
         <EditorContent editor={editor} />
       </div>
+      {uploadError && (
+        <div className="shrink-0 px-3 py-1.5 text-[11px] text-destructive border-t border-destructive/30 bg-destructive/5 flex items-center justify-between gap-2">
+          <span className="truncate">{uploadError}</span>
+          <button
+            type="button"
+            className="text-[10px] uppercase tracking-wide hover:underline"
+            onClick={() => setUploadError(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
     </div>
   );
+}
+
+function filesFromClipboard(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  const out: File[] = [];
+  for (const item of Array.from(data.items)) {
+    if (item.kind === "file" && item.type.startsWith("image/")) {
+      const file = item.getAsFile();
+      if (file) out.push(file);
+    }
+  }
+  return out;
+}
+
+function filesFromDataTransfer(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  return Array.from(data.files).filter((f) => f.type.startsWith("image/"));
 }
 
 function ToolbarButton({

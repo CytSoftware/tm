@@ -56,9 +56,13 @@ export async function apiFetch<T>(
   }
 
   const mergedHeaders = new Headers(headers);
-  if (body !== undefined) {
+  const isFormData =
+    typeof FormData !== "undefined" && body instanceof FormData;
+  if (body !== undefined && !isFormData) {
     mergedHeaders.set("Content-Type", "application/json");
   }
+  // Do NOT set Content-Type for FormData — the browser must set it so the
+  // multipart boundary parameter is included.
   if (UNSAFE_METHODS.has(method)) {
     const csrf = getCookie("csrftoken");
     if (csrf) mergedHeaders.set("X-CSRFToken", csrf);
@@ -69,7 +73,12 @@ export async function apiFetch<T>(
     method,
     credentials: "include",
     headers: mergedHeaders,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body:
+      body === undefined
+        ? undefined
+        : isFormData
+          ? (body as FormData)
+          : JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -94,4 +103,16 @@ export async function apiFetch<T>(
 /** Call once on boot to seed the csrftoken cookie. */
 export async function ensureCsrfCookie(): Promise<void> {
   await apiFetch<{ csrfToken: string }>("/api/auth/csrf/");
+}
+
+export type UploadedImage = { url: string; name: string; size: number };
+
+/** Upload a single image file to the server and get back an absolute URL. */
+export async function uploadImage(file: File): Promise<UploadedImage> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch<UploadedImage>("/api/uploads/", {
+    method: "POST",
+    body: form,
+  });
 }

@@ -212,8 +212,18 @@ export function SwipeCard({
       {/* Description (scrollable) */}
       <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-4">
         <div
-          className="prose prose-sm dark:prose-invert max-w-none"
+          className="prose prose-sm dark:prose-invert max-w-none [&_img]:cursor-zoom-in"
           dangerouslySetInnerHTML={{ __html: descriptionHtml }}
+          onClick={(e) => {
+            const target = e.target as HTMLElement;
+            if (target.tagName === "IMG") {
+              // Pointer-drag bubbles up to the card; clicking an image to
+              // open it shouldn't also trigger a swipe-commit.
+              e.stopPropagation();
+              const src = (target as HTMLImageElement).src;
+              if (src) window.open(src, "_blank", "noopener,noreferrer");
+            }
+          }}
         />
       </div>
 
