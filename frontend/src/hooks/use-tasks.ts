@@ -103,8 +103,17 @@ export function useMoveTask(projectId: number) {
         body: payload,
       }),
     // Optimistic update for the drag interaction.
-    onMutate: async ({ key, column_id, before_id, after_id }) => {
-      await qc.cancelQueries({ queryKey: taskListKey(projectId) });
+    //
+    // Deliberately synchronous (no async / await): hello-pangea/dnd starts
+    // its drop animation the same tick `onDragEnd` returns, and it computes
+    // the drop home from the Draggable at the destination index. If this
+    // handler yields to microtasks before calling `setQueryData`, React
+    // renders one frame with stale data — rbd animates to the old home,
+    // then the card snaps to the new one once the cache settles. Running
+    // sync lets the cache update land in the same flush as the drop event
+    // so rbd sees the new order immediately.
+    onMutate: ({ key, column_id, before_id, after_id }) => {
+      qc.cancelQueries({ queryKey: taskListKey(projectId) });
       const snapshots = qc.getQueriesData<TaskListResponse>({
         queryKey: taskListKey(projectId),
       });

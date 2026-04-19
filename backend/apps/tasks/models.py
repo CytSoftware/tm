@@ -217,6 +217,7 @@ class Task(TimestampedModel):
             with transaction.atomic():
                 if self.project_id:
                     self.key = generate_task_key(self.project)
+                    self._assign_tail_position()
                     return super().save(*args, **kwargs)
                 # Projectless task — save once to obtain an id, then stamp
                 # the key as "INBOX-<id>" so it's still globally unique.
@@ -224,6 +225,19 @@ class Task(TimestampedModel):
                 self.key = f"INBOX-{self.id:03d}"
                 return super().save(update_fields=["key", "updated_at"])
         return super().save(*args, **kwargs)
+
+    def _assign_tail_position(self):
+        # Land at the bottom of the column with a fresh unique position.
+        # The column's other tasks may all carry the model default (1000.0),
+        # which would tie with this row and break midpoint drag-and-drop.
+        if not self.column_id:
+            return
+        tail = (
+            Task.objects.filter(column_id=self.column_id)
+            .aggregate(m=models.Max("position"))["m"]
+        )
+        if tail is not None:
+            self.position = tail + 1000.0
 
 
 class RecurringTaskTemplate(TimestampedModel):

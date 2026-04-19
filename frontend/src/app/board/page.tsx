@@ -1,27 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
 import {
-  DndContext,
-  DragEndEvent,
-  DragOverEvent,
-  DragOverlay,
-  DragStartEvent,
-  PointerSensor,
-  closestCorners,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
+  draggable,
+  dropTargetForElements,
+  monitorForElements,
+} from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import {
-  SortableContext,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
+  attachClosestEdge,
+  extractClosestEdge,
+} from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 import { Plus, Settings, Tag } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -71,6 +73,127 @@ const STANDARD_COLUMNS = [
 const STANDARD_COL_ORDER: Record<string, number> = Object.fromEntries(
   STANDARD_COLUMNS.map((c) => [c.name, c.order]),
 );
+
+type CardDragData = {
+  type: "card";
+  taskId: number;
+  columnId: number;
+};
+
+type ColumnDropData = {
+  type: "column";
+  columnId: number;
+};
+
+function isCardData(
+  data: Record<string, unknown>,
+): data is CardDragData & Record<string, unknown> {
+  return data.type === "card";
+}
+
+function isColumnData(
+  data: Record<string, unknown>,
+): data is ColumnDropData & Record<string, unknown> {
+  return data.type === "column";
+}
+
+type DraggableCardProps = {
+  task: Task;
+  columnId: number;
+  children: (state: { isDragging: boolean }) => ReactNode;
+};
+
+function DraggableCard({ task, columnId, children }: DraggableCardProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    return combine(
+      draggable({
+        element: el,
+        getInitialData: (): CardDragData => ({
+          type: "card",
+          taskId: task.id,
+          columnId,
+        }),
+        onDragStart: () => setIsDragging(true),
+        onDrop: () => setIsDragging(false),
+      }),
+      dropTargetForElements({
+        element: el,
+        canDrop: ({ source }) =>
+          isCardData(source.data) && source.data.taskId !== task.id,
+        getData: ({ input, element }) => {
+          // `attachClosestEdge` writes the closest edge (top/bottom) onto
+          // the target data. The board-level monitor reads it via
+          // `extractClosestEdge` to compute where the preview should go.
+          const data: CardDragData = {
+            type: "card",
+            taskId: task.id,
+            columnId,
+          };
+          return attachClosestEdge(data, {
+            input,
+            element,
+            allowedEdges: ["top", "bottom"],
+          });
+        },
+        getIsSticky: () => true,
+      }),
+    );
+  }, [task.id, columnId]);
+
+  return <div ref={ref}>{children({ isDragging })}</div>;
+}
+
+type DroppableColumnProps = {
+  columnId: number;
+  column: Column;
+  tasks: Task[];
+  children: ReactNode;
+  onAddTask?: () => void;
+  onDeclutter?: () => void;
+};
+
+function DroppableColumn({
+  columnId,
+  column,
+  tasks,
+  children,
+  onAddTask,
+  onDeclutter,
+}: DroppableColumnProps) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    return dropTargetForElements({
+      element: el,
+      canDrop: ({ source }) => isCardData(source.data),
+      getData: (): ColumnDropData => ({ type: "column", columnId }),
+      onDragEnter: () => setIsDraggingOver(true),
+      onDragLeave: () => setIsDraggingOver(false),
+      onDrop: () => setIsDraggingOver(false),
+    });
+  }, [columnId]);
+
+  return (
+    <KanbanColumn
+      column={column}
+      tasks={tasks}
+      onAddTask={onAddTask}
+      onDeclutter={onDeclutter}
+      bodyRef={bodyRef}
+      isDraggingOver={isDraggingOver}
+    >
+      {children}
+    </KanbanColumn>
+  );
+}
 
 export default function BoardPage() {
   const { projectId, setProjectId, viewId, setViewId } = useActiveProject();
@@ -163,20 +286,18 @@ export default function BoardPage() {
   >(null);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [labelManagerOpen, setLabelManagerOpen] = useState(false);
-  const [activeId, setActiveId] = useState<number | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [declutterOpen, setDeclutterOpen] = useState(false);
 
-  // orderedItems: Map<columnId, taskId[]> — local ordering state for DnD.
-  // Seeded from tasksByColumn, mutated locally during drag operations.
-  const [orderedItems, setOrderedItems] = useState<Map<number, number[]>>(
-    new Map(),
-  );
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-  );
+  // Anticipated drop position, updated as the user drags. Drives the
+  // in-list ghost preview: the source task gets filtered out of its
+  // column and a faded copy is injected at the destination's insertIdx.
+  const [dragPreview, setDragPreview] = useState<{
+    sourceTaskId: number;
+    destColumnId: number;
+    insertIndex: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!projectId) return;
@@ -253,24 +374,6 @@ export default function BoardPage() {
     return { displayColumns: virtualCols, tasksByColumn: map };
   }, [filteredTasks, project]);
 
-  // Sync orderedItems from tasksByColumn using React's "storing information
-  // from previous renders" pattern. This avoids useEffect loops — we only
-  // re-seed when the actual query data reference or projectId changes.
-  const [orderedSyncKey, setOrderedSyncKey] = useState<unknown>(null);
-  const filterKey = JSON.stringify(boardFilters);
-  const currentSyncKey = `${tasksQuery.dataUpdatedAt}-${projectId}-${viewId}-${filterKey}`;
-  if (currentSyncKey !== orderedSyncKey) {
-    setOrderedSyncKey(currentSyncKey);
-    const newMap = new Map<number, number[]>();
-    for (const [colId, tasks] of tasksByColumn) {
-      newMap.set(
-        colId,
-        tasks.map((t) => t.id),
-      );
-    }
-    setOrderedItems(newMap);
-  }
-
   const isAllProjects = !projectId;
 
   // The currently selected task object (for the command palette)
@@ -309,9 +412,9 @@ export default function BoardPage() {
       // Only handle in board view
       if (viewKind !== "board") return;
 
-      // Build column→task arrays from current display order
+      // Build column→task arrays from the current server order.
       const colTaskIds: number[][] = displayColumns.map(
-        (col) => orderedItems.get(col.id) ?? [],
+        (col) => (tasksByColumn.get(col.id) ?? []).map((t) => t.id),
       );
 
       switch (e.key) {
@@ -423,7 +526,7 @@ export default function BoardPage() {
     selectedTaskId,
     selectedTask,
     displayColumns,
-    orderedItems,
+    tasksByColumn,
     paletteOpen,
     dialogState,
     createProjectOpen,
@@ -432,153 +535,147 @@ export default function BoardPage() {
     viewKind,
   ]);
 
-  const activeTask = useMemo(() => {
-    if (activeId === null) return null;
-    return tasksQuery.data?.results.find((t) => t.id === activeId) ?? null;
-  }, [activeId, tasksQuery.data]);
-
-  // Helper: find which column in orderedItems contains a given task ID
-  const findColumnOfTask = useCallback(
-    (taskId: number): number | null => {
-      for (const [colId, ids] of orderedItems) {
-        if (ids.includes(taskId)) return colId;
+  // pragmatic-dnd has no drop animation — the card just teleports to its
+  // destination slot on commit, so there's no animation window for an
+  // optimistic cache update to collide with. The monitor is the single
+  // place where a drop gets translated into a `moveTask` mutation. It
+  // re-registers whenever the inputs it reads change; that's cheap, and
+  // keeps the closure values fresh without ref gymnastics.
+  useEffect(() => {
+    /**
+     * Compute `{ destColumnId, insertIndex }` from the current drop target.
+     * Used by both the live drag preview (on every `onDrag`) and the final
+     * commit (on `onDrop`). Returns null if the target can't be resolved.
+     */
+    const resolveDropTarget = (
+      sourceTaskId: number,
+      dropTarget: { data: Record<string, unknown> } | undefined,
+    ): { destColumnId: number; insertIndex: number } | null => {
+      if (!dropTarget) return null;
+      const data = dropTarget.data;
+      if (isCardData(data)) {
+        const destColId = data.columnId;
+        const overTaskId = data.taskId;
+        const edge = extractClosestEdge(data);
+        const destTasks = (tasksByColumn.get(destColId) ?? []).filter(
+          (t) => t.id !== sourceTaskId,
+        );
+        const overIdx = destTasks.findIndex((t) => t.id === overTaskId);
+        if (overIdx === -1) return null;
+        return {
+          destColumnId: destColId,
+          insertIndex: overIdx + (edge === "bottom" ? 1 : 0),
+        };
+      }
+      if (isColumnData(data)) {
+        const destColId = data.columnId;
+        const destTasks = (tasksByColumn.get(destColId) ?? []).filter(
+          (t) => t.id !== sourceTaskId,
+        );
+        return {
+          destColumnId: destColId,
+          insertIndex: destTasks.length,
+        };
       }
       return null;
-    },
-    [orderedItems],
-  );
+    };
 
-  function handleDragStart(event: DragStartEvent) {
-    setActiveId(Number(event.active.id));
-  }
-
-  function handleDragOver(event: DragOverEvent) {
-    const { active, over } = event;
-    if (!over) return;
-
-    const activeTaskId = Number(active.id);
-    const overId = String(over.id);
-
-    // Determine the target column and target index
-    let targetColId: number | null = null;
-    let overIndex: number | null = null;
-
-    // Check if over is a column droppable
-    const colMatch = overId.match(/^col-(-?\d+)$/);
-    if (colMatch) {
-      targetColId = Number(colMatch[1]);
-    } else {
-      // over is a task
-      const overTaskId = Number(overId);
-      targetColId = findColumnOfTask(overTaskId);
-      if (targetColId != null) {
-        const ids = orderedItems.get(targetColId);
-        overIndex = ids?.indexOf(overTaskId) ?? null;
-      }
-    }
-
-    if (targetColId == null) return;
-
-    const sourceColId = findColumnOfTask(activeTaskId);
-    if (sourceColId == null) return;
-
-    // If already in the same column, don't do anything here (dnd-kit handles intra-column reorder)
-    if (sourceColId === targetColId) return;
-
-    // Move active from source to target
-    setOrderedItems((prev) => {
-      const next = new Map(prev);
-      const sourceIds = [...(next.get(sourceColId) ?? [])];
-      const targetIds = [...(next.get(targetColId!) ?? [])];
-
-      // Remove from source
-      const srcIdx = sourceIds.indexOf(activeTaskId);
-      if (srcIdx === -1) return prev;
-      sourceIds.splice(srcIdx, 1);
-
-      // Insert at target position
-      if (overIndex != null && overIndex >= 0) {
-        targetIds.splice(overIndex, 0, activeTaskId);
-      } else {
-        targetIds.push(activeTaskId);
-      }
-
-      next.set(sourceColId, sourceIds);
-      next.set(targetColId!, targetIds);
-      return next;
-    });
-  }
-
-  function handleDragEnd(event: DragEndEvent) {
-    setActiveId(null);
-    const { active, over } = event;
-    if (!over) return;
-
-    const activeTaskId = Number(active.id);
-    const movingTask = tasksQuery.data?.results.find(
-      (t) => t.id === activeTaskId,
-    );
-    if (!movingTask) return;
-
-    // Projectless tasks can't be moved via drag — the API requires a
-    // column id and they have none. Ignore the drop.
-    if (movingTask.project == null) return;
-
-    // Find which column the task ended up in (from orderedItems)
-    const finalColId = findColumnOfTask(activeTaskId);
-    if (finalColId == null) return;
-
-    // Get position info
-    const finalIds = orderedItems.get(finalColId) ?? [];
-    const finalIndex = finalIds.indexOf(activeTaskId);
-
-    // Determine actual target column ID for the API call
-    let targetColumnId: number | null = null;
-    if (finalColId > 0) {
-      targetColumnId = finalColId;
-    } else {
-      // Virtual column — find the real column for the task's project
-      const vc = displayColumns.find((c) => c.id === finalColId);
-      if (vc) {
-        const realProject = projects.find(
-          (p) => p.id === movingTask.project,
+    return monitorForElements({
+      canMonitor: ({ source }) => isCardData(source.data),
+      onDragStart: () => setDragPreview(null),
+      onDrag: ({ source, location }) => {
+        if (!isCardData(source.data)) return;
+        const resolved = resolveDropTarget(
+          source.data.taskId,
+          location.current.dropTargets[0],
         );
-        const realCol = realProject?.columns.find(
-          (c) => c.name === vc.name,
+        if (!resolved) {
+          setDragPreview((prev) => (prev === null ? prev : null));
+          return;
+        }
+        setDragPreview((prev) => {
+          if (
+            prev &&
+            prev.sourceTaskId === source.data.taskId &&
+            prev.destColumnId === resolved.destColumnId &&
+            prev.insertIndex === resolved.insertIndex
+          ) {
+            return prev;
+          }
+          return {
+            sourceTaskId: source.data.taskId as number,
+            destColumnId: resolved.destColumnId,
+            insertIndex: resolved.insertIndex,
+          };
+        });
+      },
+      onDrop: ({ source, location }) => {
+        setDragPreview(null);
+        if (!isCardData(source.data)) return;
+        const resolved = resolveDropTarget(
+          source.data.taskId,
+          location.current.dropTargets[0],
         );
-        targetColumnId = realCol?.id ?? null;
-      }
-    }
+        if (!resolved) return;
 
-    if (!targetColumnId) return;
+        const { destColumnId: destColId, insertIndex: insertIdx } = resolved;
+        const sourceTaskId = source.data.taskId;
+        const movingTask = tasksQuery.data?.results.find(
+          (t) => t.id === sourceTaskId,
+        );
+        if (!movingTask || movingTask.project == null) return;
 
-    // Check if nothing actually changed
-    const sameColumn = movingTask.column?.id === targetColumnId;
-    if (sameColumn && finalIds.length <= 1) return;
+        const destTasks = (tasksByColumn.get(destColId) ?? []).filter(
+          (t) => t.id !== sourceTaskId,
+        );
+        const afterId =
+          insertIdx > 0 ? destTasks[insertIdx - 1]?.id : undefined;
+        const beforeId =
+          insertIdx < destTasks.length ? destTasks[insertIdx]?.id : undefined;
 
-    // Compute before_id / after_id from the finalIds order
-    let before_id: number | undefined;
-    let after_id: number | undefined;
+        // Virtual col → real col for the API call.
+        let targetColumnId: number | null = null;
+        if (destColId > 0) {
+          targetColumnId = destColId;
+        } else {
+          const vc = displayColumns.find((c) => c.id === destColId);
+          if (vc) {
+            const realProject = projects.find(
+              (p) => p.id === movingTask.project,
+            );
+            const realCol = realProject?.columns.find(
+              (c) => c.name === vc.name,
+            );
+            targetColumnId = realCol?.id ?? null;
+          }
+        }
+        if (!targetColumnId) return;
 
-    // The task directly above in the final order
-    if (finalIndex > 0) {
-      after_id = finalIds[finalIndex - 1];
-    }
-    // The task directly below
-    if (finalIndex < finalIds.length - 1) {
-      before_id = finalIds[finalIndex + 1];
-    }
+        // Flip to manual sort so drag result sticks under any saved view.
+        const primarySort = boardFilters.sort[0];
+        if (primarySort && primarySort.field !== "position") {
+          setBoardFilters({
+            ...boardFilters,
+            sort: [{ field: "position", dir: "asc" }],
+          });
+        }
 
-    // Skip if same column and same position
-    if (sameColumn && !before_id && !after_id) return;
-
-    moveTask.mutate({
-      key: movingTask.key,
-      column_id: targetColumnId,
-      before_id: before_id ?? null,
-      after_id: after_id ?? null,
+        moveTask.mutate({
+          key: movingTask.key,
+          column_id: targetColumnId,
+          before_id: beforeId ?? null,
+          after_id: afterId ?? null,
+        });
+      },
     });
-  }
+  }, [
+    tasksByColumn,
+    displayColumns,
+    projects,
+    tasksQuery.data,
+    boardFilters,
+    moveTask,
+  ]);
 
   const availableColumnNames = useMemo(() => {
     const set = new Set<string>();
@@ -635,46 +732,61 @@ export default function BoardPage() {
             onTaskClick={(task) => setDialogState({ mode: "edit", task })}
           />
         ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCorners}
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDragEnd={handleDragEnd}
-          >
-            <div className="flex gap-3 h-full px-4 py-3">
-              {displayColumns.map((col) => {
-                const tasks = tasksByColumn.get(col.id) ?? [];
-                const itemIds = orderedItems.get(col.id) ?? tasks.map((t) => t.id);
-                return (
-                  <KanbanColumn
-                    key={col.id}
-                    column={col}
-                    tasks={tasks}
-                    onAddTask={
-                      project
-                        ? () =>
-                            setDialogState({
-                              mode: "create",
-                              columnId: col.id,
-                            })
-                        : undefined
-                    }
-                    onDeclutter={() => setDeclutterOpen(true)}
-                  >
-                    <SortableContext
-                      items={itemIds}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      {itemIds.map((taskId) => {
-                        const task = filteredTasks.find(
-                          (t) => t.id === taskId,
-                        );
-                        if (!task) return null;
-                        return (
+          <div className="flex gap-3 h-full px-4 py-3">
+            {displayColumns.map((col) => {
+              const tasks = tasksByColumn.get(col.id) ?? [];
+              const sourceTask = dragPreview
+                ? (tasksQuery.data?.results.find(
+                    (t) => t.id === dragPreview.sourceTaskId,
+                  ) ?? null)
+                : null;
+              // Remove the source card from the visible list while dragging.
+              // Its slot collapses, the surrounding cards reflow, and a
+              // ghost copy gets injected at the anticipated drop location
+              // below — that's the "preview in new position" effect.
+              const visibleTasks = dragPreview
+                ? tasks.filter((t) => t.id !== dragPreview.sourceTaskId)
+                : tasks;
+              const isDest = dragPreview?.destColumnId === col.id;
+              const previewIdx = isDest ? dragPreview!.insertIndex : -1;
+              const ghost = sourceTask ? (
+                <div
+                  key="__preview"
+                  className="pointer-events-none opacity-50 rounded-lg border-2 border-dashed border-primary/40"
+                >
+                  <KanbanCard
+                    task={sourceTask}
+                    showProject={isAllProjects}
+                    visibleFields={cardDisplay}
+                  />
+                </div>
+              ) : null;
+
+              return (
+                <DroppableColumn
+                  key={col.id}
+                  columnId={col.id}
+                  column={col}
+                  tasks={tasks}
+                  onAddTask={
+                    project
+                      ? () =>
+                          setDialogState({
+                            mode: "create",
+                            columnId: col.id,
+                          })
+                      : undefined
+                  }
+                  onDeclutter={() => setDeclutterOpen(true)}
+                >
+                  {visibleTasks.map((task, idx) => (
+                    <Fragment key={task.id}>
+                      {isDest && idx === previewIdx && ghost}
+                      <DraggableCard task={task} columnId={col.id}>
+                        {({ isDragging }) => (
                           <KanbanCard
-                            key={task.id}
                             task={task}
+                            isDragging={isDragging}
                             isSelected={task.id === selectedTaskId}
                             showProject={isAllProjects}
                             visibleFields={cardDisplay}
@@ -682,24 +794,15 @@ export default function BoardPage() {
                               setDialogState({ mode: "edit", task })
                             }
                           />
-                        );
-                      })}
-                    </SortableContext>
-                  </KanbanColumn>
-                );
-              })}
-            </div>
-            <DragOverlay>
-              {activeTask ? (
-                <KanbanCard
-                  task={activeTask}
-                  showProject={isAllProjects}
-                  visibleFields={cardDisplay}
-                  isOverlay
-                />
-              ) : null}
-            </DragOverlay>
-          </DndContext>
+                        )}
+                      </DraggableCard>
+                    </Fragment>
+                  ))}
+                  {isDest && previewIdx === visibleTasks.length && ghost}
+                </DroppableColumn>
+              );
+            })}
+          </div>
         )}
       </div>
       {dialogState && (

@@ -1,7 +1,5 @@
 "use client";
 
-import { useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { CalendarDays, Repeat } from "lucide-react";
 
 import {
@@ -49,6 +47,7 @@ type Props = {
   task: Task;
   onClick?: () => void;
   isOverlay?: boolean;
+  isDragging?: boolean;
   isSelected?: boolean;
   showProject?: boolean;
   visibleFields?: CardField[] | null;
@@ -66,24 +65,11 @@ export function KanbanCard({
   task,
   onClick,
   isOverlay,
+  isDragging,
   isSelected,
   showProject,
   visibleFields,
 }: Props) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: task.id });
-
-  const style = {
-    transform: CSS.Translate.toString(transform),
-    transition,
-  };
-
   const showKey = isVisible("key", visibleFields);
   const showTitle = isVisible("title", visibleFields);
   const showPriority = isVisible("priority", visibleFields);
@@ -98,10 +84,6 @@ export function KanbanCard({
 
   return (
     <div
-      ref={setNodeRef}
-      style={style}
-      {...attributes}
-      {...listeners}
       onClick={(e) => {
         if (!isDragging) {
           e.stopPropagation();
@@ -113,7 +95,7 @@ export function KanbanCard({
         "cursor-grab active:cursor-grabbing select-none",
         "shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
         "transition-[background-color,border-color,box-shadow] duration-150",
-        isDragging && "opacity-30",
+        isDragging && "shadow-lg ring-1 ring-border/40",
         isSelected
           ? "border-foreground/40 bg-accent/40"
           : "border-border/60 hover:border-border hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)]",

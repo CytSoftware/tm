@@ -1,7 +1,6 @@
 "use client";
 
-import { ReactNode } from "react";
-import { useDroppable } from "@dnd-kit/core";
+import { ReactNode, Ref } from "react";
 import { Plus, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -17,6 +16,10 @@ type Props = {
    *  named "Backlog" — parent passes the same handler to every column and
    *  this component decides whether to show it. */
   onDeclutter?: () => void;
+  /** Ref on the scrollable body. Parent attaches a pragmatic-dnd drop
+   *  target to it so drops into the empty space land in this column. */
+  bodyRef?: Ref<HTMLDivElement>;
+  isDraggingOver?: boolean;
 };
 
 export function KanbanColumn({
@@ -25,12 +28,9 @@ export function KanbanColumn({
   children,
   onAddTask,
   onDeclutter,
+  bodyRef,
+  isDraggingOver,
 }: Props) {
-  // Make the column body a droppable so empty columns still accept drops.
-  const { setNodeRef, isOver } = useDroppable({
-    id: `col-${column.id}`,
-  });
-
   return (
     <div className="flex-1 min-w-[200px] h-full flex flex-col min-h-0">
       <header className="shrink-0 flex items-center justify-between gap-2 px-1 py-1.5 mb-1">
@@ -81,10 +81,10 @@ export function KanbanColumn({
         </div>
       </header>
       <div
-        ref={setNodeRef}
+        ref={bodyRef}
         className={cn(
           "scrollbar-none flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5 rounded-md transition-colors",
-          isOver && "bg-accent/40",
+          isDraggingOver && "bg-accent/40",
         )}
       >
         {children}

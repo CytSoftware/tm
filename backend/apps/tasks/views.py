@@ -593,6 +593,12 @@ def _compute_position(
     - When only one is given we offset by a constant.
     - When neither is given we append to the bottom.
     """
+    # Lazy rebalance: every task created before the position-on-create fix
+    # shares the model default (1000.0). Midpoint math on a tied column
+    # returns that same value, so the move silently no-ops and the client
+    # snaps back to (position, id) order. Spread the column out once on the
+    # first move it sees; subsequent moves get clean unique midpoints.
+    _rebalance_if_tied(column, exclude_task_id=task_id)
     neighbors = column.tasks.exclude(id=task_id)
 
     after = neighbors.filter(id=after_id).first() if after_id else None
@@ -617,6 +623,22 @@ def _compute_position(
     # Append to bottom.
     tail = neighbors.aggregate(m=Max("position"))["m"]
     return (tail or 0) + 1000.0
+
+
+def _rebalance_if_tied(column: Column, *, exclude_task_id: int) -> None:
+    """Re-space positions in a column if any ties exist.
+
+    Preserves the current (position, id) ordering — the user-visible layout
+    doesn't change, midpoint math just gains room to bisect. One bulk UPDATE.
+    """
+    neighbors = column.tasks.exclude(id=exclude_task_id)
+    positions = list(neighbors.values_list("position", flat=True))
+    if len(positions) == len(set(positions)):
+        return
+    ordered = list(neighbors.order_by("position", "id"))
+    for i, t in enumerate(ordered, start=1):
+        t.position = i * 1000.0
+    Task.objects.bulk_update(ordered, ["position"])
 
 
 # ---------------------------------------------------------------------------
