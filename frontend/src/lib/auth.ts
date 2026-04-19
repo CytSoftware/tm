@@ -1,9 +1,9 @@
 import { apiFetch, ApiError, ensureCsrfCookie } from "./api";
-import type { User } from "./types";
+import type { Me } from "./types";
 
-export async function fetchMe(): Promise<User | null> {
+export async function fetchMe(): Promise<Me | null> {
   try {
-    return await apiFetch<User>("/api/auth/me/");
+    return await apiFetch<Me>("/api/auth/me/");
   } catch (err) {
     // Treat both 401 (not authenticated) and 403 (DRF's default for anonymous
     // requests against IsAuthenticated views) as "please log in".
@@ -17,9 +17,9 @@ export async function fetchMe(): Promise<User | null> {
 export async function login(
   username: string,
   password: string,
-): Promise<User> {
+): Promise<Me> {
   await ensureCsrfCookie();
-  return apiFetch<User>("/api/auth/login/", {
+  return apiFetch<Me>("/api/auth/login/", {
     method: "POST",
     body: { username, password },
   });

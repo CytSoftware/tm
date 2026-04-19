@@ -387,6 +387,17 @@ class UserProfile(models.Model):
         related_name="starred_by",
         help_text="Projects this user has pinned to the top of their sidebar.",
     )
+    assign_hotkey_bindings = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Arbitrary key->user-id map for this user's personal hotkeys in "
+            "the Assign-Todo triage dialog. Keys are normalized KeyboardEvent "
+            "``key`` values (letters uppercased, arrow keys as 'ArrowLeft', "
+            "'ArrowRight', 'ArrowUp'). Stored as {user's chosen key: target "
+            "user id} so 'press key -> find user' is a direct dict lookup."
+        ),
+    )
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.user.username} profile"

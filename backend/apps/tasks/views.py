@@ -86,7 +86,7 @@ class LoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
         login(request, user)
-        return Response(UserSerializer(user, context={"request": request}).data)
+        return Response(_me_payload(user, request))
 
 
 class LogoutView(APIView):
@@ -96,6 +96,34 @@ class LogoutView(APIView):
     def post(self, request):
         logout(request)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# Keys the frontend owns for other behaviors in the Assign-Todo dialog —
+# rejected at bind-time so users can't stomp on skip/close.
+_RESERVED_HOTKEYS: set[str] = {"ArrowDown", "Escape"}
+
+
+def _me_payload(user, request):
+    """Flat dict for /api/auth/me/ — UserSerializer fields plus a
+    ``preferences`` object. Preferences live only on this endpoint; the
+    shared ``/api/users/`` list intentionally stays lean."""
+    from .models import UserProfile
+
+    data = dict(UserSerializer(user, context={"request": request}).data)
+    profile = getattr(user, "profile", None) or UserProfile.objects.get_or_create(user=user)[0]
+    raw = profile.assign_hotkey_bindings or {}
+    # Defensive filter so a hand-edited column can't crash the frontend.
+    clean: dict[str, int] = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if not isinstance(k, str) or k in _RESERVED_HOTKEYS:
+                continue
+            try:
+                clean[k] = int(v)
+            except (TypeError, ValueError):
+                continue
+    data["preferences"] = {"assign_hotkey_bindings": clean}
+    return data
 
 
 class MeView(APIView):
@@ -112,15 +140,24 @@ class MeView(APIView):
                 {"detail": "Not authenticated."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
-        return Response(
-            UserSerializer(request.user, context={"request": request}).data
-        )
+        return Response(_me_payload(request.user, request))
 
     @extend_schema(
         request={
             "application/json": {
                 "type": "object",
-                "properties": {"avatar_url": {"type": "string"}},
+                "properties": {
+                    "avatar_url": {"type": "string"},
+                    "preferences": {
+                        "type": "object",
+                        "properties": {
+                            "assign_hotkey_bindings": {
+                                "type": "object",
+                                "additionalProperties": {"type": "integer"},
+                            },
+                        },
+                    },
+                },
             },
             "multipart/form-data": {
                 "type": "object",
@@ -160,9 +197,38 @@ class MeView(APIView):
                 profile.avatar_image = None
             profile.save(update_fields=["avatar_url", "avatar_image"])
 
-        return Response(
-            UserSerializer(request.user, context={"request": request}).data
-        )
+        prefs = request.data.get("preferences")
+        if isinstance(prefs, dict) and "assign_hotkey_bindings" in prefs:
+            raw = prefs.get("assign_hotkey_bindings")
+            if not isinstance(raw, dict):
+                raise ValidationError(
+                    {"preferences.assign_hotkey_bindings": "Must be an object."}
+                )
+            candidate_uids: set[int] = set()
+            staged: dict[str, int] = {}
+            for k, v in raw.items():
+                if not isinstance(k, str):
+                    continue
+                # Strip anything that would collide with skip/close before it
+                # ever lands in the DB.
+                if k in _RESERVED_HOTKEYS:
+                    continue
+                try:
+                    uid = int(v)
+                except (TypeError, ValueError):
+                    continue
+                staged[k] = uid
+                candidate_uids.add(uid)
+            # Drop bindings that point at users which no longer exist.
+            existing_ids = set(
+                User.objects.filter(id__in=candidate_uids).values_list("id", flat=True)
+            )
+            profile.assign_hotkey_bindings = {
+                k: uid for k, uid in staged.items() if uid in existing_ids
+            }
+            profile.save(update_fields=["assign_hotkey_bindings"])
+
+        return Response(_me_payload(request.user, request))
 
 
 # ---------------------------------------------------------------------------

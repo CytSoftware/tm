@@ -36,6 +36,7 @@ import { RecurringManager } from "@/components/recurring/RecurringManager";
 import { ListView } from "@/components/list/ListView";
 import { CommandPalette } from "@/components/CommandPalette";
 import { DeclutterDialog } from "@/components/declutter/DeclutterDialog";
+import { AssignDialog } from "@/components/declutter/AssignDialog";
 import {
   FilterBar,
   applyBoardFilters,
@@ -156,6 +157,7 @@ type DroppableColumnProps = {
   children: ReactNode;
   onAddTask?: () => void;
   onDeclutter?: () => void;
+  onAssign?: () => void;
 };
 
 function DroppableColumn({
@@ -165,6 +167,7 @@ function DroppableColumn({
   children,
   onAddTask,
   onDeclutter,
+  onAssign,
 }: DroppableColumnProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -188,6 +191,7 @@ function DroppableColumn({
       tasks={tasks}
       onAddTask={onAddTask}
       onDeclutter={onDeclutter}
+      onAssign={onAssign}
       bodyRef={bodyRef}
       isDraggingOver={isDraggingOver}
     >
@@ -291,6 +295,7 @@ export default function BoardPage() {
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [declutterOpen, setDeclutterOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
 
   // Anticipated drop position, updated as the user drags. Drives the
   // in-list ghost preview: the source task gets filtered out of its
@@ -783,6 +788,7 @@ export default function BoardPage() {
                       : undefined
                   }
                   onDeclutter={() => setDeclutterOpen(true)}
+                  onAssign={() => setAssignOpen(true)}
                 >
                   {visibleTasks.map((task, idx) => (
                     <Fragment key={task.id}>
@@ -869,6 +875,14 @@ export default function BoardPage() {
         onOpenChange={setDeclutterOpen}
         tasks={tasksQuery.data?.results ?? []}
         projects={projects}
+        scopeProjectId={projectId}
+      />
+      <AssignDialog
+        open={assignOpen}
+        onOpenChange={setAssignOpen}
+        tasks={tasksQuery.data?.results ?? []}
+        projects={projects}
+        users={allUsers}
         scopeProjectId={projectId}
       />
     </div>

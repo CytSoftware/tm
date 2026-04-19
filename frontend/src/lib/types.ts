@@ -28,6 +28,20 @@ export type User = {
   avatar_url: string;
 };
 
+/** User-private preferences — only returned by ``/api/auth/me/``. Not
+ *  exposed on the shared ``/api/users/`` listing. */
+export type MePreferences = {
+  /** Arbitrary key -> user-id map for the Assign-Todo triage dialog. Keys
+   *  are normalized ``KeyboardEvent.key`` values (letters uppercased; arrow
+   *  keys stay as ``ArrowLeft`` / ``ArrowRight`` / ``ArrowUp``). Each user
+   *  can be bound to at most one key; each key to one user. */
+  assign_hotkey_bindings: Record<string, number>;
+};
+
+export type Me = User & {
+  preferences: MePreferences;
+};
+
 export type Column = {
   id: number;
   project: number;

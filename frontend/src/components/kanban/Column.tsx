@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode, Ref } from "react";
-import { Plus, Sparkles } from "lucide-react";
+import { Plus, Sparkles, UserPlus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,10 @@ type Props = {
    *  named "Backlog" — parent passes the same handler to every column and
    *  this component decides whether to show it. */
   onDeclutter?: () => void;
+  /** Tinder-style Todo-column assignment triage. Same render-gating pattern
+   *  as ``onDeclutter`` — parent passes the handler to every column and the
+   *  button only shows on Todo. */
+  onAssign?: () => void;
   /** Ref on the scrollable body. Parent attaches a pragmatic-dnd drop
    *  target to it so drops into the empty space land in this column. */
   bodyRef?: Ref<HTMLDivElement>;
@@ -28,6 +32,7 @@ export function KanbanColumn({
   children,
   onAddTask,
   onDeclutter,
+  onAssign,
   bodyRef,
   isDraggingOver,
 }: Props) {
@@ -62,6 +67,21 @@ export function KanbanColumn({
               title="Declutter backlog"
             >
               <Sparkles className="size-3.5" />
+            </Button>
+          )}
+          {onAssign && column.name === "Todo" && tasks.length > 0 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 text-muted-foreground hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAssign();
+              }}
+              aria-label="Assign Todo tasks"
+              title="Assign Todo tasks"
+            >
+              <UserPlus className="size-3.5" />
             </Button>
           )}
           {onAddTask && (

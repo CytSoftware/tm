@@ -74,6 +74,7 @@ import {
   useDeleteProject,
 } from "@/hooks/use-projects";
 import type {
+  Me,
   Project,
   SavedView,
   User,
@@ -697,7 +698,7 @@ function UserFooter({
     mutationFn: (file: File) => {
       const form = new FormData();
       form.append("avatar_image", file);
-      return apiFetch<User>("/api/auth/me/", {
+      return apiFetch<Me>("/api/auth/me/", {
         method: "PATCH",
         body: form,
       });
