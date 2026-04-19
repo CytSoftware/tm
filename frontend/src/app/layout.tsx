@@ -1,8 +1,9 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Shell } from "@/components/layout/Shell";
+import { RegisterSW } from "@/components/pwa/RegisterSW";
 
 /**
  * Inter is the Linear / Vercel / Stripe standard — renders consistently on
@@ -24,6 +25,24 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Cyt Task Tracker",
   description: "Phase 1 of the Cyt internal infrastructure app.",
+  applicationName: "Cyt",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Cyt",
+    statusBarStyle: "default",
+  },
+  formatDetection: { telephone: false },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#fcfcfc" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
+  ],
 };
 
 /**
@@ -58,6 +77,7 @@ export default function RootLayout({
       <body className="h-full overflow-hidden bg-background text-foreground">
         <Providers>
           <Shell>{children}</Shell>
+          <RegisterSW />
         </Providers>
       </body>
     </html>
