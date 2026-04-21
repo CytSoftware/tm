@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, Ref } from "react";
+import { ReactNode, Ref, useEffect, useRef } from "react";
 import { Plus, Sparkles, UserPlus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,11 @@ type Props = {
    *  target to it so drops into the empty space land in this column. */
   bodyRef?: Ref<HTMLDivElement>;
   isDraggingOver?: boolean;
+  /** Infinite-scroll plumbing — when ``hasMore`` is true, a sentinel at the
+   *  bottom of the list fires ``onLoadMore`` once it enters the viewport. */
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 };
 
 export function KanbanColumn({
@@ -35,7 +40,29 @@ export function KanbanColumn({
   onAssign,
   bodyRef,
   isDraggingOver,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
 }: Props) {
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore || !onLoadMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && !isLoadingMore) {
+            onLoadMore();
+          }
+        }
+      },
+      { rootMargin: "120px 0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, isLoadingMore, onLoadMore]);
+
   return (
     <div className="flex-1 min-w-[200px] h-full flex flex-col min-h-0">
       <header className="shrink-0 flex items-center justify-between gap-2 px-1 py-1.5 mb-1">
@@ -108,6 +135,14 @@ export function KanbanColumn({
         )}
       >
         {children}
+        {hasMore && (
+          <div
+            ref={sentinelRef}
+            className="shrink-0 py-2 text-center text-[11px] text-muted-foreground"
+          >
+            {isLoadingMore ? "Loading…" : " "}
+          </div>
+        )}
       </div>
     </div>
   );

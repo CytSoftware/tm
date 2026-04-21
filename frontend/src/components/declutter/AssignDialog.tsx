@@ -42,14 +42,13 @@ import { apiFetch } from "@/lib/api";
 import { fetchMe } from "@/lib/auth";
 import { meKey } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
-import type { Me, Project, Task, User } from "@/lib/types";
+import type { Me, Project, Task, TaskListResponse, User } from "@/lib/types";
 import { SwipeCard } from "./SwipeCard";
 import type { SwipeDirection } from "@/hooks/use-swipe";
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  tasks: Task[];
   projects: Project[];
   users: User[];
   /** Null = merge Todo across every project; otherwise scope to one. */
@@ -116,7 +115,6 @@ function formatKey(key: string): string {
 export function AssignDialog({
   open,
   onOpenChange,
-  tasks,
   projects,
   users,
   scopeProjectId,
@@ -130,6 +128,27 @@ export function AssignDialog({
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const assignedCount = useRef(0);
   const skippedCount = useRef(0);
+
+  // Pull both Todo (the triage queue) and the adjacent active columns (used
+  // by ``loadByUser`` to render the "active load" badge) in one request, so
+  // the dialog doesn't depend on the board's paginated cache.
+  const todoQuery = useQuery<TaskListResponse>({
+    queryKey: ["assign-tasks", scopeProjectId, sessionKey],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (scopeProjectId != null) params.set("project", String(scopeProjectId));
+      // Fetch all active-column tasks in one pass by omitting ``column`` —
+      // we filter in memory below. Kept generous for dialog purposes.
+      params.set("limit", "500");
+      return apiFetch<TaskListResponse>(`/api/tasks/?${params.toString()}`);
+    },
+    enabled: open,
+  });
+
+  const tasks: Task[] = useMemo(
+    () => todoQuery.data?.results ?? [],
+    [todoQuery.data?.results],
+  );
 
   // /api/auth/me/ carries this user's personal hotkey bindings under
   // ``preferences.assign_hotkey_bindings``. Re-use the same cache key Shell
@@ -147,7 +166,8 @@ export function AssignDialog({
 
   // Snapshot Todo task ids at open. Intentionally omitting ``tasks`` from
   // deps — mid-session re-snapshot would shuffle the deck while the user
-  // is triaging. Same trick as DeclutterDialog.
+  // is triaging. The snapshot refreshes when ``dataUpdatedAt`` advances,
+  // which covers both the initial fetch and explicit "Load new" refreshes.
   const queue = useMemo(() => {
     if (!open) return [] as number[];
     return tasks
@@ -155,7 +175,7 @@ export function AssignDialog({
       .filter((t) => scopeProjectId == null || t.project === scopeProjectId)
       .map((t) => t.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, sessionKey, scopeProjectId]);
+  }, [open, sessionKey, scopeProjectId, todoQuery.dataUpdatedAt]);
 
   // Display order in the hotkey bar is always alphabetical — binding is
   // what matters for speed, so reordering by binding would just force the
@@ -241,6 +261,7 @@ export function AssignDialog({
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["tasks"] });
+      qc.invalidateQueries({ queryKey: ["tasks-infinite"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });

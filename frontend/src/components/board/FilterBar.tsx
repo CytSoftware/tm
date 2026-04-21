@@ -1,22 +1,22 @@
 "use client";
 
 /**
- * In-memory filter + sort bar for the board page.
+ * Filter + sort bar for the board page.
  *
- * - State lives in the board page (via `useBoardFilters` below) so navigation
- *   between board/list view keeps the state stable.
- * - Applying a filter is instant — no network round-trip — because the board
- *   already fetches `limit=500` tasks for the active project.
- * - Loading a saved view seeds this state via `boardFiltersFromSavedView`; the
- *   user can then refine it freely. We don't mutate the saved view from here.
+ * - State lives in the board page so navigation between board/list view keeps
+ *   the state stable.
+ * - Changes to a filter or sort re-issue the server query with new params —
+ *   each column's (or the list's) infinite query refetches from offset 0.
+ * - Loading a saved view seeds this state via `boardFiltersFromSavedView`;
+ *   the user can then refine it freely. We don't mutate the saved view from
+ *   here.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import {
   ArrowDownWideNarrow,
   ArrowUpWideNarrow,
   Filter,
-  Plus,
   Search,
   X,
 } from "lucide-react";
@@ -41,7 +41,6 @@ import {
   Project,
   SavedView,
   SavedViewSort,
-  SortField,
   SORT_FIELDS,
   SORT_FIELD_LABELS,
   User,
@@ -697,116 +696,4 @@ function filtersMatchSavedView(filters: BoardFilters, view: SavedView): boolean 
   const fromView = JSON.stringify(view.filters ?? {});
   const sortsEqual = JSON.stringify(filters.sort) === JSON.stringify(view.sort ?? []);
   return fromFilters === fromView && sortsEqual;
-}
-
-/** Filter + sort tasks in memory using the BoardFilters state. */
-export function applyBoardFilters(
-  tasks: import("@/lib/types").Task[],
-  filters: BoardFilters,
-): import("@/lib/types").Task[] {
-  let result = tasks;
-  if (filters.project != null) {
-    result = result.filter((t) => t.project === filters.project);
-  }
-  if (filters.priorities.length > 0) {
-    const set = new Set<Priority>(filters.priorities);
-    // Tasks with no priority are excluded when a priority filter is active.
-    result = result.filter((t) => t.priority != null && set.has(t.priority));
-  }
-  if (filters.assigneeIds.length > 0 || filters.includeUnassigned) {
-    const set = new Set(filters.assigneeIds);
-    result = result.filter((t) => {
-      if (filters.includeUnassigned && t.assignees.length === 0) return true;
-      if (set.size > 0 && t.assignees.some((u) => set.has(u.id))) return true;
-      return false;
-    });
-  }
-  if (filters.labelIds.length > 0) {
-    const set = new Set(filters.labelIds);
-    result = result.filter((t) => t.labels.some((l) => set.has(l.id)));
-  }
-  if (filters.columnName) {
-    result = result.filter((t) => t.column?.name === filters.columnName);
-  }
-  if (filters.search) {
-    // Word-AND matching — every whitespace-separated token must appear in
-    // either key or title. Mirrors the backend's `apply_task_filters`
-    // behavior so the board search feels consistent with the command palette.
-    const words = filters.search.toLowerCase().split(/\s+/).filter(Boolean);
-    if (words.length > 0) {
-      result = result.filter((t) => {
-        const hay = `${t.key} ${t.title}`.toLowerCase();
-        return words.every((w) => hay.includes(w));
-      });
-    }
-  }
-  return applyBoardSort(result, filters.sort);
-}
-
-export function applyBoardSort(
-  tasks: import("@/lib/types").Task[],
-  sort: SavedViewSort,
-): import("@/lib/types").Task[] {
-  if (!sort || sort.length === 0) return tasks;
-  const primary = sort[0];
-  const mul = primary.dir === "asc" ? 1 : -1;
-  const arr = [...tasks];
-  arr.sort((a, b) => {
-    let cmp = 0;
-    switch (primary.field) {
-      case "title":
-        cmp = a.title.localeCompare(b.title);
-        break;
-      case "priority":
-        cmp = priorityRank(a.priority) - priorityRank(b.priority);
-        break;
-      case "story_points":
-        cmp = (a.story_points ?? -1) - (b.story_points ?? -1);
-        break;
-      case "due_at":
-        cmp = (a.due_at ?? "").localeCompare(b.due_at ?? "");
-        break;
-      case "updated_at":
-        cmp = a.updated_at.localeCompare(b.updated_at);
-        break;
-      case "created_at":
-        cmp = a.created_at.localeCompare(b.created_at);
-        break;
-      case "position":
-        cmp = a.position - b.position;
-        break;
-      case "staleness":
-        // Oldest current_column_since first = "most stale first" (asc).
-        // Null sorts last regardless of direction.
-        cmp = stalenessCmp(a, b);
-        break;
-    }
-    return cmp * mul;
-  });
-  return arr;
-}
-
-function stalenessCmp(a: import("@/lib/types").Task, b: import("@/lib/types").Task): number {
-  const aTs = a.current_column_since;
-  const bTs = b.current_column_since;
-  if (aTs == null && bTs == null) return 0;
-  if (aTs == null) return 1;
-  if (bTs == null) return -1;
-  return aTs.localeCompare(bTs);
-}
-
-function priorityRank(p: Priority | null): number {
-  switch (p) {
-    case "P1":
-      return 0;
-    case "P2":
-      return 1;
-    case "P3":
-      return 2;
-    case "P4":
-      return 3;
-    default:
-      // Null priorities sort last regardless of direction.
-      return 99;
-  }
 }

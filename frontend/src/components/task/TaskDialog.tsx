@@ -101,9 +101,9 @@ export function TaskDialog({
     dtstartLocal: defaultDtstartLocal(),
   });
 
-  const createTask = useCreateTask(selectedProject.id);
-  const updateTask = useUpdateTask(selectedProject.id);
-  const deleteTask = useDeleteTask(selectedProject.id);
+  const createTask = useCreateTask();
+  const updateTask = useUpdateTask();
+  const deleteTask = useDeleteTask();
 
   const createRecurring = useMutation({
     mutationFn: (payload: unknown) =>

@@ -211,7 +211,11 @@ export const EMPTY_BOARD_FILTERS: BoardFilters = {
   labelIds: [],
   columnName: null,
   search: "",
-  sort: [{ field: "updated_at", dir: "desc" }],
+  // Default to manual position order — the sort the kanban drag-and-drop
+  // actually mutates. Users who want a different sort can flip it via the
+  // SortPopover; doing so changes the query key and triggers a fresh fetch,
+  // which is expected behavior for a deliberate sort change.
+  sort: [{ field: "position", dir: "asc" }],
 };
 
 /** Field names that can be toggled on/off for Kanban card display. */

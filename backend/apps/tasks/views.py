@@ -15,7 +15,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .broadcast import _broadcast_local, broadcast_task_event
-from .filters import TaskFilter
 from .models import (
     Column,
     Label,
@@ -494,17 +493,89 @@ class LabelViewSet(viewsets.ModelViewSet):
 # ---------------------------------------------------------------------------
 
 
+_SORT_DIRS = {"asc", "desc"}
+
+
+def _extract_ad_hoc_filters(params) -> dict:
+    """Translate query-string params into the dict shape ``apply_task_filters``
+    expects. Missing params yield an empty dict so callers can cheaply check
+    whether ad-hoc filtering was requested at all.
+
+    Accepts both singular (``column=7``) and list (``priority=P1&priority=P2``)
+    forms. ``assignee`` follows the saved-view convention where the literal
+    string ``none`` means "include unassigned" alongside any listed ids.
+    """
+    filters: dict = {}
+
+    if project := params.get("project"):
+        filters["project"] = project
+
+    # ``column`` carries either an id ("7") or a name ("Backlog") — both
+    # accepted downstream in ``apply_task_filters``.
+    if column := params.get("column"):
+        filters["column"] = column
+
+    priorities = [p for p in params.getlist("priority") if p]
+    if priorities:
+        filters["priority"] = priorities
+
+    assignees = [a for a in params.getlist("assignee") if a]
+    if assignees:
+        filters["assignee"] = assignees
+
+    labels = [l for l in params.getlist("label") if l]
+    if labels:
+        filters["labels"] = labels
+
+    if search := params.get("search"):
+        filters["search"] = search
+
+    return filters
+
+
+def _extract_ad_hoc_sort(params) -> list | None:
+    """Turn ``sort_field`` / ``sort_dir`` query params into the sort-spec
+    list ``apply_task_sort`` expects. Returns ``None`` when no sort is
+    requested so the caller can distinguish "no preference" from "explicit".
+    """
+    field = params.get("sort_field")
+    if not field:
+        return None
+    direction = (params.get("sort_dir") or "asc").lower()
+    if direction not in _SORT_DIRS:
+        direction = "asc"
+    return [{"field": field, "dir": direction}]
+
+
 class TaskViewSet(viewsets.ModelViewSet):
-    """All task CRUD. Lookup is by the human key (``CYT-001``)."""
+    """All task CRUD. Lookup is by the human key (``CYT-001``).
+
+    Filtering and sorting accept the same shape that saved ``View``s store on
+    disk, passed as query-string params. The frontend board/list pages send
+    these directly so pagination can work server-side; ``?view=<id>`` remains
+    as a fallback for direct API/MCP callers that want to load a saved view
+    by id without enumerating its filter keys.
+    """
 
     lookup_field = "key"
     lookup_value_regex = r"[A-Za-z0-9\-]+"
-    filter_backends = [DjangoFilterBackend]
-    filterset_class = TaskFilter
 
     def get_queryset(self):
         qs = base_task_queryset()
-        view_id = self.request.query_params.get("view")
+        params = self.request.query_params
+
+        ad_hoc_filters = _extract_ad_hoc_filters(params)
+        ad_hoc_sort = _extract_ad_hoc_sort(params)
+
+        if ad_hoc_filters or ad_hoc_sort:
+            return filter_and_sort_tasks(
+                ad_hoc_filters,
+                ad_hoc_sort,
+                requesting_user=self.request.user,
+                base=qs,
+            )
+
+        view_id = params.get("view")
         if view_id:
             try:
                 saved = View.objects.get(pk=view_id)
@@ -658,6 +729,13 @@ def _compute_position(
     - When both are given we average them.
     - When only one is given we offset by a constant.
     - When neither is given we append to the bottom.
+
+    ``after_id``/``before_id`` are resolved *globally*, not restricted to
+    ``column``'s tasks. That lets the all-projects virtual kanban hand us
+    neighbour ids from any project — the resulting numeric position is
+    consistent with the cross-project visual slot the user dropped into.
+    The moved task still ends up in ``column``; only the *numeric* position
+    comes from the global neighbours.
     """
     # Lazy rebalance: every task created before the position-on-create fix
     # shares the model default (1000.0). Midpoint math on a tied column
@@ -665,29 +743,54 @@ def _compute_position(
     # snaps back to (position, id) order. Spread the column out once on the
     # first move it sees; subsequent moves get clean unique midpoints.
     _rebalance_if_tied(column, exclude_task_id=task_id)
-    neighbors = column.tasks.exclude(id=task_id)
 
-    after = neighbors.filter(id=after_id).first() if after_id else None
-    before = neighbors.filter(id=before_id).first() if before_id else None
+    after = (
+        Task.objects.filter(id=after_id).exclude(id=task_id).first()
+        if after_id
+        else None
+    )
+    before = (
+        Task.objects.filter(id=before_id).exclude(id=task_id).first()
+        if before_id
+        else None
+    )
 
     if after and before:
         return (after.position + before.position) / 2.0
+    # For the one-sided cases, search among tasks in same-named columns
+    # (e.g. every project's "Todo") — that matches what the all-projects
+    # virtual kanban displays as one logical column and keeps single-
+    # project kanban correct too (only one such column exists there).
     if after and not before:
-        bigger = neighbors.filter(position__gt=after.position).aggregate(
-            m=Min("position")
-        )["m"]
+        bigger = (
+            Task.objects.filter(
+                position__gt=after.position,
+                column__name__iexact=column.name,
+            )
+            .exclude(id=task_id)
+            .order_by("position", "id")
+            .values_list("position", flat=True)
+            .first()
+        )
         if bigger is None:
             return after.position + 1000.0
         return (after.position + bigger) / 2.0
     if before and not after:
-        smaller = neighbors.filter(position__lt=before.position).aggregate(
-            m=Max("position")
-        )["m"]
+        smaller = (
+            Task.objects.filter(
+                position__lt=before.position,
+                column__name__iexact=column.name,
+            )
+            .exclude(id=task_id)
+            .order_by("-position", "-id")
+            .values_list("position", flat=True)
+            .first()
+        )
         if smaller is None:
             return before.position - 1000.0
         return (smaller + before.position) / 2.0
-    # Append to bottom.
-    tail = neighbors.aggregate(m=Max("position"))["m"]
+    # Append to bottom of the target column.
+    tail = column.tasks.exclude(id=task_id).aggregate(m=Max("position"))["m"]
     return (tail or 0) + 1000.0
 
 

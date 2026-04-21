@@ -185,13 +185,9 @@ export function TaskPanel(props: Props) {
   });
   const availableLabels = labelsQuery.data ?? [];
 
-  // Mutations key on a concrete project id for cache invalidation; fall back
-  // to 0 for Inbox tasks (the hooks only use this for their onSuccess cache
-  // invalidation, which harmlessly invalidates the "all tasks" list too).
-  const mutationKeyProjectId = selectedProject?.id ?? 0;
-  const createTask = useCreateTask(mutationKeyProjectId);
-  const updateTask = useUpdateTask(mutationKeyProjectId);
-  const deleteTask = useDeleteTask(mutationKeyProjectId);
+  const createTask = useCreateTask();
+  const updateTask = useUpdateTask();
+  const deleteTask = useDeleteTask();
 
   const createRecurring = useMutation({
     mutationFn: (payload: unknown) =>

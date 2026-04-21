@@ -5,9 +5,24 @@ This is a local-development-first configuration. For real deployment, set
 SECRET_KEY / ALLOWED_HOSTS / CORS origins via environment variables.
 """
 
+import os as _os_bootstrap
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load ``backend/.env`` into ``os.environ`` early so the rest of this module
+# (and ``dev.sh``) can read the same values. Kept minimal and dependency-free
+# — no quoting/interpolation/escapes, just ``KEY=VALUE`` per line. Real
+# secrets shouldn't live in a checked-in file anyway; ``.env`` is gitignored
+# so this is purely a per-developer override hook.
+_env_file = BASE_DIR / ".env"
+if _env_file.is_file():
+    for _line in _env_file.read_text().splitlines():
+        _stripped = _line.strip()
+        if not _stripped or _stripped.startswith("#") or "=" not in _stripped:
+            continue
+        _key, _, _val = _stripped.partition("=")
+        _os_bootstrap.environ.setdefault(_key.strip(), _val.strip())
 
 # Make `apps.tasks`, `apps.mcp_server` importable without an `apps.` prefix
 # when the `apps` package is already on sys.path via Django's app loader.

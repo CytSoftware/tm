@@ -31,9 +31,25 @@ export function connectProjectSocket({
   let disposed = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function invalidate() {
+  function invalidate(event: TaskEvent) {
     queryClient.invalidateQueries({ queryKey: taskListKey(projectId) });
     queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
+
+    // Scope the infinite-query invalidation so we don't clobber optimistic
+    // drag-and-drop state. `task.moved` events from the local session would
+    // otherwise race the mutation's onSuccess and refetch the destination
+    // column's page 1 — which can exclude the moved card when its new
+    // server-computed position falls past the page window (the "drop at
+    // visible bottom" pagination edge case).
+    //
+    // For task.created / task.deleted we invalidate all infinite queries
+    // because the creating column isn't carried on the event and a brand
+    // new task needs to appear somewhere. For task.moved we deliberately
+    // skip — the local mutation owns its own cache update, and a move from
+    // another session is rare enough in Phase 1 that the slight staleness
+    // is acceptable.
+    if (event.type === "task.moved") return;
+    queryClient.invalidateQueries({ queryKey: ["tasks-infinite"] });
   }
 
   function connect() {
@@ -49,7 +65,7 @@ export function connectProjectSocket({
         const data = JSON.parse(evt.data) as TaskEvent;
         onEvent?.(data);
         if (data.type !== "connected") {
-          invalidate();
+          invalidate(data);
         }
       } catch {
         // ignore malformed payloads

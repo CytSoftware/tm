@@ -3,6 +3,7 @@
 import {
   Fragment,
   ReactNode,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -39,7 +40,6 @@ import { DeclutterDialog } from "@/components/declutter/DeclutterDialog";
 import { AssignDialog } from "@/components/declutter/AssignDialog";
 import {
   FilterBar,
-  applyBoardFilters,
   boardFiltersFromSavedView,
   savedViewPayloadFromFilters,
 } from "@/components/board/FilterBar";
@@ -47,7 +47,11 @@ import { apiFetch } from "@/lib/api";
 import { viewsKey } from "@/lib/query-keys";
 import { useActiveProject } from "@/lib/active-project";
 import { useProjectsQuery } from "@/hooks/use-projects";
-import { useTasksQuery, useMoveTask } from "@/hooks/use-tasks";
+import {
+  flattenInfinite,
+  useMoveTask,
+  useTasksInfinite,
+} from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import { connectProjectSocket } from "@/lib/ws";
 import type {
@@ -57,7 +61,6 @@ import type {
   Project,
   Task,
   SavedView,
-  SavedViewSort,
   ViewListResponse,
   CardField,
 } from "@/lib/types";
@@ -71,10 +74,6 @@ const STANDARD_COLUMNS = [
   { name: "In Review", order: 3, is_done: false },
   { name: "Done", order: 4, is_done: true },
 ] as const;
-
-const STANDARD_COL_ORDER: Record<string, number> = Object.fromEntries(
-  STANDARD_COLUMNS.map((c) => [c.name, c.order]),
-);
 
 type CardDragData = {
   type: "card";
@@ -158,6 +157,9 @@ type DroppableColumnProps = {
   onAddTask?: () => void;
   onDeclutter?: () => void;
   onAssign?: () => void;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 };
 
 function DroppableColumn({
@@ -168,6 +170,9 @@ function DroppableColumn({
   onAddTask,
   onDeclutter,
   onAssign,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
 }: DroppableColumnProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -194,6 +199,9 @@ function DroppableColumn({
       onAssign={onAssign}
       bodyRef={bodyRef}
       isDraggingOver={isDraggingOver}
+      hasMore={hasMore}
+      isLoadingMore={isLoadingMore}
+      onLoadMore={onLoadMore}
     >
       {children}
     </KanbanColumn>
@@ -225,8 +233,7 @@ export default function BoardPage() {
   const viewKind = activeView?.kind ?? "board";
   const cardDisplay: CardField[] | null = activeView?.card_display ?? null;
 
-  const tasksQuery = useTasksQuery({ projectId, viewId });
-  const moveTask = useMoveTask(projectId ?? 0);
+  const moveTask = useMoveTask();
 
   const usersQuery = useUsersQuery();
   const allUsers = usersQuery.data ?? [];
@@ -311,86 +318,72 @@ export default function BoardPage() {
     return connectProjectSocket({ projectId, queryClient });
   }, [projectId, queryClient]);
 
-  // Raw tasks from the API, then filtered/sorted in memory via the board
-  // filter state. This keeps temporary filters instant — no refetch.
-  const allTasks = tasksQuery.data?.results ?? [];
-  const filteredTasks = useMemo(
-    () => applyBoardFilters(allTasks, boardFilters),
-    [allTasks, boardFilters],
-  );
-
-  // Build column list + task grouping. Projectless / columnless tasks are
-  // skipped on the board — they have no column to live in. They still appear
-  // in the List view and can be edited via the task panel or command palette.
-  const { displayColumns, tasksByColumn } = useMemo(() => {
-    const tasks = filteredTasks;
-
+  // Which columns should we render? Single project → real columns by order.
+  // All-projects → fixed set of virtual columns (negative ids so they don't
+  // collide with real column ids when the drag monitor maps back to a real
+  // column via `STANDARD_COL_ORDER`).
+  const displayColumns: Column[] = useMemo(() => {
     if (project) {
-      // Single project — group by column id, skip projectless/columnless tasks.
-      // Iteration preserves the order of `filteredTasks`, which is already
-      // sorted by the user's chosen sort (via applyBoardSort).
-      const map = new Map<number, Task[]>();
-      for (const t of tasks) {
-        if (!t.column || t.project !== project.id) continue;
-        const arr = map.get(t.column.id) ?? [];
-        arr.push(t);
-        map.set(t.column.id, arr);
-      }
-      return {
-        displayColumns: project.columns
-          .slice()
-          .sort((a, b) => a.order - b.order),
-        tasksByColumn: map,
-      };
+      return project.columns.slice().sort((a, b) => a.order - b.order);
     }
-
-    // All projects — group by column name, always include standard columns.
-    // Tasks without a column are skipped (no visual home on the Kanban).
-    const byName = new Map<string, Task[]>();
-    for (const std of STANDARD_COLUMNS) {
-      byName.set(std.name, []);
-    }
-
-    for (const t of tasks) {
-      if (!t.column) continue;
-      const name = t.column.name;
-      const arr = byName.get(name) ?? [];
-      arr.push(t);
-      byName.set(name, arr);
-    }
-
-    // Sort columns by standard order, unknowns at the end. Use negative
-    // synthetic IDs so they don't clash with real column IDs.
-    const names = [...byName.keys()].sort(
-      (a, b) =>
-        (STANDARD_COL_ORDER[a] ?? 99) - (STANDARD_COL_ORDER[b] ?? 99),
-    );
-    const virtualCols: Column[] = names.map((name, i) => ({
+    return STANDARD_COLUMNS.map((std, i) => ({
       id: -(i + 1),
       project: 0,
-      name,
-      order: STANDARD_COL_ORDER[name] ?? 50 + i,
-      is_done: name === "Done",
+      name: std.name,
+      order: std.order,
+      is_done: std.is_done,
     }));
+  }, [project]);
 
-    const map = new Map<number, Task[]>();
-    for (const vc of virtualCols) {
-      map.set(vc.id, byName.get(vc.name) ?? []);
-    }
-
-    return { displayColumns: virtualCols, tasksByColumn: map };
-  }, [filteredTasks, project]);
+  // Per-column results are fetched inside <ColumnContainer>s below and lifted
+  // back here via callback. The map is what the drag monitor + keyboard nav
+  // + selected-task lookup read from.
+  const [tasksByColumn, setTasksByColumn] = useState<Map<number, Task[]>>(
+    () => new Map(),
+  );
+  const onColumnTasksChange = useCallback(
+    (columnId: number, tasks: Task[]) => {
+      setTasksByColumn((prev) => {
+        const existing = prev.get(columnId);
+        if (
+          existing &&
+          existing.length === tasks.length &&
+          existing.every((t, i) => t === tasks[i])
+        ) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(columnId, tasks);
+        return next;
+      });
+    },
+    [],
+  );
 
   const isAllProjects = !projectId;
 
-  // The currently selected task object (for the command palette)
+  // The currently selected task — pulled from whichever column's loaded
+  // page happens to carry it.
   const selectedTask = useMemo(() => {
     if (selectedTaskId === null) return null;
-    return (
-      (tasksQuery.data?.results ?? []).find((t) => t.id === selectedTaskId) ??
-      null
-    );
-  }, [selectedTaskId, tasksQuery.data]);
+    for (const tasks of tasksByColumn.values()) {
+      const hit = tasks.find((t) => t.id === selectedTaskId);
+      if (hit) return hit;
+    }
+    return null;
+  }, [selectedTaskId, tasksByColumn]);
+
+  // Resolve the currently-dragged task up here so any column can render it
+  // as a ghost in its preview slot — the destination column's own query
+  // doesn't contain the source card during a cross-column drag.
+  const draggedTask = useMemo(() => {
+    if (!dragPreview) return null;
+    for (const tasks of tasksByColumn.values()) {
+      const hit = tasks.find((t) => t.id === dragPreview.sourceTaskId);
+      if (hit) return hit;
+    }
+    return null;
+  }, [dragPreview, tasksByColumn]);
 
   // Keyboard navigation — arrow keys, Enter, Esc, Space
   useEffect(() => {
@@ -629,23 +622,37 @@ export default function BoardPage() {
 
         const { destColumnId: destColId, insertIndex: insertIdx } = resolved;
         const sourceTaskId = source.data.taskId;
-        const movingTask = tasksQuery.data?.results.find(
-          (t) => t.id === sourceTaskId,
-        );
+        let movingTask: Task | undefined;
+        for (const tasks of tasksByColumn.values()) {
+          const hit = tasks.find((t) => t.id === sourceTaskId);
+          if (hit) {
+            movingTask = hit;
+            break;
+          }
+        }
         if (!movingTask || movingTask.project == null) return;
 
         const destTasks = (tasksByColumn.get(destColId) ?? []).filter(
           (t) => t.id !== sourceTaskId,
         );
+        // after = the task that should sit above the moved card; before =
+        // the task that should sit below. The backend resolves these ids
+        // globally (not scoped to the target column) so virtual all-projects
+        // drops compute positions from whichever cards were visually on
+        // either side of the drop slot.
         const afterId =
           insertIdx > 0 ? destTasks[insertIdx - 1]?.id : undefined;
         const beforeId =
           insertIdx < destTasks.length ? destTasks[insertIdx]?.id : undefined;
 
-        // Virtual col → real col for the API call.
+        // Virtual col → real col for the API call. We also grab the real
+        // Column object so the mutation's optimistic insert can attach the
+        // correct ``column`` to the card before the server confirms it.
         let targetColumnId: number | null = null;
+        let targetColumn: Column | undefined;
         if (destColId > 0) {
           targetColumnId = destColId;
+          targetColumn = displayColumns.find((c) => c.id === destColId);
         } else {
           const vc = displayColumns.find((c) => c.id === destColId);
           if (vc) {
@@ -656,24 +663,53 @@ export default function BoardPage() {
               (c) => c.name === vc.name,
             );
             targetColumnId = realCol?.id ?? null;
+            targetColumn = realCol;
           }
         }
         if (!targetColumnId) return;
 
-        // Flip to manual sort so drag result sticks under any saved view.
-        const primarySort = boardFilters.sort[0];
-        if (primarySort && primarySort.field !== "position") {
-          setBoardFilters({
-            ...boardFilters,
-            sort: [{ field: "position", dir: "asc" }],
-          });
+        // Approximate the position the server will assign, so the
+        // optimistic insert slots the card into the exact spot the user
+        // dropped it — otherwise the card disappears for the full network
+        // round-trip. Mirrors the backend ``_compute_position`` arithmetic
+        // using whatever positions we can see locally.
+        const afterTask = afterId
+          ? destTasks.find((t) => t.id === afterId)
+          : undefined;
+        const beforeTask = beforeId
+          ? destTasks.find((t) => t.id === beforeId)
+          : undefined;
+        let estimatedPosition: number;
+        if (afterTask && beforeTask) {
+          estimatedPosition = (afterTask.position + beforeTask.position) / 2;
+        } else if (afterTask) {
+          estimatedPosition = afterTask.position + 1000;
+        } else if (beforeTask) {
+          estimatedPosition = beforeTask.position - 1000;
+        } else {
+          const tail = destTasks.reduce(
+            (m, t) => (t.position > m ? t.position : m),
+            0,
+          );
+          estimatedPosition = tail + 1000;
         }
 
+        // The server persists the new position regardless of the current
+        // sort. We used to auto-flip sort to ``position`` here so the drag
+        // result was immediately visible, but that changes the queryKey and
+        // forces every column's paginated cache to refetch from offset 0 —
+        // the user loses their scroll position on every drag. Leave sort
+        // alone; if the user is sorted by something other than position the
+        // drag still persists, it just isn't visible until they switch to
+        // manual order.
         moveTask.mutate({
           key: movingTask.key,
           column_id: targetColumnId,
           before_id: beforeId ?? null,
           after_id: afterId ?? null,
+          optimistic: targetColumn
+            ? { destColumn: targetColumn, estimatedPosition }
+            : undefined,
         });
       },
     });
@@ -681,21 +717,23 @@ export default function BoardPage() {
     tasksByColumn,
     displayColumns,
     projects,
-    tasksQuery.data,
     boardFilters,
     moveTask,
   ]);
 
+  // Column names available as a filter option. With server-side pagination we
+  // only see the pages that are loaded, so we derive this from the project's
+  // real columns (or the canonical standard columns in all-projects mode) —
+  // that way the option stays correct even before any page has loaded.
   const availableColumnNames = useMemo(() => {
-    const set = new Set<string>();
-    for (const t of allTasks) {
-      if (t.column?.name) set.add(t.column.name);
+    if (project) {
+      return project.columns
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .map((c) => c.name);
     }
-    return Array.from(set).sort(
-      (a, b) =>
-        (STANDARD_COL_ORDER[a] ?? 99) - (STANDARD_COL_ORDER[b] ?? 99),
-    );
-  }, [allTasks]);
+    return STANDARD_COLUMNS.map((c) => c.name);
+  }, [project]);
 
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -732,10 +770,10 @@ export default function BoardPage() {
             </Button>
           </div>
         ) : viewKind === "table" ? (
-          <ListView
-            tasks={filteredTasks}
+          <TableContainer
+            projectId={projectId}
+            filters={boardFilters}
             showProject={isAllProjects}
-            sort={boardFilters.sort}
             onSortChange={(sort) =>
               setBoardFilters({ ...boardFilters, sort })
             }
@@ -743,76 +781,34 @@ export default function BoardPage() {
           />
         ) : (
           <div className="flex gap-3 h-full px-4 py-3">
-            {displayColumns.map((col) => {
-              const tasks = tasksByColumn.get(col.id) ?? [];
-              const sourceTask = dragPreview
-                ? (tasksQuery.data?.results.find(
-                    (t) => t.id === dragPreview.sourceTaskId,
-                  ) ?? null)
-                : null;
-              // Remove the source card from the visible list while dragging.
-              // Its slot collapses, the surrounding cards reflow, and a
-              // ghost copy gets injected at the anticipated drop location
-              // below — that's the "preview in new position" effect.
-              const visibleTasks = dragPreview
-                ? tasks.filter((t) => t.id !== dragPreview.sourceTaskId)
-                : tasks;
-              const isDest = dragPreview?.destColumnId === col.id;
-              const previewIdx = isDest ? dragPreview!.insertIndex : -1;
-              const ghost = sourceTask ? (
-                <div
-                  key="__preview"
-                  className="pointer-events-none opacity-50 rounded-lg border-2 border-dashed border-primary/40"
-                >
-                  <KanbanCard
-                    task={sourceTask}
-                    showProject={isAllProjects}
-                    visibleFields={cardDisplay}
-                  />
-                </div>
-              ) : null;
-
-              return (
-                <DroppableColumn
-                  key={col.id}
-                  columnId={col.id}
-                  column={col}
-                  tasks={tasks}
-                  onAddTask={
-                    project
-                      ? () =>
-                          setDialogState({
-                            mode: "create",
-                            columnId: col.id,
-                          })
-                      : undefined
-                  }
-                  onDeclutter={() => setDeclutterOpen(true)}
-                  onAssign={() => setAssignOpen(true)}
-                >
-                  {visibleTasks.map((task, idx) => (
-                    <Fragment key={task.id}>
-                      {isDest && idx === previewIdx && ghost}
-                      <DraggableCard task={task} columnId={col.id}>
-                        {({ isDragging }) => (
-                          <KanbanCard
-                            task={task}
-                            isDragging={isDragging}
-                            isSelected={task.id === selectedTaskId}
-                            showProject={isAllProjects}
-                            visibleFields={cardDisplay}
-                            onClick={() =>
-                              setDialogState({ mode: "edit", task })
-                            }
-                          />
-                        )}
-                      </DraggableCard>
-                    </Fragment>
-                  ))}
-                  {isDest && previewIdx === visibleTasks.length && ghost}
-                </DroppableColumn>
-              );
-            })}
+            {displayColumns.map((col) => (
+              <ColumnContainer
+                key={col.id}
+                column={col}
+                projectId={projectId}
+                filters={boardFilters}
+                dragPreview={dragPreview}
+                draggedTask={draggedTask}
+                isAllProjects={isAllProjects}
+                cardDisplay={cardDisplay}
+                selectedTaskId={selectedTaskId}
+                onTasksChange={onColumnTasksChange}
+                onAddTask={
+                  project
+                    ? () =>
+                        setDialogState({
+                          mode: "create",
+                          columnId: col.id,
+                        })
+                    : undefined
+                }
+                onEditTask={(task) =>
+                  setDialogState({ mode: "edit", task })
+                }
+                onDeclutter={() => setDeclutterOpen(true)}
+                onAssign={() => setAssignOpen(true)}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -873,19 +869,177 @@ export default function BoardPage() {
       <DeclutterDialog
         open={declutterOpen}
         onOpenChange={setDeclutterOpen}
-        tasks={tasksQuery.data?.results ?? []}
         projects={projects}
         scopeProjectId={projectId}
       />
       <AssignDialog
         open={assignOpen}
         onOpenChange={setAssignOpen}
-        tasks={tasksQuery.data?.results ?? []}
         projects={projects}
         users={allUsers}
         scopeProjectId={projectId}
       />
     </div>
+  );
+}
+
+type ColumnContainerProps = {
+  column: Column;
+  projectId: number | null;
+  filters: BoardFilters;
+  dragPreview: {
+    sourceTaskId: number;
+    destColumnId: number;
+    insertIndex: number;
+  } | null;
+  /** The task currently being dragged, resolved at the parent level so the
+   *  destination column can render the ghost even when the source card
+   *  lives in a different column's query cache. */
+  draggedTask: Task | null;
+  isAllProjects: boolean;
+  cardDisplay: CardField[] | null;
+  selectedTaskId: number | null;
+  onTasksChange: (columnId: number, tasks: Task[]) => void;
+  onAddTask?: () => void;
+  onEditTask: (task: Task) => void;
+  onDeclutter: () => void;
+  onAssign: () => void;
+};
+
+/** Owns a single column's infinite task query and renders its cards.
+ *  Lifted out so each column gets its own ``useInfiniteQuery`` hook — one
+ *  call per render is all TanStack needs, but the hook count per render of
+ *  the parent board page must stay stable, so it can't live in a map. */
+function ColumnContainer({
+  column,
+  projectId,
+  filters,
+  dragPreview,
+  draggedTask,
+  isAllProjects,
+  cardDisplay,
+  selectedTaskId,
+  onTasksChange,
+  onAddTask,
+  onEditTask,
+  onDeclutter,
+  onAssign,
+}: ColumnContainerProps) {
+  // Real columns have positive ids + a concrete `project` fk. All-projects
+  // virtual columns have negative ids and only a column name.
+  const isVirtual = column.id < 0;
+  const query = useTasksInfinite({
+    projectId,
+    columnId: isVirtual ? null : column.id,
+    columnName: isVirtual ? column.name : null,
+    filters,
+    limit: 50,
+  });
+
+  const tasks = useMemo(() => flattenInfinite(query.data), [query.data]);
+
+  useEffect(() => {
+    onTasksChange(column.id, tasks);
+  }, [column.id, tasks, onTasksChange]);
+
+  const fetchNextPage = query.fetchNextPage;
+  const handleLoadMore = useCallback(() => {
+    fetchNextPage();
+  }, [fetchNextPage]);
+
+  const visibleTasks = dragPreview
+    ? tasks.filter((t) => t.id !== dragPreview.sourceTaskId)
+    : tasks;
+  const isDest = dragPreview?.destColumnId === column.id;
+  const previewIdx = isDest ? dragPreview!.insertIndex : -1;
+
+  const ghost = draggedTask ? (
+    <div
+      key="__preview"
+      className="pointer-events-none opacity-50 rounded-lg border-2 border-dashed border-primary/40"
+    >
+      <KanbanCard
+        task={draggedTask}
+        showProject={isAllProjects}
+        visibleFields={cardDisplay}
+      />
+    </div>
+  ) : null;
+
+  return (
+    <DroppableColumn
+      columnId={column.id}
+      column={column}
+      tasks={tasks}
+      hasMore={query.hasNextPage ?? false}
+      isLoadingMore={query.isFetchingNextPage}
+      onLoadMore={handleLoadMore}
+      onAddTask={onAddTask}
+      onDeclutter={onDeclutter}
+      onAssign={onAssign}
+    >
+      {visibleTasks.map((task, idx) => (
+        <Fragment key={task.id}>
+          {isDest && idx === previewIdx && ghost}
+          <DraggableCard task={task} columnId={column.id}>
+            {({ isDragging }) => (
+              <KanbanCard
+                task={task}
+                isDragging={isDragging}
+                isSelected={task.id === selectedTaskId}
+                showProject={isAllProjects}
+                visibleFields={cardDisplay}
+                onClick={() => onEditTask(task)}
+              />
+            )}
+          </DraggableCard>
+        </Fragment>
+      ))}
+      {isDest && previewIdx === visibleTasks.length && ghost}
+    </DroppableColumn>
+  );
+}
+
+type TableContainerProps = {
+  projectId: number | null;
+  filters: BoardFilters;
+  showProject: boolean;
+  onSortChange: (sort: BoardFilters["sort"]) => void;
+  onTaskClick: (task: Task) => void;
+};
+
+/** Single-query paginated list for the table view. Larger page size than the
+ *  per-column kanban queries because a visible list row is cheaper than a
+ *  rendered card. */
+function TableContainer({
+  projectId,
+  filters,
+  showProject,
+  onSortChange,
+  onTaskClick,
+}: TableContainerProps) {
+  const query = useTasksInfinite({
+    projectId,
+    filters,
+    limit: 100,
+  });
+  const tasks = useMemo(() => flattenInfinite(query.data), [query.data]);
+  const fetchNextPage = query.fetchNextPage;
+  const handleLoadMore = useCallback(() => {
+    fetchNextPage();
+  }, [fetchNextPage]);
+
+  return (
+    <ListView
+      tasks={tasks}
+      showProject={showProject}
+      sort={filters.sort}
+      onSortChange={onSortChange}
+      onTaskClick={onTaskClick}
+      hasMore={query.hasNextPage ?? false}
+      isLoadingMore={query.isFetchingNextPage}
+      onLoadMore={handleLoadMore}
+    />
   );
 }
 

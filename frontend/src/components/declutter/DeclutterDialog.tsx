@@ -22,7 +22,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Sparkles, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { Project, Task } from "@/lib/types";
+import type { Project, Task, TaskListResponse } from "@/lib/types";
 import {
   DIRECTION_ACCENT,
   DIRECTION_META,
@@ -44,7 +44,6 @@ import type { SwipeDirection } from "@/hooks/use-swipe";
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  tasks: Task[];
   projects: Project[];
   /** Null = merge backlog across every project; otherwise scope to one. */
   scopeProjectId: number | null;
@@ -77,7 +76,6 @@ function nextOutgoingId(): number {
 export function DeclutterDialog({
   open,
   onOpenChange,
-  tasks,
   projects,
   scopeProjectId,
 }: Props) {
@@ -95,17 +93,36 @@ export function DeclutterDialog({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const counters = useRef<Counters>({ ...ZERO_COUNTERS });
 
+  // Self-fetch the Backlog scoped to the active project (or all projects).
+  // Bypasses the board's paginated cache because triage needs the full
+  // column up front, not whichever page happens to be loaded.
+  const backlogQuery = useQuery<TaskListResponse>({
+    queryKey: ["declutter-tasks", scopeProjectId, sessionKey],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.set("column", BACKLOG);
+      if (scopeProjectId != null) params.set("project", String(scopeProjectId));
+      params.set("limit", "500");
+      return apiFetch<TaskListResponse>(`/api/tasks/?${params.toString()}`);
+    },
+    enabled: open,
+  });
+
+  const tasks: Task[] = useMemo(
+    () => backlogQuery.data?.results ?? [],
+    [backlogQuery.data?.results],
+  );
+
   // Snapshot Backlog task ids at open (and on each sessionKey bump).
   // Intentionally omitting ``tasks`` from deps — mid-session re-snapshot
-  // would shuffle the deck while the user is triaging.
+  // would shuffle the deck while the user is triaging. The fetch completes
+  // before the dialog becomes interactive for its first frame because the
+  // snapshot effect re-runs on the query's first success via sessionKey.
   const queue = useMemo(() => {
     if (!open) return [] as number[];
-    return tasks
-      .filter((t) => t.column?.name === BACKLOG)
-      .filter((t) => scopeProjectId == null || t.project === scopeProjectId)
-      .map((t) => t.id);
+    return tasks.map((t) => t.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, sessionKey, scopeProjectId]);
+  }, [open, sessionKey, scopeProjectId, backlogQuery.dataUpdatedAt]);
 
   // Reset per-session state whenever a fresh session begins.
   useEffect(() => {
@@ -156,6 +173,7 @@ export function DeclutterDialog({
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["tasks"] });
+      qc.invalidateQueries({ queryKey: ["tasks-infinite"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });

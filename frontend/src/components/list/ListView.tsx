@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useRef } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import {
@@ -17,16 +17,6 @@ import { TimeInColumn } from "@/components/task/TimeInColumn";
 import { PRIORITY_LABELS } from "@/lib/types";
 import type { SavedViewSort, SortField, Task } from "@/lib/types";
 import { withAlpha } from "@/lib/colors";
-
-const PRIORITY_RANK: Record<string, number> = {
-  P1: 0,
-  P2: 1,
-  P3: 2,
-  P4: 3,
-};
-
-/** Null priorities sort last regardless of direction. */
-const NULL_PRIORITY_RANK = 99;
 
 /** Table-column keys. Every entry except "labels" is backed by a SortField. */
 type TableCol =
@@ -61,6 +51,10 @@ type Props = {
   sort: SavedViewSort;
   onSortChange: (sort: SavedViewSort) => void;
   onTaskClick: (task: Task) => void;
+  /** Infinite-scroll plumbing. Rows arrive already server-sorted. */
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 };
 
 export function ListView({
@@ -69,51 +63,28 @@ export function ListView({
   sort,
   onSortChange,
   onTaskClick,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
 }: Props) {
-  // ListView still sorts in-memory — the board owns the canonical sort state
-  // and passes it through, but the actual ordering of the row array happens
-  // here so changing sort doesn't need a refetch.
-  const sorted = useMemo(() => {
-    const arr = [...tasks];
-    if (!sort || sort.length === 0) return arr;
-    const primary = sort[0];
-    const mul = primary.dir === "asc" ? 1 : -1;
-    arr.sort((a, b) => {
-      let cmp = 0;
-      switch (primary.field) {
-        case "title":
-          cmp = a.title.localeCompare(b.title);
-          break;
-        case "priority":
-          cmp =
-            (a.priority ? PRIORITY_RANK[a.priority] : NULL_PRIORITY_RANK) -
-            (b.priority ? PRIORITY_RANK[b.priority] : NULL_PRIORITY_RANK);
-          break;
-        case "story_points":
-          cmp = (a.story_points ?? -1) - (b.story_points ?? -1);
-          break;
-        case "due_at":
-          cmp = (a.due_at ?? "").localeCompare(b.due_at ?? "");
-          break;
-        case "updated_at":
-          cmp = a.updated_at.localeCompare(b.updated_at);
-          break;
-        case "created_at":
-          cmp = a.created_at.localeCompare(b.created_at);
-          break;
-        case "position":
-          cmp = a.position - b.position;
-          break;
-        case "staleness":
-          // Oldest current_column_since first = "most stale first" (asc).
-          // Null sorts last regardless of direction.
-          cmp = stalenessCmp(a, b);
-          break;
-      }
-      return cmp * mul;
-    });
-    return arr;
-  }, [tasks, sort]);
+  const sentinelRef = useRef<HTMLTableRowElement>(null);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore || !onLoadMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && !isLoadingMore) {
+            onLoadMore();
+          }
+        }
+      },
+      { rootMargin: "200px 0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, isLoadingMore, onLoadMore]);
 
   function toggleSort(col: TableCol) {
     const mapped = SORTABLE_COLS[col as keyof typeof SORTABLE_COLS];
@@ -166,7 +137,7 @@ export function ListView({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {sorted.map((task) => (
+          {tasks.map((task) => (
             <TableRow
               key={task.id}
               className="cursor-pointer text-[13px]"
@@ -261,7 +232,7 @@ export function ListView({
               </TableCell>
             </TableRow>
           ))}
-          {sorted.length === 0 && (
+          {tasks.length === 0 && !isLoadingMore && (
             <TableRow>
               <TableCell
                 colSpan={10}
@@ -271,21 +242,20 @@ export function ListView({
               </TableCell>
             </TableRow>
           )}
+          {hasMore && (
+            <TableRow ref={sentinelRef}>
+              <TableCell
+                colSpan={10}
+                className="text-center text-muted-foreground/70 py-3 text-[11px]"
+              >
+                {isLoadingMore ? "Loading…" : " "}
+              </TableCell>
+            </TableRow>
+          )}
         </TableBody>
       </Table>
     </div>
   );
-}
-
-/** "Most stale first" compare — earliest `current_column_since` sorts first.
- *  Tasks without a timestamp always sort after tasks that have one. */
-function stalenessCmp(a: Task, b: Task): number {
-  const aTs = a.current_column_since;
-  const bTs = b.current_column_since;
-  if (aTs == null && bTs == null) return 0;
-  if (aTs == null) return 1;
-  if (bTs == null) return -1;
-  return aTs.localeCompare(bTs);
 }
 
 function SortableHead({
