@@ -18,7 +18,7 @@ from typing import Any, Iterable
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import F, Max, Q
 from django.utils import timezone
 
 from apps.tasks.broadcast import broadcast_task_event
@@ -97,15 +97,29 @@ def _resolve_column(project: Project, ref: str | int | None) -> Column:
 
 
 def _resolve_labels(project: Project, refs: Iterable[str | int]) -> list[Label]:
+    # Labels can either be project-scoped or global (project_id is null). Match
+    # both — project-scoped first, then global — so MCP callers can mix the two
+    # in a single labels=[...] argument.
+    candidate_qs = Label.objects.filter(Q(project=project) | Q(project__isnull=True))
     labels: list[Label] = []
     for ref in refs:
         if isinstance(ref, int):
-            labels.append(project.labels.get(pk=ref))
+            labels.append(candidate_qs.get(pk=ref))
         elif isinstance(ref, str):
             if ref.isdigit():
-                labels.append(project.labels.get(pk=int(ref)))
+                labels.append(candidate_qs.get(pk=int(ref)))
             else:
-                labels.append(project.labels.get(name__iexact=ref))
+                # Prefer a project-scoped label by name; fall back to a global one.
+                match = (
+                    candidate_qs.filter(name__iexact=ref)
+                    .order_by(F("project_id").asc(nulls_last=True))
+                    .first()
+                )
+                if match is None:
+                    raise Label.DoesNotExist(
+                        f"No label named {ref!r} in project {project.prefix} or globally."
+                    )
+                labels.append(match)
         else:
             raise ValueError(f"Invalid label reference: {ref!r}")
     return labels
@@ -428,6 +442,37 @@ def list_users() -> list[dict[str, Any]]:
         {"id": u.id, "username": u.username, "email": u.email}
         for u in User.objects.filter(is_active=True).order_by("username")
     ]
+
+
+# ---------------------------------------------------------------------------
+# Labels
+# ---------------------------------------------------------------------------
+
+
+def list_labels(project: str | int | None = None) -> list[dict[str, Any]]:
+    qs = Label.objects.all()
+    if project is not None:
+        proj = _resolve_project(project)
+        qs = qs.filter(Q(project=proj) | Q(project__isnull=True))
+    return [_label_dict(l) for l in qs.order_by(F("project_id").asc(nulls_last=True), "name")]
+
+
+@transaction.atomic
+def create_label(
+    name: str,
+    color: str = "#888888",
+    project: str | int | None = None,
+) -> dict[str, Any]:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Label name must not be empty.")
+    proj = _resolve_project(project) if project is not None else None
+    label, _ = Label.objects.get_or_create(
+        project=proj,
+        name=name,
+        defaults={"color": color},
+    )
+    return _label_dict(label)
 
 
 # ---------------------------------------------------------------------------

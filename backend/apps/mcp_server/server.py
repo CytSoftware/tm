@@ -174,6 +174,33 @@ async def list_users() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Labels
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_labels(project: str | int | None = None) -> list[dict[str, Any]]:
+    """List labels. With ``project`` set, returns that project's labels plus
+    global (project-less) labels. Without ``project``, returns every label."""
+    return await _async(tools.list_labels)(project=project)
+
+
+@mcp.tool()
+async def create_label(
+    name: str,
+    color: str = "#888888",
+    project: str | int | None = None,
+) -> dict[str, Any]:
+    """Create a label (or return the existing one with the same name+scope).
+
+    ``color`` is a hex string like ``"#6366f1"``. Omit ``project`` to create a
+    global label that's available across every project. If a label with this
+    name already exists in the chosen scope, it is returned as-is — the call
+    is idempotent on (project, name)."""
+    return await _async(tools.create_label)(name=name, color=color, project=project)
+
+
+# ---------------------------------------------------------------------------
 # Saved views
 # ---------------------------------------------------------------------------
 

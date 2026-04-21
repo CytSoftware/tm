@@ -22,6 +22,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { ColorPicker, PRESET_COLORS } from "@/components/ui/ColorPicker";
 import { UserAvatar } from "@/components/UserAvatar";
 import { DescriptionEditor } from "./DescriptionEditor";
 import {
@@ -548,6 +549,7 @@ export function TaskPanel(props: Props) {
                   available={availableLabels}
                   selected={labelIds}
                   onChange={setLabelIds}
+                  projectId={selectedProject?.id ?? null}
                 />
               </div>
             </div>
@@ -762,18 +764,35 @@ function LabelPicker({
   available,
   selected,
   onChange,
+  projectId,
 }: {
   available: LabelType[];
   selected: number[];
   onChange: (ids: number[]) => void;
+  /** Project scope for newly-created labels. `null` = global (Inbox). */
+  projectId: number | null;
 }) {
-  if (available.length === 0) {
-    return (
-      <p className="text-[11px] text-muted-foreground">
-        No labels in this project. Create them in Django admin.
-      </p>
-    );
-  }
+  const queryClient = useQueryClient();
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState<string>(PRESET_COLORS[10]);
+
+  const createLabel = useMutation({
+    mutationFn: (payload: {
+      project: number | null;
+      name: string;
+      color: string;
+    }) => apiFetch<LabelType>("/api/labels/", { method: "POST", body: payload }),
+    onSuccess: (label) => {
+      // Invalidate every labels query so both the project-scoped and the
+      // global ("global") cache entries refetch — the new label might be
+      // visible in either depending on its project scope.
+      queryClient.invalidateQueries({ queryKey: ["labels"] });
+      onChange([...selected, label.id]);
+      setNewName("");
+      setCreating(false);
+    },
+  });
 
   function toggle(id: number) {
     onChange(
@@ -781,6 +800,12 @@ function LabelPicker({
         ? selected.filter((x) => x !== id)
         : [...selected, id],
     );
+  }
+
+  function handleCreate() {
+    const name = newName.trim();
+    if (!name || createLabel.isPending) return;
+    createLabel.mutate({ project: projectId, name, color: newColor });
   }
 
   return (
@@ -806,7 +831,14 @@ function LabelPicker({
             ))}
         </div>
       )}
-      <Popover>
+      <Popover
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreating(false);
+            setNewName("");
+          }
+        }}
+      >
         <PopoverTrigger
           render={
             <Button
@@ -818,7 +850,12 @@ function LabelPicker({
             </Button>
           }
         />
-        <PopoverContent className="w-52 p-1" align="start">
+        <PopoverContent className="w-60 p-1" align="start">
+          {available.length === 0 && !creating && (
+            <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
+              No labels yet.
+            </p>
+          )}
           {available.map((l) => (
             <button
               key={l.id}
@@ -834,6 +871,72 @@ function LabelPicker({
               {l.name}
             </button>
           ))}
+
+          <div className="mt-1 border-t border-border/60 pt-1">
+            {creating ? (
+              <div className="px-2 py-1.5 space-y-2">
+                <Input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleCreate();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      setCreating(false);
+                      setNewName("");
+                    }
+                  }}
+                  autoFocus
+                  placeholder="Label name"
+                  className="h-7 text-[12px]"
+                />
+                <ColorPicker value={newColor} onChange={setNewColor} />
+                {createLabel.isError && (
+                  <p className="text-[10px] text-destructive">
+                    Couldn’t create label. Name may already be taken.
+                  </p>
+                )}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-muted-foreground">
+                    {projectId == null ? "Global" : "Project-scoped"}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[11px]"
+                      onClick={() => {
+                        setCreating(false);
+                        setNewName("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-6 px-2 text-[11px]"
+                      onClick={handleCreate}
+                      disabled={!newName.trim() || createLabel.isPending}
+                    >
+                      {createLabel.isPending ? "Adding…" : "Create"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCreating(true)}
+                className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+              >
+                + Create new label
+              </button>
+            )}
+          </div>
         </PopoverContent>
       </Popover>
     </div>
