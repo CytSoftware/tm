@@ -33,15 +33,20 @@ if _env_file.is_file():
 # in memory — a slow-growing leak that makes the board feel sluggish once the
 # process has served a few hundred requests. Default to False; the local
 # ``backend/.env`` sets ``DJANGO_DEBUG=true`` for development.
-SECRET_KEY = _os_bootstrap.environ.get(
-    "DJANGO_SECRET_KEY",
-    "django-insecure--ip3l6p-jti9r8s$sy!lhqi2bzw3ixrwx6(#a=%uf)rz*53+3z",
+#
+# Accept both ``DJANGO_*`` and the bare (``SECRET_KEY`` / ``DEBUG``) names so
+# existing deployments that already set the bare versions keep working.
+SECRET_KEY = (
+    _os_bootstrap.environ.get("DJANGO_SECRET_KEY")
+    or _os_bootstrap.environ.get("SECRET_KEY")
+    or "django-insecure--ip3l6p-jti9r8s$sy!lhqi2bzw3ixrwx6(#a=%uf)rz*53+3z"
 )
-DEBUG = _os_bootstrap.environ.get("DJANGO_DEBUG", "false").lower() in (
-    "1",
-    "true",
-    "yes",
+_debug_env = (
+    _os_bootstrap.environ.get("DJANGO_DEBUG")
+    or _os_bootstrap.environ.get("DEBUG")
+    or "false"
 )
+DEBUG = _debug_env.lower() in ("1", "true", "yes")
 _allowed_hosts_env = _os_bootstrap.environ.get("ALLOWED_HOSTS", "")
 ALLOWED_HOSTS = (
     [h.strip() for h in _allowed_hosts_env.split(",") if h.strip()]
