@@ -30,7 +30,6 @@ import { Plus, Repeat, Settings, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { KanbanColumn } from "@/components/kanban/Column";
 import { KanbanCard } from "@/components/kanban/Card";
-import { TaskPanel } from "@/components/task/TaskPanel";
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import { LabelManager } from "@/components/label/LabelManager";
 import { RecurringManager } from "@/components/recurring/RecurringManager";
@@ -46,6 +45,7 @@ import {
 import { apiFetch } from "@/lib/api";
 import { viewsKey } from "@/lib/query-keys";
 import { useActiveProject } from "@/lib/active-project";
+import { useTaskDialog } from "@/lib/task-dialog";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import {
   flattenInfinite,
@@ -291,11 +291,7 @@ export default function BoardPage() {
     },
   });
 
-  const [dialogState, setDialogState] = useState<
-    | { mode: "create"; columnId: number | null }
-    | { mode: "edit"; task: Task }
-    | null
-  >(null);
+  const taskDialog = useTaskDialog();
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [labelManagerOpen, setLabelManagerOpen] = useState(false);
   const [recurringManagerOpen, setRecurringManagerOpen] = useState(false);
@@ -401,7 +397,7 @@ export default function BoardPage() {
       // Skip when palette or any dialog is open
       if (
         paletteOpen ||
-        dialogState ||
+        taskDialog.isOpen ||
         createProjectOpen ||
         labelManagerOpen ||
         recurringManagerOpen ||
@@ -504,7 +500,7 @@ export default function BoardPage() {
         case "Enter": {
           e.preventDefault();
           if (selectedTask) {
-            setDialogState({ mode: "edit", task: selectedTask });
+            taskDialog.openTask(selectedTask);
           }
           break;
         }
@@ -529,7 +525,7 @@ export default function BoardPage() {
     displayColumns,
     tasksByColumn,
     paletteOpen,
-    dialogState,
+    taskDialog,
     createProjectOpen,
     labelManagerOpen,
     recurringManagerOpen,
@@ -741,9 +737,7 @@ export default function BoardPage() {
         projects={projects}
         project={project}
         projectId={projectId}
-        onNewTask={() =>
-          setDialogState({ mode: "create", columnId: null })
-        }
+        onNewTask={() => taskDialog.createTask({ columnId: null })}
         onManageLabels={() => setLabelManagerOpen(true)}
         onManageRecurring={() => setRecurringManagerOpen(true)}
         boardFilters={boardFilters}
@@ -777,7 +771,7 @@ export default function BoardPage() {
             onSortChange={(sort) =>
               setBoardFilters({ ...boardFilters, sort })
             }
-            onTaskClick={(task) => setDialogState({ mode: "edit", task })}
+            onTaskClick={(task) => taskDialog.openTask(task)}
           />
         ) : (
           <div className="flex gap-3 h-full px-4 py-3">
@@ -795,16 +789,10 @@ export default function BoardPage() {
                 onTasksChange={onColumnTasksChange}
                 onAddTask={
                   project
-                    ? () =>
-                        setDialogState({
-                          mode: "create",
-                          columnId: col.id,
-                        })
+                    ? () => taskDialog.createTask({ columnId: col.id })
                     : undefined
                 }
-                onEditTask={(task) =>
-                  setDialogState({ mode: "edit", task })
-                }
+                onEditTask={(task) => taskDialog.openTask(task)}
                 onDeclutter={() => setDeclutterOpen(true)}
                 onAssign={() => setAssignOpen(true)}
               />
@@ -812,24 +800,6 @@ export default function BoardPage() {
           </div>
         )}
       </div>
-      {dialogState &&
-        (dialogState.mode === "create" ? (
-          <TaskPanel
-            projects={projects}
-            activeProject={project ?? projects[0] ?? null}
-            mode="create"
-            initialColumnId={dialogState.columnId ?? undefined}
-            onClose={() => setDialogState(null)}
-          />
-        ) : (
-          <TaskPanel
-            projects={projects}
-            activeProject={project ?? projects[0] ?? null}
-            mode="edit"
-            task={dialogState.task}
-            onClose={() => setDialogState(null)}
-          />
-        ))}
       {createProjectOpen && (
         <CreateProjectDialog onClose={() => setCreateProjectOpen(false)} />
       )}
@@ -856,10 +826,8 @@ export default function BoardPage() {
           labels={allLabels}
           views={viewsQuery.data?.results ?? []}
           onClose={() => setPaletteOpen(false)}
-          onEditTask={(task) => setDialogState({ mode: "edit", task })}
-          onCreateTask={() =>
-            setDialogState({ mode: "create", columnId: null })
-          }
+          onEditTask={(task) => taskDialog.openTask(task)}
+          onCreateTask={() => taskDialog.createTask({ columnId: null })}
           onCreateProject={() => setCreateProjectOpen(true)}
           onCreateLabel={() => setLabelManagerOpen(true)}
           onSwitchProject={(id) => setProjectId(id)}
