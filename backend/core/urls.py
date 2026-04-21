@@ -167,10 +167,17 @@ urlpatterns = [
     path("oauth/", include("oauth2_provider.urls", namespace="oauth2_provider")),
 ]
 
-# Serve MEDIA_ROOT in development so uploaded profile pictures render in the
-# frontend without needing a reverse proxy.
+# Serve MEDIA_ROOT through Daphne in both dev and prod. Avatars are the only
+# upload today, so the throughput is trivial — not worth standing up a
+# separate static-file proxy. If that changes, move this to Traefik/nginx.
 from django.conf import settings as _settings
-from django.conf.urls.static import static as _static
+from django.urls import re_path as _re_path
+from django.views.static import serve as _serve_static
 
-if _settings.DEBUG:
-    urlpatterns += _static(_settings.MEDIA_URL, document_root=_settings.MEDIA_ROOT)
+urlpatterns += [
+    _re_path(
+        r"^media/(?P<path>.*)$",
+        _serve_static,
+        {"document_root": _settings.MEDIA_ROOT},
+    ),
+]

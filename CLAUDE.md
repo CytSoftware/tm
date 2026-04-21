@@ -131,6 +131,7 @@ Backend (see `core/settings.py`):
 - `CYT_BROADCAST_URL` — set in the MCP stdio process so broadcasts reach Daphne via HTTP.
 - `FRONTEND_URL` — used to build `LOGIN_URL` for OAuth redirects.
 - `DB_DIR` — override the SQLite directory (so the Docker volume at `/app/db.sqlite3` persists).
+- `MEDIA_DIR` — override `MEDIA_ROOT` (the on-disk upload directory). Defaults to `/app/media` inside the container — point a Dokploy volume at the chosen path to keep avatars across redeploys.
 - `DJANGO_SUPERUSER_USERNAME` / `DJANGO_SUPERUSER_EMAIL` — consumed by `entrypoint.sh` for idempotent superuser creation.
 
 Frontend:
