@@ -160,6 +160,7 @@ type DroppableColumnProps = {
   hasMore?: boolean;
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
+  totalCount?: number;
 };
 
 function DroppableColumn({
@@ -173,6 +174,7 @@ function DroppableColumn({
   hasMore,
   isLoadingMore,
   onLoadMore,
+  totalCount,
 }: DroppableColumnProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -202,6 +204,7 @@ function DroppableColumn({
       hasMore={hasMore}
       isLoadingMore={isLoadingMore}
       onLoadMore={onLoadMore}
+      totalCount={totalCount}
     >
       {children}
     </KanbanColumn>
@@ -905,6 +908,7 @@ function ColumnContainer({
   });
 
   const tasks = useMemo(() => flattenInfinite(query.data), [query.data]);
+  const totalCount = query.data?.pages[0]?.count;
 
   useEffect(() => {
     onTasksChange(column.id, tasks);
@@ -945,6 +949,7 @@ function ColumnContainer({
       onAddTask={onAddTask}
       onDeclutter={onDeclutter}
       onAssign={onAssign}
+      totalCount={totalCount}
     >
       {visibleTasks.map((task, idx) => (
         <Fragment key={task.id}>

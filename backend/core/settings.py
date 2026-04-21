@@ -28,9 +28,26 @@ if _env_file.is_file():
 # when the `apps` package is already on sys.path via Django's app loader.
 # (We keep the full dotted names in INSTALLED_APPS below.)
 
-SECRET_KEY = "django-insecure--ip3l6p-jti9r8s$sy!lhqi2bzw3ixrwx6(#a=%uf)rz*53+3z"
-DEBUG = True
-ALLOWED_HOSTS = ["*"]  # dev only
+# ``DEBUG=True`` used to be hardcoded here, which shipped to production and
+# caused every request to append its SQL to ``django.db.connection.queries``
+# in memory — a slow-growing leak that makes the board feel sluggish once the
+# process has served a few hundred requests. Default to False; the local
+# ``backend/.env`` sets ``DJANGO_DEBUG=true`` for development.
+SECRET_KEY = _os_bootstrap.environ.get(
+    "DJANGO_SECRET_KEY",
+    "django-insecure--ip3l6p-jti9r8s$sy!lhqi2bzw3ixrwx6(#a=%uf)rz*53+3z",
+)
+DEBUG = _os_bootstrap.environ.get("DJANGO_DEBUG", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+_allowed_hosts_env = _os_bootstrap.environ.get("ALLOWED_HOSTS", "")
+ALLOWED_HOSTS = (
+    [h.strip() for h in _allowed_hosts_env.split(",") if h.strip()]
+    if _allowed_hosts_env
+    else ["*"]
+)
 
 # Trust X-Forwarded-Proto from Traefik so Django knows requests are HTTPS.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

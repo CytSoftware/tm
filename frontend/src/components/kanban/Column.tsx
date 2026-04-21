@@ -29,6 +29,10 @@ type Props = {
   hasMore?: boolean;
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
+  /** Server-side total matching the column's current filters. Display this
+   *  instead of ``tasks.length`` so users see the real count even before
+   *  they scroll far enough to trigger further page fetches. */
+  totalCount?: number;
 };
 
 export function KanbanColumn({
@@ -43,7 +47,9 @@ export function KanbanColumn({
   hasMore,
   isLoadingMore,
   onLoadMore,
+  totalCount,
 }: Props) {
+  const displayCount = totalCount ?? tasks.length;
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -77,7 +83,7 @@ export function KanbanColumn({
             {column.name}
           </span>
           <span className="text-[11px] text-muted-foreground tabular-nums">
-            {tasks.length}
+            {displayCount}
           </span>
         </div>
         <div className="flex items-center gap-0.5">

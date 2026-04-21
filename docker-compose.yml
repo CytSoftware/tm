@@ -8,7 +8,10 @@ services:
       - "8000:8000"
     environment:
       - DJANGO_SETTINGS_MODULE=core.settings
-      - SECRET_KEY=${SECRET_KEY:-django-insecure-dev-key}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-django-insecure-dev-key}
+      # DJANGO_DEBUG defaults to false in settings.py so prod stays safe
+      # (DEBUG=True leaks stack traces and leaks memory via connection.queries).
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-false}
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-*}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
       - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS:-http://localhost:3000}
