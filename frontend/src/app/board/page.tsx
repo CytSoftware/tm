@@ -268,7 +268,15 @@ export default function BoardPage() {
   // renders" pattern: compare state, update both slices in render, React
   // restarts the render with the fresh state.
   // https://react.dev/reference/react/useState#storing-information-from-previous-renders
-  if (seededForViewId !== viewId) {
+  //
+  // Wait until the views query has actually resolved before seeding: if we
+  // seed on first render while ``activeView`` is still undefined (because
+  // viewsQuery hasn't returned), ``seededForViewId`` ratchets forward and
+  // the view's filters never get applied — every column fires with empty
+  // filters and fetches the full unfiltered dataset.
+  const viewsLoaded = viewsQuery.data !== undefined;
+  const canSeedForView = viewId == null || viewsLoaded;
+  if (canSeedForView && seededForViewId !== viewId) {
     setSeededForViewId(viewId);
     setBoardFilters(
       activeView
@@ -766,6 +774,12 @@ export default function BoardPage() {
               Create your first project
             </Button>
           </div>
+        ) : viewId != null && !canSeedForView ? (
+          // A view is selected but the views query hasn't resolved yet —
+          // hold off on mounting the task queries until we can seed their
+          // filters, otherwise we'd fire one round with empty filters and
+          // immediately throw it away when the view's filters arrive.
+          <div className="h-full" />
         ) : viewKind === "table" ? (
           <TableContainer
             projectId={projectId}
@@ -899,12 +913,16 @@ function ColumnContainer({
   // Real columns have positive ids + a concrete `project` fk. All-projects
   // virtual columns have negative ids and only a column name.
   const isVirtual = column.id < 0;
+  // 25 is enough to fill the initial viewport on most screens; the sentinel
+  // fetches more on scroll. Halved from 50 to shave initial-load latency
+  // when the user has many tasks — a 250-row first paint across five
+  // columns was the dominant cost on prod.
   const query = useTasksInfinite({
     projectId,
     columnId: isVirtual ? null : column.id,
     columnName: isVirtual ? column.name : null,
     filters,
-    limit: 50,
+    limit: 25,
   });
 
   const tasks = useMemo(() => flattenInfinite(query.data), [query.data]);
