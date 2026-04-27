@@ -179,6 +179,65 @@ async def list_users() -> list[dict[str, Any]]:
 
 
 @mcp.tool()
+async def list_columns(project: str | int) -> list[dict[str, Any]]:
+    """List columns for a project, ordered left-to-right."""
+    return await _async(tools.list_columns)(project=project)
+
+
+@mcp.tool()
+async def create_column(
+    project: str | int,
+    name: str,
+    is_done: bool = False,
+) -> dict[str, Any]:
+    """Append a new column to ``project``.
+
+    The new column lands at the rightmost position. Set ``is_done=True`` to
+    mark it as a completion column (used by recurring-task defaults and
+    analytics)."""
+    return await _async(tools.create_column)(
+        project=project, name=name, is_done=is_done
+    )
+
+
+@mcp.tool()
+async def update_column(
+    column_id: int,
+    name: str | None = None,
+    is_done: bool | None = None,
+) -> dict[str, Any]:
+    """Rename a column or toggle its ``is_done`` flag.
+
+    Refuses to unmark the last ``is_done`` column in a project."""
+    return await _async(tools.update_column)(
+        column_id=column_id, name=name, is_done=is_done
+    )
+
+
+@mcp.tool()
+async def delete_column(
+    column_id: int,
+    move_tasks_to: int | None = None,
+) -> dict[str, Any]:
+    """Delete a column. If it contains tasks, ``move_tasks_to`` is required
+    and must reference another column in the same project."""
+    return await _async(tools.delete_column)(
+        column_id=column_id, move_tasks_to=move_tasks_to
+    )
+
+
+@mcp.tool()
+async def reorder_columns(
+    project: str | int, ordered_ids: list[int]
+) -> list[dict[str, Any]]:
+    """Set column order for a project. ``ordered_ids`` must list every
+    column id in the project exactly once, left-to-right."""
+    return await _async(tools.reorder_columns)(
+        project=project, ordered_ids=ordered_ids
+    )
+
+
+@mcp.tool()
 async def list_labels(project: str | int | None = None) -> list[dict[str, Any]]:
     """List labels. With ``project`` set, returns that project's labels plus
     global (project-less) labels. Without ``project``, returns every label."""
