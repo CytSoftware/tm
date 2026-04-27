@@ -31,7 +31,16 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping
 
 from django.contrib.auth import get_user_model
-from django.db.models import Case, IntegerField, OuterRef, Q, QuerySet, Subquery, When
+from django.db.models import (
+    Case,
+    IntegerField,
+    OuterRef,
+    Prefetch,
+    Q,
+    QuerySet,
+    Subquery,
+    When,
+)
 
 from .models import Label, Priority, Project, StateTransition, Task
 
@@ -76,11 +85,24 @@ def base_task_queryset() -> QuerySet[Task]:
         .order_by("-at")
         .values("at")[:1]
     )
+    # `UserSerializer.get_avatar_url` reads `user.profile` for both the
+    # reporter and every assignee. Without these prefetches each card
+    # serialization triggers an N+1 lookup for the OneToOne profile row.
     return (
         Task.objects.select_related(
-            "project", "column", "reporter", "recurrence_template"
+            "project",
+            "column",
+            "reporter",
+            "reporter__profile",
+            "recurrence_template",
         )
-        .prefetch_related("labels", "assignees")
+        .prefetch_related(
+            "labels",
+            Prefetch(
+                "assignees",
+                queryset=User.objects.select_related("profile"),
+            ),
+        )
         .annotate(current_column_since=Subquery(latest_entry))
         .order_by("project_id", "column__order", "position", "id")
     )
