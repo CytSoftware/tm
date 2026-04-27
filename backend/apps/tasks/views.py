@@ -480,6 +480,165 @@ class ColumnViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["project"]
 
+    def perform_create(self, serializer):
+        project = serializer.validated_data["project"]
+        # Append to the end. The (project, order) unique constraint means we
+        # need a value that doesn't collide with an existing column.
+        with transaction.atomic():
+            current_max = (
+                project.columns.aggregate(m=Max("order"))["m"]
+                if project.columns.exists()
+                else None
+            )
+            next_order = 0 if current_max is None else current_max + 1
+            column = serializer.save(order=next_order)
+        broadcast_task_event(
+            project.id, "column.created", {"column": ColumnSerializer(column).data}
+        )
+
+    def perform_update(self, serializer):
+        instance: Column = serializer.instance
+        new_project = serializer.validated_data.get("project")
+        if new_project is not None and new_project.id != instance.project_id:
+            raise ValidationError(
+                {"project": "Cannot move a column between projects."}
+            )
+        new_is_done = serializer.validated_data.get("is_done", instance.is_done)
+        if instance.is_done and not new_is_done:
+            # Don't let the last is_done column get unmarked — recurring task
+            # defaults and analytics rely on at least one existing.
+            others_done = (
+                instance.project.columns.filter(is_done=True)
+                .exclude(pk=instance.pk)
+                .exists()
+            )
+            if not others_done:
+                raise ValidationError(
+                    {"is_done": "At least one column must be marked as done."}
+                )
+        column = serializer.save()
+        broadcast_task_event(
+            column.project_id,
+            "column.updated",
+            {"column": ColumnSerializer(column).data},
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        column: Column = self.get_object()
+        project = column.project
+        move_to_id = request.query_params.get("move_tasks_to") or request.data.get(
+            "move_tasks_to"
+        )
+
+        with transaction.atomic():
+            has_tasks = column.tasks.exists()
+            target: Column | None = None
+            if move_to_id is not None:
+                try:
+                    target = project.columns.exclude(pk=column.pk).get(pk=move_to_id)
+                except Column.DoesNotExist as exc:
+                    raise ValidationError(
+                        {"move_tasks_to": "Target column not found in this project."}
+                    ) from exc
+            if has_tasks and target is None:
+                raise ValidationError(
+                    {
+                        "move_tasks_to": (
+                            "Column has tasks. Pass move_tasks_to=<column_id> "
+                            "to relocate them before deletion."
+                        )
+                    }
+                )
+            if column.is_done and not (
+                project.columns.filter(is_done=True).exclude(pk=column.pk).exists()
+            ):
+                raise ValidationError(
+                    "Cannot delete the last column marked as done. Mark "
+                    "another column as done first."
+                )
+            if target is not None:
+                # Append to the bottom of the target column. Reuse the
+                # bottom-position helper used elsewhere so positions stay sane.
+                next_pos = (
+                    target.tasks.aggregate(m=Max("position"))["m"] or 0
+                ) + 1000.0
+                for task in column.tasks.order_by("position"):
+                    task.column = target
+                    task.position = next_pos
+                    task.save(update_fields=["column", "position", "updated_at"])
+                    next_pos += 1000.0
+                    broadcast_task_event(
+                        project.id,
+                        "task.moved",
+                        {"task": TaskReadSerializer(task).data},
+                    )
+            column_id = column.id
+            column.delete()
+
+        broadcast_task_event(
+            project.id, "column.deleted", {"column_id": column_id}
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=["post"], url_path="reorder")
+    def reorder(self, request):
+        """Atomically reassign the ``order`` field for every column in a project.
+
+        Body: ``{"project": <id>, "ordered_ids": [<column_id>, ...]}``. The
+        ``ordered_ids`` list must contain every column belonging to the
+        project exactly once.
+        """
+        project_id = request.data.get("project")
+        ordered_ids = request.data.get("ordered_ids")
+        if not project_id or not isinstance(ordered_ids, list):
+            raise ValidationError(
+                "Body must include 'project' and 'ordered_ids' (list)."
+            )
+        try:
+            project = Project.objects.get(pk=project_id)
+        except Project.DoesNotExist as exc:
+            raise ValidationError({"project": "Project not found."}) from exc
+
+        with transaction.atomic():
+            existing = list(project.columns.select_for_update().order_by("order"))
+            existing_ids = {c.id for c in existing}
+            try:
+                ordered_ids_int = [int(x) for x in ordered_ids]
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(
+                    {"ordered_ids": "Must be a list of column ids."}
+                ) from exc
+            if set(ordered_ids_int) != existing_ids or len(ordered_ids_int) != len(
+                existing
+            ):
+                raise ValidationError(
+                    {
+                        "ordered_ids": (
+                            "Must list every column in the project exactly once."
+                        )
+                    }
+                )
+
+            # Two-phase reassignment: shift everyone into a non-overlapping
+            # range first so the (project, order) unique constraint can't
+            # conflict mid-update, then assign final values.
+            offset = (max(c.order for c in existing) if existing else 0) + 1000
+            for c in existing:
+                Column.objects.filter(pk=c.pk).update(order=c.order + offset)
+            by_id = {c.id: c for c in existing}
+            for new_index, cid in enumerate(ordered_ids_int):
+                Column.objects.filter(pk=cid).update(order=new_index)
+                by_id[cid].order = new_index
+
+            refreshed = list(project.columns.order_by("order"))
+
+        broadcast_task_event(
+            project.id,
+            "column.reordered",
+            {"columns": ColumnSerializer(refreshed, many=True).data},
+        )
+        return Response(ColumnSerializer(refreshed, many=True).data)
+
 
 class LabelViewSet(viewsets.ModelViewSet):
     queryset = Label.objects.all().order_by("project_id", "name")

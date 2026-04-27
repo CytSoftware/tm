@@ -28,7 +28,8 @@ import {
 import { Plus, Repeat, Settings, Tag } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { KanbanColumn } from "@/components/kanban/Column";
+import { AddColumnCell, KanbanColumn } from "@/components/kanban/Column";
+import { DeleteColumnDialog } from "@/components/kanban/DeleteColumnDialog";
 import { KanbanCard } from "@/components/kanban/Card";
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import { LabelManager } from "@/components/label/LabelManager";
@@ -53,6 +54,12 @@ import {
   useTasksInfinite,
 } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
+import {
+  useCreateColumn,
+  useDeleteColumn,
+  useReorderColumns,
+  useUpdateColumn,
+} from "@/hooks/use-columns";
 import { connectProjectSocket } from "@/lib/ws";
 import type {
   BoardFilters,
@@ -161,6 +168,13 @@ type DroppableColumnProps = {
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
   totalCount?: number;
+  manageable?: boolean;
+  canMoveLeft?: boolean;
+  canMoveRight?: boolean;
+  onRename?: (newName: string) => void;
+  onToggleDone?: () => void;
+  onMove?: (direction: "left" | "right") => void;
+  onRequestDelete?: () => void;
 };
 
 function DroppableColumn({
@@ -175,6 +189,13 @@ function DroppableColumn({
   isLoadingMore,
   onLoadMore,
   totalCount,
+  manageable,
+  canMoveLeft,
+  canMoveRight,
+  onRename,
+  onToggleDone,
+  onMove,
+  onRequestDelete,
 }: DroppableColumnProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -205,6 +226,13 @@ function DroppableColumn({
       isLoadingMore={isLoadingMore}
       onLoadMore={onLoadMore}
       totalCount={totalCount}
+      manageable={manageable}
+      canMoveLeft={canMoveLeft}
+      canMoveRight={canMoveRight}
+      onRename={onRename}
+      onToggleDone={onToggleDone}
+      onMove={onMove}
+      onRequestDelete={onRequestDelete}
     >
       {children}
     </KanbanColumn>
@@ -310,6 +338,13 @@ export default function BoardPage() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [declutterOpen, setDeclutterOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [columnPendingDelete, setColumnPendingDelete] =
+    useState<Column | null>(null);
+
+  const createColumn = useCreateColumn();
+  const updateColumn = useUpdateColumn();
+  const deleteColumn = useDeleteColumn();
+  const reorderColumns = useReorderColumns();
 
   // Anticipated drop position, updated as the user drags. Drives the
   // in-list ghost preview: the source task gets filtered out of its
@@ -792,7 +827,7 @@ export default function BoardPage() {
           />
         ) : (
           <div className="flex gap-3 h-full px-4 py-3">
-            {displayColumns.map((col) => (
+            {displayColumns.map((col, idx) => (
               <ColumnContainer
                 key={col.id}
                 column={col}
@@ -812,11 +847,92 @@ export default function BoardPage() {
                 onEditTask={(task) => taskDialog.openTask(task)}
                 onDeclutter={() => setDeclutterOpen(true)}
                 onAssign={() => setAssignOpen(true)}
+                manageable={Boolean(project) && col.id > 0}
+                canMoveLeft={Boolean(project) && col.id > 0 && idx > 0}
+                canMoveRight={
+                  Boolean(project) &&
+                  col.id > 0 &&
+                  idx < displayColumns.length - 1
+                }
+                onRename={
+                  project && col.id > 0
+                    ? (name) =>
+                        updateColumn.mutate({ id: col.id, name })
+                    : undefined
+                }
+                onToggleDone={
+                  project && col.id > 0
+                    ? () =>
+                        updateColumn.mutate({
+                          id: col.id,
+                          is_done: !col.is_done,
+                        })
+                    : undefined
+                }
+                onMove={
+                  project && col.id > 0
+                    ? (direction) => {
+                        const ids = displayColumns
+                          .filter((c) => c.id > 0)
+                          .map((c) => c.id);
+                        const i = ids.indexOf(col.id);
+                        if (i < 0) return;
+                        const j = direction === "left" ? i - 1 : i + 1;
+                        if (j < 0 || j >= ids.length) return;
+                        const next = [...ids];
+                        [next[i], next[j]] = [next[j], next[i]];
+                        reorderColumns.mutate({
+                          project: project.id,
+                          ordered_ids: next,
+                        });
+                      }
+                    : undefined
+                }
+                onRequestDelete={
+                  project && col.id > 0
+                    ? () => setColumnPendingDelete(col)
+                    : undefined
+                }
               />
             ))}
+            {project && (
+              <AddColumnCell
+                isPending={createColumn.isPending}
+                onAdd={(name) =>
+                  createColumn.mutate({ project: project.id, name })
+                }
+              />
+            )}
           </div>
         )}
       </div>
+      {project && (
+        <DeleteColumnDialog
+          open={columnPendingDelete !== null}
+          column={columnPendingDelete}
+          siblings={displayColumns.filter(
+            (c) => c.id > 0 && c.id !== columnPendingDelete?.id,
+          )}
+          taskCount={
+            columnPendingDelete
+              ? tasksByColumn.get(columnPendingDelete.id)?.length ?? 0
+              : 0
+          }
+          isPending={deleteColumn.isPending}
+          onCancel={() => setColumnPendingDelete(null)}
+          onConfirm={(moveTasksTo) => {
+            if (!columnPendingDelete) return;
+            deleteColumn.mutate(
+              {
+                id: columnPendingDelete.id,
+                projectId: project.id,
+                moveTasksTo,
+              },
+              { onSettled: () => setColumnPendingDelete(null) },
+            );
+          }}
+        />
+      )}
       {createProjectOpen && (
         <CreateProjectDialog onClose={() => setCreateProjectOpen(false)} />
       )}
@@ -889,6 +1005,13 @@ type ColumnContainerProps = {
   onEditTask: (task: Task) => void;
   onDeclutter: () => void;
   onAssign: () => void;
+  manageable?: boolean;
+  canMoveLeft?: boolean;
+  canMoveRight?: boolean;
+  onRename?: (newName: string) => void;
+  onToggleDone?: () => void;
+  onMove?: (direction: "left" | "right") => void;
+  onRequestDelete?: () => void;
 };
 
 /** Owns a single column's infinite task query and renders its cards.
@@ -909,6 +1032,13 @@ function ColumnContainer({
   onEditTask,
   onDeclutter,
   onAssign,
+  manageable,
+  canMoveLeft,
+  canMoveRight,
+  onRename,
+  onToggleDone,
+  onMove,
+  onRequestDelete,
 }: ColumnContainerProps) {
   // Real columns have positive ids + a concrete `project` fk. All-projects
   // virtual columns have negative ids and only a column name.
@@ -968,6 +1098,13 @@ function ColumnContainer({
       onDeclutter={onDeclutter}
       onAssign={onAssign}
       totalCount={totalCount}
+      manageable={manageable}
+      canMoveLeft={canMoveLeft}
+      canMoveRight={canMoveRight}
+      onRename={onRename}
+      onToggleDone={onToggleDone}
+      onMove={onMove}
+      onRequestDelete={onRequestDelete}
     >
       {visibleTasks.map((task, idx) => (
         <Fragment key={task.id}>

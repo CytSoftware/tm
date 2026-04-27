@@ -254,6 +254,129 @@ def list_projects() -> list[dict[str, Any]]:
     return [_project_dict(p) for p in Project.objects.all().order_by("name")]
 
 
+# ---------------------------------------------------------------------------
+# Columns
+# ---------------------------------------------------------------------------
+
+
+def list_columns(project: str | int) -> list[dict[str, Any]]:
+    proj = _resolve_project(project)
+    return [_column_dict(c) for c in proj.columns.order_by("order")]
+
+
+@transaction.atomic
+def create_column(
+    project: str | int,
+    name: str,
+    is_done: bool = False,
+) -> dict[str, Any]:
+    proj = _resolve_project(project)
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Column name must not be empty.")
+    next_order = (proj.columns.aggregate(m=Max("order"))["m"] or -1) + 1
+    column = Column.objects.create(
+        project=proj, name=name, order=next_order, is_done=is_done
+    )
+    broadcast_task_event(
+        proj.id, "column.created", {"column": _column_dict(column)}
+    )
+    return _column_dict(column)
+
+
+@transaction.atomic
+def update_column(
+    column_id: int,
+    name: str | None = None,
+    is_done: bool | None = None,
+) -> dict[str, Any]:
+    column = Column.objects.select_for_update().get(pk=column_id)
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise ValueError("Column name must not be empty.")
+        column.name = name
+    if is_done is not None:
+        if column.is_done and not is_done:
+            others = (
+                column.project.columns.filter(is_done=True)
+                .exclude(pk=column.pk)
+                .exists()
+            )
+            if not others:
+                raise ValueError(
+                    "At least one column must be marked as done."
+                )
+        column.is_done = is_done
+    column.save()
+    broadcast_task_event(
+        column.project_id, "column.updated", {"column": _column_dict(column)}
+    )
+    return _column_dict(column)
+
+
+@transaction.atomic
+def delete_column(
+    column_id: int,
+    move_tasks_to: int | None = None,
+) -> dict[str, Any]:
+    column = Column.objects.select_for_update().get(pk=column_id)
+    project = column.project
+    has_tasks = column.tasks.exists()
+    target: Column | None = None
+    if move_tasks_to is not None:
+        target = project.columns.exclude(pk=column.pk).get(pk=move_tasks_to)
+    if has_tasks and target is None:
+        raise ValueError(
+            "Column has tasks. Pass move_tasks_to=<column_id> to relocate "
+            "them before deletion."
+        )
+    if column.is_done and not (
+        project.columns.filter(is_done=True).exclude(pk=column.pk).exists()
+    ):
+        raise ValueError(
+            "Cannot delete the last column marked as done. Mark another "
+            "column as done first."
+        )
+    if target is not None:
+        next_pos = (target.tasks.aggregate(m=Max("position"))["m"] or 0) + 1000.0
+        for task in column.tasks.order_by("position"):
+            task.column = target
+            task.position = next_pos
+            task.save(update_fields=["column", "position", "updated_at"])
+            next_pos += 1000.0
+    deleted_id = column.id
+    column.delete()
+    broadcast_task_event(project.id, "column.deleted", {"column_id": deleted_id})
+    return {"id": deleted_id, "deleted": True}
+
+
+@transaction.atomic
+def reorder_columns(
+    project: str | int, ordered_ids: list[int]
+) -> list[dict[str, Any]]:
+    proj = _resolve_project(project)
+    existing = list(proj.columns.select_for_update().order_by("order"))
+    existing_ids = {c.id for c in existing}
+    ordered_ids_int = [int(x) for x in ordered_ids]
+    if set(ordered_ids_int) != existing_ids or len(ordered_ids_int) != len(existing):
+        raise ValueError(
+            "ordered_ids must list every column in the project exactly once."
+        )
+    offset = (max(c.order for c in existing) if existing else 0) + 1000
+    for c in existing:
+        Column.objects.filter(pk=c.pk).update(order=c.order + offset)
+    for new_index, cid in enumerate(ordered_ids_int):
+        Column.objects.filter(pk=cid).update(order=new_index)
+    refreshed = list(proj.columns.order_by("order"))
+    broadcast_task_event(
+        proj.id,
+        "column.reordered",
+        {"columns": [_column_dict(c) for c in refreshed]},
+    )
+    return [_column_dict(c) for c in refreshed]
+
+
 def list_tasks(
     project: str | int | None = None,
     assignee: str | None = None,
