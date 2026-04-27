@@ -10,7 +10,7 @@
  * the parent can advance its cursor.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -20,6 +20,13 @@ import {
   CheckCircle2,
   Trash2,
 } from "lucide-react";
+import MarkdownIt from "markdown-it";
+
+// `html: false` matches the editor (tiptap-markdown also disables inline
+// HTML), which means an LLM-authored description can never inject raw
+// markup into a `dangerouslySetInnerHTML` sink. `linkify: true` mirrors
+// the editor so bare URLs render as clickable links here too.
+const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -116,10 +123,11 @@ export function SwipeCard({
   const projectColor = task.project_color ?? "#6366f1";
   const projectLabel = task.project_name ?? task.project_prefix ?? "";
 
-  const descriptionHtml =
-    task.description && task.description.trim().length > 0
-      ? task.description
-      : "<p class='text-muted-foreground/70'>No description.</p>";
+  const descriptionHtml = useMemo(() => {
+    const text = task.description?.trim();
+    if (!text) return "<p class='text-muted-foreground/70'>No description.</p>";
+    return md.render(text);
+  }, [task.description]);
 
   return (
     <div

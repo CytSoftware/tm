@@ -6,6 +6,13 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import LinkExtension from "@tiptap/extension-link";
 import ImageExtension from "@tiptap/extension-image";
+import { Markdown, type MarkdownStorage } from "tiptap-markdown";
+
+declare module "@tiptap/core" {
+  interface Storage {
+    markdown: MarkdownStorage;
+  }
+}
 import {
   Bold,
   Italic,
@@ -25,7 +32,7 @@ import { uploadImage } from "@/lib/api";
 
 type Props = {
   value: string;
-  onChange: (html: string) => void;
+  onChange: (markdown: string) => void;
 };
 
 export function DescriptionEditor({ value, onChange }: Props) {
@@ -53,12 +60,19 @@ export function DescriptionEditor({ value, onChange }: Props) {
           class: "max-w-full h-auto rounded cursor-zoom-in",
         },
       }),
+      Markdown.configure({
+        html: false,
+        linkify: true,
+        breaks: false,
+        transformPastedText: true,
+        transformCopiedText: true,
+      }),
     ],
     content: value || "",
     immediatelyRender: false,
     onUpdate: ({ editor: e }) => {
       isInternalUpdate.current = true;
-      onChange(e.getHTML());
+      onChange(e.storage.markdown.getMarkdown());
     },
     editorProps: {
       attributes: {
@@ -126,17 +140,15 @@ export function DescriptionEditor({ value, onChange }: Props) {
 
   // Sync external value changes into the editor (e.g. when opening a task
   // with existing description). Skip if the change originated from typing.
+  // Both sides are markdown strings — tiptap-markdown parses on setContent.
   useEffect(() => {
     if (!editor) return;
     if (isInternalUpdate.current) {
       isInternalUpdate.current = false;
       return;
     }
-    const current = editor.getHTML();
-    // Normalize empty states for comparison
-    const normalizedCurrent = current === "<p></p>" ? "" : current;
-    const normalizedValue = value === "<p></p>" ? "" : value;
-    if (normalizedCurrent !== normalizedValue) {
+    const current = editor.storage.markdown.getMarkdown();
+    if (current.trim() !== (value ?? "").trim()) {
       editor.commands.setContent(value || "", { emitUpdate: false });
     }
   }, [value, editor]);
