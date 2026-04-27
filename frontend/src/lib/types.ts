@@ -287,10 +287,14 @@ export type RecurringTaskTemplate = {
   updated_at: string;
 };
 
-/** The event the Channels consumer pushes for every task mutation. */
+/** The event the Channels consumer pushes for every task or column mutation. */
 export type TaskEvent =
   | { type: "connected"; project_id: number }
   | { type: "task.created"; key: string; id: number }
   | { type: "task.updated"; key: string; id: number }
   | { type: "task.moved"; key: string; id: number; column_id: number }
-  | { type: "task.deleted"; key: string };
+  | { type: "task.deleted"; key: string }
+  | { type: "column.created"; column: Column }
+  | { type: "column.updated"; column: Column }
+  | { type: "column.deleted"; column_id: number }
+  | { type: "column.reordered"; columns: Column[] };
