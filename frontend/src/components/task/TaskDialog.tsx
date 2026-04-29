@@ -152,6 +152,16 @@ export function TaskDialog({
     [],
   );
 
+  const canSubmit = !saving && !!title.trim();
+
+  function submitOnHotkey(e: React.KeyboardEvent) {
+    if (e.defaultPrevented) return;
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canSubmit) {
+      e.preventDefault();
+      void handleSubmit();
+    }
+  }
+
   async function handleSubmit() {
     if (!title.trim()) return;
 
@@ -204,6 +214,7 @@ export function TaskDialog({
       <DialogContent
         className="max-w-xl max-h-[85vh] p-0 gap-0 flex flex-col overflow-hidden"
         showCloseButton={false}
+        onKeyDown={submitOnHotkey}
       >
         {/* Header */}
         <div className="shrink-0 px-5 pt-5 pb-4 border-b border-border/60">
@@ -322,6 +333,9 @@ export function TaskDialog({
             <DescriptionEditor
               value={description}
               onChange={setDescription}
+              onSubmit={() => {
+                if (canSubmit) void handleSubmit();
+              }}
             />
           </div>
 

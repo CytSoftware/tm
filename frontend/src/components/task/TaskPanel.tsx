@@ -271,6 +271,16 @@ export function TaskPanel(props: Props) {
     [],
   );
 
+  const canSubmit = !saving && !!title.trim();
+
+  function submitOnHotkey(e: React.KeyboardEvent) {
+    if (e.defaultPrevented) return;
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canSubmit) {
+      e.preventDefault();
+      void handleSubmit();
+    }
+  }
+
   async function handleSubmit() {
     if (!title.trim()) return;
 
@@ -389,7 +399,10 @@ export function TaskPanel(props: Props) {
 
       {/* Panel — bottom-anchored */}
       <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
-      <div className="pointer-events-auto w-full max-w-5xl h-[88vh] flex flex-col rounded-t-xl border border-b-0 border-border bg-card shadow-2xl animate-in slide-in-from-bottom duration-300">
+      <div
+        className="pointer-events-auto w-full max-w-5xl h-[88vh] flex flex-col rounded-t-xl border border-b-0 border-border bg-card shadow-2xl animate-in slide-in-from-bottom duration-300"
+        onKeyDown={submitOnHotkey}
+      >
         {/* Header */}
         <div className="shrink-0 flex items-center justify-between px-6 py-3 border-b border-border/60">
           <h2 className="text-[15px] font-semibold tracking-tight">
@@ -617,6 +630,9 @@ export function TaskPanel(props: Props) {
               <DescriptionEditor
                 value={description}
                 onChange={setDescription}
+                onSubmit={() => {
+                  if (canSubmit) void handleSubmit();
+                }}
               />
             </div>
           </div>
@@ -1039,4 +1055,3 @@ function defaultDtstartLocal(): string {
     `T${pad(d.getHours())}:${pad(d.getMinutes())}`
   );
 }
-

@@ -33,9 +33,10 @@ import { uploadImage } from "@/lib/api";
 type Props = {
   value: string;
   onChange: (markdown: string) => void;
+  onSubmit?: () => void;
 };
 
-export function DescriptionEditor({ value, onChange }: Props) {
+export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
   const isInternalUpdate = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -47,6 +48,8 @@ export function DescriptionEditor({ value, onChange }: Props) {
   const insertImagesRef = useRef<((files: File[]) => Promise<void>) | null>(
     null,
   );
+  const onSubmitRef = useRef<typeof onSubmit>(onSubmit);
+  onSubmitRef.current = onSubmit;
 
   const editor = useEditor({
     extensions: [
@@ -94,6 +97,19 @@ export function DescriptionEditor({ value, onChange }: Props) {
         event.preventDefault();
         void insertImagesRef.current?.(files);
         return true;
+      },
+      handleKeyDown: (_view, event) => {
+        if (
+          onSubmitRef.current &&
+          (event.metaKey || event.ctrlKey) &&
+          event.key === "Enter"
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          onSubmitRef.current?.();
+          return true;
+        }
+        return false;
       },
       handleDoubleClickOn: (_view, _pos, node) => {
         if (node.type.name === "image") {
