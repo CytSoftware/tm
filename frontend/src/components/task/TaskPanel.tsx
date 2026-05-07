@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Trash2, X } from "lucide-react";
 
@@ -273,13 +273,30 @@ export function TaskPanel(props: Props) {
 
   const canSubmit = !saving && !!title.trim();
 
-  function submitOnHotkey(e: React.KeyboardEvent) {
-    if (e.defaultPrevented) return;
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canSubmit) {
+  // Cmd/Ctrl+Enter submits the panel from anywhere — including when focus is
+  // on a Select trigger or has escaped to <body> after a portalised dropdown
+  // (Base UI's <Select> renders into a portal outside this component, so the
+  // old `onKeyDown` on the panel root missed those events). A document-level
+  // listener catches them regardless of where focus currently sits.
+  //
+  // ``handleSubmitRef`` is captured fresh each render so the listener always
+  // uses the latest closure (canSubmit, recurrence state, etc.) without
+  // re-binding on every keystroke.
+  const handleSubmitRef = useRef<() => void>(() => {});
+  handleSubmitRef.current = () => {
+    if (canSubmit) void handleSubmit();
+  };
+
+  useEffect(() => {
+    function onDocKeyDown(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key !== "Enter") return;
       e.preventDefault();
-      void handleSubmit();
+      handleSubmitRef.current();
     }
-  }
+    document.addEventListener("keydown", onDocKeyDown);
+    return () => document.removeEventListener("keydown", onDocKeyDown);
+  }, []);
 
   async function handleSubmit() {
     if (!title.trim()) return;
@@ -401,7 +418,6 @@ export function TaskPanel(props: Props) {
       <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
       <div
         className="pointer-events-auto w-full max-w-5xl h-[88vh] flex flex-col rounded-t-xl border border-b-0 border-border bg-card shadow-2xl animate-in slide-in-from-bottom duration-300"
-        onKeyDown={submitOnHotkey}
       >
         {/* Header */}
         <div className="shrink-0 flex items-center justify-between px-6 py-3 border-b border-border/60">
