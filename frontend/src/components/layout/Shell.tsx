@@ -7,6 +7,7 @@ import { Menu, Search as SearchIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { GlobalSearch } from "@/components/GlobalSearch";
+import { GlobalShortcuts } from "@/components/GlobalShortcuts";
 import { meKey } from "@/lib/query-keys";
 import { fetchMe } from "@/lib/auth";
 import { ensureCsrfCookie } from "@/lib/api";
@@ -116,6 +117,7 @@ export function Shell({ children }: { children: ReactNode }) {
   if (isDesktop) {
     return (
       <TaskDialogProvider>
+        <GlobalShortcuts />
         <div className="h-screen flex overflow-hidden">
           <Sidebar user={user} />
           <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-background">
@@ -130,6 +132,7 @@ export function Shell({ children }: { children: ReactNode }) {
   // ── Mobile layout ───────────────────────────────────────────────────
   return (
     <TaskDialogProvider>
+      <GlobalShortcuts />
       <div className="h-screen flex flex-col overflow-hidden">
         {/* Thin mobile top-bar with hamburger */}
         <header className="shrink-0 h-11 flex items-center gap-2 px-3 border-b border-border/80 bg-background">
