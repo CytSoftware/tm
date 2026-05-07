@@ -75,6 +75,14 @@ class ColumnSerializer(serializers.ModelSerializer):
 class ProjectSerializer(serializers.ModelSerializer):
     columns = ColumnSerializer(many=True, read_only=True)
     is_starred = serializers.SerializerMethodField()
+    # Explicit field so DRF doesn't auto-attach the model's RegexValidator —
+    # we want our ``validate_github_repo`` normalization (strips github URL
+    # prefix + ``.git`` suffix) to run *before* the regex check, not after.
+    github_repo = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=128,
+    )
 
     class Meta:
         model = Project
@@ -86,6 +94,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "color",
             "icon",
             "archived",
+            "github_repo",
             "task_counter",
             "columns",
             "is_starred",
@@ -98,6 +107,29 @@ class ProjectSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
+
+    def validate_github_repo(self, value: str) -> str:
+        # Accept blank as "no repo linked." Strip surrounding whitespace and
+        # an optional ``https://github.com/`` prefix so users who paste a
+        # full URL still pass validation.
+        import re
+        from .models import GITHUB_REPO_REGEX
+
+        v = (value or "").strip()
+        if not v:
+            return ""
+        for prefix in ("https://github.com/", "http://github.com/"):
+            if v.lower().startswith(prefix):
+                v = v[len(prefix):]
+                break
+        v = v.rstrip("/")
+        if v.lower().endswith(".git"):
+            v = v[:-4]
+        if not re.match(GITHUB_REPO_REGEX, v):
+            raise serializers.ValidationError(
+                'Use the "owner/repo" format, e.g. "CytSoftware/tm".'
+            )
+        return v
 
     def get_is_starred(self, obj: Project) -> bool:
         request = self.context.get("request")

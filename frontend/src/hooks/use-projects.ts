@@ -62,7 +62,10 @@ export function useCreateProject() {
 }
 
 type UpdateProjectPayload = Partial<
-  Pick<Project, "name" | "description" | "color" | "icon" | "archived">
+  Pick<
+    Project,
+    "name" | "description" | "color" | "icon" | "archived" | "github_repo"
+  >
 >;
 
 export function useUpdateProject(projectId: number) {

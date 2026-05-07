@@ -25,7 +25,17 @@ from django.db import models, transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+from django.core.validators import RegexValidator
+
 from .id_generation import generate_task_key
+
+# A GitHub "owner/repo" identifier. Owner and repo names allow letters,
+# digits, dot, underscore, hyphen — same character set GitHub itself accepts.
+GITHUB_REPO_REGEX = r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+github_repo_validator = RegexValidator(
+    regex=GITHUB_REPO_REGEX,
+    message='Use the "owner/repo" format, e.g. "CytSoftware/tm".',
+)
 
 
 class Priority(models.TextChoices):
@@ -66,6 +76,18 @@ class Project(TimestampedModel):
     archived = models.BooleanField(
         default=False,
         help_text="Archived projects are hidden from the default sidebar list.",
+    )
+    github_repo = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        validators=[github_repo_validator],
+        help_text=(
+            'GitHub repository in "owner/repo" form, e.g. "CytSoftware/tm". '
+            "Empty when no repository is linked. Used to surface PR/branch "
+            "context next to the project and as the lookup key for the "
+            "GitHub PR-review webhook (TAS-010 / TAS-011)."
+        ),
     )
     task_counter = models.PositiveIntegerField(default=0)
 

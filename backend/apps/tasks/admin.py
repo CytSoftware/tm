@@ -19,8 +19,8 @@ User = get_user_model()
 
 @admin.register(Project)
 class ProjectAdmin(admin.ModelAdmin):
-    list_display = ("name", "prefix", "task_counter", "updated_at")
-    search_fields = ("name", "prefix")
+    list_display = ("name", "prefix", "github_repo", "task_counter", "updated_at")
+    search_fields = ("name", "prefix", "github_repo")
 
 
 @admin.register(Column)
