@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Repeat } from "lucide-react";
+import { CalendarDays, Repeat, Star } from "lucide-react";
 
 import {
   Tooltip,
@@ -9,6 +9,11 @@ import {
 } from "@/components/ui/tooltip";
 import { UserAvatar } from "@/components/UserAvatar";
 import { TimeInColumn } from "@/components/task/TimeInColumn";
+import {
+  useAddFocus,
+  useFocusedIds,
+  useRemoveFocus,
+} from "@/hooks/use-focus";
 import { cn } from "@/lib/utils";
 import { withAlpha } from "@/lib/colors";
 import type { Task, Priority, CardField, User } from "@/lib/types";
@@ -138,6 +143,7 @@ export function KanbanCard({
               {pri.label}
             </span>
           )}
+          <FocusStar task={task} />
         </div>
       </div>
 
@@ -204,6 +210,51 @@ export function KanbanCard({
         </div>
       )}
     </div>
+  );
+}
+
+/** Star toggle — pin a task to the user's "This week" focus list, or remove it.
+ *  Always-visible filled star when the task is focused, hover-reveal outline
+ *  when it isn't, so adding to focus is just discoverable enough without
+ *  competing with the priority badge. */
+function FocusStar({ task }: { task: Task }) {
+  const focusedIds = useFocusedIds();
+  const addFocus = useAddFocus();
+  const removeFocus = useRemoveFocus();
+  const isFocused = focusedIds.has(task.id);
+
+  function toggle(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (isFocused) removeFocus.mutate(task.key);
+    else addFocus.mutate({ taskKey: task.key, period: "week" });
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label={isFocused ? "Remove from focus" : "Add to This week"}
+            aria-pressed={isFocused}
+            className={cn(
+              "size-5 grid place-items-center rounded transition-colors",
+              isFocused
+                ? "text-amber-500"
+                : "text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:text-amber-500",
+            )}
+          >
+            <Star
+              className={cn("size-3.5", isFocused && "fill-current")}
+            />
+          </button>
+        }
+      />
+      <TooltipContent>
+        {isFocused ? "Remove from focus" : "Add to This week"}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

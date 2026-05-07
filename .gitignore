@@ -52,3 +52,4 @@ yarn-error.log*
 
 # Generated OpenAPI types
 frontend/src/types/api.ts
+.screenshots/

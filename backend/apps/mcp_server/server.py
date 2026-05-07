@@ -390,6 +390,46 @@ async def preview_recurring_task(id: int, count: int = 5) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Personal focus list
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_focus() -> list[dict[str, Any]]:
+    """List the calling user's personal focus items.
+
+    Items are ordered Today → This week, then by manual position. Each entry
+    embeds the underlying task (without description) so you can render it
+    without a follow-up ``get_task`` call. Requires an authenticated MCP user
+    — call this only from a session that's been issued an OAuth token, not
+    from an anonymous Bearer token."""
+    return await _async(tools.list_focus)(mcp_user=_get_mcp_user())
+
+
+@mcp.tool()
+async def add_focus(key: str, period: str = "week") -> dict[str, Any]:
+    """Pin a task to the calling user's focus list.
+
+    ``period`` accepts ``"day"`` (Today) or ``"week"`` (This week).
+    Idempotent on (user, task) — calling again with a different ``period``
+    moves the existing pin to that bucket and the bottom of its list."""
+    return await _async(tools.add_focus)(
+        key=key, period=period, mcp_user=_get_mcp_user()
+    )
+
+
+@mcp.tool()
+async def remove_focus(key: str) -> dict[str, Any]:
+    """Unpin a task from the calling user's focus list.
+
+    Returns ``{"removed": True}`` when a pin was deleted, ``False`` when the
+    task wasn't pinned in the first place."""
+    return await _async(tools.remove_focus)(
+        key=key, mcp_user=_get_mcp_user()
+    )
+
+
+# ---------------------------------------------------------------------------
 # Entry point (stdio mode for Claude Desktop)
 # ---------------------------------------------------------------------------
 

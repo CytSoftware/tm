@@ -518,6 +518,63 @@ DEFAULT_STALE_THRESHOLDS: dict[str, dict[str, int]] = {
 }
 
 
+class FocusPeriod(models.TextChoices):
+    """User-curated buckets on the personal focus list.
+
+    ``DAY`` — work the user plans to do today.
+    ``WEEK`` — work the user plans to do this week (the broader queue that
+    items get promoted *from* into ``DAY`` when scheduled for the day).
+    """
+
+    DAY = "day", "Today"
+    WEEK = "week", "This week"
+
+
+class FocusItem(TimestampedModel):
+    """A task that a specific user has pinned to their personal focus list.
+
+    Per-user state, intentionally orthogonal to assignment — a user can focus
+    on a task they aren't assigned to (e.g. they're shadowing it) and stay
+    unassigned from a task they own end-to-end. Position is per-(user, period)
+    midpoint-insertion so the user can rank within Today / This week.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="focus_items",
+    )
+    task = models.ForeignKey(
+        Task,
+        on_delete=models.CASCADE,
+        related_name="focus_pins",
+    )
+    period = models.CharField(
+        max_length=8,
+        choices=FocusPeriod.choices,
+        default=FocusPeriod.WEEK,
+    )
+    position = models.FloatField(
+        default=1000.0,
+        help_text="Sort order within (user, period). Midpoint insertion.",
+    )
+
+    class Meta:
+        ordering = ["user_id", "period", "position", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "task"],
+                name="focus_unique_user_task",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "period", "position"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.user_id} → {self.task_id} ({self.period})"
+
+
 class StaleThresholdConfig(models.Model):
     """Singleton — global yellow/red thresholds keyed by column name.
 

@@ -33,3 +33,5 @@ export const usersKey = () => ["users"] as const;
 
 export const recurringKey = (projectId: number) =>
   ["recurring", projectId] as const;
+
+export const focusKey = () => ["focus"] as const;
