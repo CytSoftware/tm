@@ -568,6 +568,61 @@ def list_users() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Personal focus list
+# ---------------------------------------------------------------------------
+
+
+def _focus_dict(item) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "task": _task_dict(item.task, include_description=False),
+        "period": item.period,
+        "position": item.position,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def list_focus(*, mcp_user) -> list[dict[str, Any]]:
+    """List the calling user's personal focus items, ordered Today → This week."""
+    from apps.tasks.models import FocusItem
+
+    if mcp_user is None:
+        raise ValueError(
+            "list_focus requires an authenticated MCP user — set "
+            "CYT_MCP_TOKEN as an OAuth bearer or run via stdio with a user."
+        )
+    qs = (
+        FocusItem.objects.filter(user=mcp_user)
+        .select_related("task", "task__column", "task__project")
+        .prefetch_related("task__assignees", "task__labels")
+        .order_by("period", "position", "id")
+    )
+    return [_focus_dict(item) for item in qs]
+
+
+def add_focus(*, key: str, period: str = "week", mcp_user) -> dict[str, Any]:
+    """Pin a task to the caller's focus list. Idempotent on (user, task);
+    re-calling with a different ``period`` moves the pin between buckets."""
+    from apps.tasks.focus import add_focus as _add
+
+    if mcp_user is None:
+        raise ValueError("add_focus requires an authenticated MCP user.")
+    item = _add(user=mcp_user, task_key=key, period=period)
+    return _focus_dict(item)
+
+
+def remove_focus(*, key: str, mcp_user) -> dict[str, Any]:
+    """Unpin a task from the caller's focus list. Returns ``{"removed": bool}``."""
+    from apps.tasks.focus import remove_focus as _remove
+
+    if mcp_user is None:
+        raise ValueError("remove_focus requires an authenticated MCP user.")
+    removed = _remove(user=mcp_user, task_key=key)
+    return {"removed": removed, "key": key}
+
+
+# ---------------------------------------------------------------------------
 # Labels
 # ---------------------------------------------------------------------------
 

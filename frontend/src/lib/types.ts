@@ -269,6 +269,24 @@ export type SavedView = {
   updated_at: string;
 };
 
+/** Personal focus list — `/api/me/focus/`. Per-user pin of a task into a
+ *  `Today` or `This week` bucket. */
+export type FocusPeriod = "day" | "week";
+
+export const FOCUS_PERIOD_LABELS: Record<FocusPeriod, string> = {
+  day: "Today",
+  week: "This week",
+};
+
+export type FocusItem = {
+  id: number;
+  task: Task;
+  period: FocusPeriod;
+  position: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type RecurringTaskTemplate = {
   id: number;
   project: number;

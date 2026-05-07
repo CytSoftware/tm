@@ -6,6 +6,7 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 
 from .models import (
     Column,
+    FocusItem,
     Label,
     Project,
     RecurringTaskTemplate,
@@ -86,6 +87,14 @@ class ViewAdmin(admin.ModelAdmin):
     list_display = ("name", "owner", "project", "kind", "shared", "updated_at")
     list_filter = ("kind", "shared", "project")
     search_fields = ("name",)
+
+
+@admin.register(FocusItem)
+class FocusItemAdmin(admin.ModelAdmin):
+    list_display = ("user", "task", "period", "position", "updated_at")
+    list_filter = ("period",)
+    search_fields = ("user__username", "task__key", "task__title")
+    autocomplete_fields = ("user", "task")
 
 
 # ---------------------------------------------------------------------------

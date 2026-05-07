@@ -7,6 +7,7 @@ from drf_spectacular.views import (
 )
 from rest_framework.routers import DefaultRouter
 
+from .focus import FocusItemView, FocusListView
 from .views import (
     ColumnViewSet,
     LabelViewSet,
@@ -38,6 +39,12 @@ urlpatterns = [
     path("auth/login/", LoginView.as_view(), name="login"),
     path("auth/logout/", LogoutView.as_view(), name="logout"),
     path("auth/me/", MeView.as_view(), name="me"),
+    path("me/focus/", FocusListView.as_view(), name="focus-list"),
+    path(
+        "me/focus/<str:task_key>/",
+        FocusItemView.as_view(),
+        name="focus-item",
+    ),
     path("uploads/", UploadImageView.as_view(), name="upload-image"),
     path("internal/broadcast/", internal_broadcast, name="internal-broadcast"),
     path(

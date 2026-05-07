@@ -146,6 +146,11 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
     onClose?.();
   }
 
+  function handleFocusClick() {
+    if (pathname !== "/focus") router.push("/focus");
+    onClose?.();
+  }
+
   function handleProjectClick(id: number) {
     setProjectId(id);
     if (!pathname.startsWith("/board")) {
@@ -233,6 +238,56 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
 
       {/* Scrollable section list */}
       <nav className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-1 py-2 space-y-3">
+        {/* My Focus — personal priority queue, always at the top so it's the
+            first thing users see when they open the app. */}
+        {isCollapsed ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={handleFocusClick}
+                  className={cn(
+                    "w-full grid place-items-center py-1.5 rounded-md transition-colors",
+                    pathname === "/focus"
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
+                  )}
+                >
+                  <Star
+                    className={cn(
+                      "size-4",
+                      pathname === "/focus" && "fill-amber-500 text-amber-500",
+                    )}
+                  />
+                </button>
+              }
+            />
+            <TooltipContent side="right">My Focus</TooltipContent>
+          </Tooltip>
+        ) : (
+          <button
+            type="button"
+            onClick={handleFocusClick}
+            className={cn(
+              "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors",
+              pathname === "/focus"
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
+            )}
+          >
+            <Star
+              className={cn(
+                "size-3.5 shrink-0",
+                pathname === "/focus"
+                  ? "fill-amber-500 text-amber-500"
+                  : "text-muted-foreground",
+              )}
+            />
+            <span className="truncate">My Focus</span>
+          </button>
+        )}
+
         {starred.length > 0 && (
           <SidebarSection title="Starred" collapsed={isCollapsed}>
             {starred.map((p) => (
