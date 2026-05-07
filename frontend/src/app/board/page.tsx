@@ -25,9 +25,14 @@ import {
   attachClosestEdge,
   extractClosestEdge,
 } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
-import { Plus, Repeat, Settings, Tag } from "lucide-react";
+import { GitBranch, Plus, Repeat, Settings, Tag } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { AddColumnCell, KanbanColumn } from "@/components/kanban/Column";
 import { DeleteColumnDialog } from "@/components/kanban/DeleteColumnDialog";
 import { KanbanCard } from "@/components/kanban/Card";
@@ -1231,6 +1236,26 @@ function BoardHeader({
         <span className="text-[13px] font-medium text-muted-foreground px-2 -ml-2 shrink-0">
           All projects
         </span>
+      )}
+      {project?.github_repo && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <a
+                href={`https://github.com/${project.github_repo}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-1 size-7 grid place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors shrink-0"
+                aria-label={`Open ${project.github_repo} on GitHub`}
+              >
+                <GitBranch className="size-3.5" />
+              </a>
+            }
+          />
+          <TooltipContent>
+            <span className="font-mono text-[11px]">{project.github_repo}</span>
+          </TooltipContent>
+        </Tooltip>
       )}
       <div className="h-5 w-px bg-border mx-0.5 shrink-0" />
 

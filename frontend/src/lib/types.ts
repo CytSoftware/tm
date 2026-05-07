@@ -65,6 +65,10 @@ export type Project = {
   color: string;
   icon: string;
   archived: boolean;
+  /** GitHub repo in "owner/repo" form. Empty string when no repo is linked.
+   *  Used by the project header to render an outbound link, and reserved as
+   *  the lookup key for the GitHub PR-review webhook (TAS-010 / TAS-011). */
+  github_repo: string;
   task_counter: number;
   columns: Column[];
   is_starred: boolean;

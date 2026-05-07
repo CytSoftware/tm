@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, ExternalLink, GitBranch, Save, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,17 +67,26 @@ function ProjectSettingsForm({ project }: { project: Project }) {
   const [color, setColor] = useState(project.color);
   const [icon, setIcon] = useState(project.icon);
   const [archived, setArchived] = useState(project.archived);
+  const [githubRepo, setGithubRepo] = useState(project.github_repo);
 
   const isDirty =
     name !== project.name ||
     description !== project.description ||
     color !== project.color ||
     icon !== project.icon ||
-    archived !== project.archived;
+    archived !== project.archived ||
+    githubRepo !== project.github_repo;
 
   function handleSave() {
     if (!isDirty) return;
-    updateProject.mutate({ name, description, color, icon, archived });
+    updateProject.mutate({
+      name,
+      description,
+      color,
+      icon,
+      archived,
+      github_repo: githubRepo,
+    });
   }
 
   function handleDelete() {
@@ -218,6 +227,41 @@ function ProjectSettingsForm({ project }: { project: Project }) {
             </div>
           </div>
 
+          {/* GitHub repository */}
+          <div className="space-y-1.5">
+            <Label className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+              <GitBranch className="size-3" />
+              GitHub repository
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                value={githubRepo}
+                onChange={(e) => setGithubRepo(e.target.value)}
+                placeholder="CytSoftware/tm"
+                className="h-9 text-[13px] flex-1 font-mono"
+                spellCheck={false}
+                autoComplete="off"
+              />
+              {githubRepoUrl(project.github_repo) && (
+                <a
+                  href={githubRepoUrl(project.github_repo)!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground transition-colors"
+                  title="Open repository"
+                >
+                  Open
+                  <ExternalLink className="size-3" />
+                </a>
+              )}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Format: <code className="font-mono">owner/repo</code>. Pasting a
+              full <code>https://github.com/...</code> URL works too — it gets
+              normalized on save. Leave blank to unlink.
+            </p>
+          </div>
+
           {/* Archive toggle */}
           <div className="flex items-center justify-between rounded-md border border-border/60 p-4">
             <div className="space-y-0.5">
@@ -275,6 +319,16 @@ function ProjectSettingsForm({ project }: { project: Project }) {
       </div>
     </div>
   );
+}
+
+/** Build the canonical GitHub URL for a project's linked repo, or null if
+ *  the field is empty / malformed. Treated as a UI helper so the project
+ *  header and settings page can both render the link without re-implementing
+ *  the slug check. */
+export function githubRepoUrl(repo: string | null | undefined): string | null {
+  if (!repo) return null;
+  if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo)) return null;
+  return `https://github.com/${repo}`;
 }
 
 function formatApiError(err: ApiError): string {
