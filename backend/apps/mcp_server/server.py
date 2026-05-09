@@ -430,6 +430,127 @@ async def remove_focus(key: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Pipelines
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_pipeline_stages() -> list[dict[str, Any]]:
+    """List the kanban stages on the global pipelines board (in order)."""
+    return await _async(tools.list_stages)()
+
+
+@mcp.tool()
+async def list_pipelines(
+    stage: str | int | None = None,
+    owner: str | None = None,
+    search: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """List pipelines.
+
+    Pipelines are long-running processes (e.g. opening a bank account, vendor
+    onboarding) tracked separately from tasks. ``stage`` accepts a stage id
+    or name. ``owner`` accepts a username.
+    """
+    return await _async(tools.list_pipelines)(
+        stage=stage, owner=owner, search=search, limit=limit
+    )
+
+
+@mcp.tool()
+async def get_pipeline(key: str) -> dict[str, Any]:
+    """Return a pipeline (with its full event timeline) for a key like ``"PIPE-001"``."""
+    return await _async(tools.get_pipeline)(key)
+
+
+@mcp.tool()
+async def create_pipeline(
+    title: str,
+    description: str = "",
+    counterparty: str = "",
+    stage: str | int | None = None,
+    owner: str | int | None = None,
+) -> dict[str, Any]:
+    """Create a new pipeline (a long-running tracked process).
+
+    Omitting ``stage`` lands the pipeline in the first stage by order
+    (typically ``"New"``). ``counterparty`` is the external party we're
+    dealing with (bank name, vendor, etc.).
+    """
+    return await _async(tools.create_pipeline)(
+        title=title,
+        description=description,
+        counterparty=counterparty,
+        stage=stage,
+        owner=owner,
+        mcp_user=_get_mcp_user(),
+    )
+
+
+@mcp.tool()
+async def update_pipeline(
+    key: str,
+    title: str | None = None,
+    description: str | None = None,
+    counterparty: str | None = None,
+    owner: str | int | None = None,
+) -> dict[str, Any]:
+    """Update any subset of a pipeline's fields. Omitted fields are left alone."""
+    return await _async(tools.update_pipeline)(
+        key=key,
+        title=title,
+        description=description,
+        counterparty=counterparty,
+        owner=owner,
+    )
+
+
+@mcp.tool()
+async def move_pipeline(
+    key: str,
+    stage: str | int,
+    position: str | float | None = None,
+) -> dict[str, Any]:
+    """Move a pipeline to ``stage``.
+
+    ``position`` accepts ``"top"``, ``"bottom"`` (default), or an explicit
+    numeric value.
+    """
+    return await _async(tools.move_pipeline)(
+        key=key, stage=stage, position=position
+    )
+
+
+@mcp.tool()
+async def delete_pipeline(key: str) -> dict[str, Any]:
+    """Delete a pipeline and its entire event history."""
+    return await _async(tools.delete_pipeline)(key)
+
+
+@mcp.tool()
+async def log_pipeline_event(
+    key: str,
+    body: str,
+) -> dict[str, Any]:
+    """Append a timeline entry to a pipeline.
+
+    Use this to record back-and-forth with a counterparty (e.g. "bank
+    requested document A", "submitted form Y", "next: chase response by
+    Friday").
+    """
+    return await _async(tools.log_pipeline_event)(
+        key=key, body=body, mcp_user=_get_mcp_user()
+    )
+
+
+@mcp.tool()
+async def list_pipeline_events(key: str) -> list[dict[str, Any]]:
+    """Return the chronological event log for a pipeline."""
+    return await _async(tools.list_pipeline_events)(key)
+
+
+# ---------------------------------------------------------------------------
 # Entry point (stdio mode for Claude Desktop)
 # ---------------------------------------------------------------------------
 

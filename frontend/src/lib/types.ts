@@ -320,3 +320,63 @@ export type TaskEvent =
   | { type: "column.updated"; column: Column }
   | { type: "column.deleted"; column_id: number }
   | { type: "column.reordered"; columns: Column[] };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pipelines — long-running tracked processes (separate from Tasks).
+// ─────────────────────────────────────────────────────────────────────────
+
+export type Stage = {
+  id: number;
+  name: string;
+  order: number;
+  color: string;
+  is_terminal: boolean;
+};
+
+export type PipelineEventEntry = {
+  id: number;
+  pipeline: number;
+  body: string;
+  author: User | null;
+  created_at: string;
+};
+
+export type Pipeline = {
+  id: number;
+  key: string;
+  title: string;
+  description: string;
+  counterparty: string;
+  stage: Stage;
+  position: number;
+  owner: User | null;
+  created_by: User | null;
+  event_count: number;
+  last_event_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PipelineDetail = Pipeline & {
+  events: PipelineEventEntry[];
+};
+
+export type PipelineListResponse = {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: Pipeline[];
+};
+
+export type PipelineEvent =
+  | { type: "connected" }
+  | { type: "pipeline.created"; key: string; id: number }
+  | { type: "pipeline.updated"; key: string; id: number }
+  | { type: "pipeline.moved"; key: string; id: number; stage_id: number }
+  | { type: "pipeline.deleted"; key: string }
+  | {
+      type: "pipeline.event_added";
+      key: string;
+      id: number;
+      event_id: number;
+    };

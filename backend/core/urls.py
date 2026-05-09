@@ -164,6 +164,7 @@ urlpatterns = [
     path("oauth/register/", oauth_register),
     path("admin/", admin.site.urls),
     path("api/", include("apps.tasks.urls")),
+    path("api/", include("apps.pipelines.urls")),
     path("oauth/", include("oauth2_provider.urls", namespace="oauth2_provider")),
 ]
 

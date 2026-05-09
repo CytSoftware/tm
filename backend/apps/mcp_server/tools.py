@@ -871,3 +871,260 @@ def _resolve_reporter_for_mcp(user=None):
         "No users exist. Create one with `python manage.py createsuperuser` "
         "before using the MCP server."
     )
+
+
+# ---------------------------------------------------------------------------
+# Pipelines
+# ---------------------------------------------------------------------------
+#
+# Pipelines are long-running tracked processes (bank applications, vendor
+# onboarding, leads). They share Stage / position / drag-drop semantics with
+# Tasks but live on their own global kanban with their own MCP surface.
+
+from apps.pipelines.broadcast import broadcast_pipeline_event
+from apps.pipelines.models import Pipeline, PipelineEvent, Stage
+from apps.pipelines.query import (
+    base_pipeline_queryset,
+    filter_and_sort_pipelines,
+)
+
+
+def _resolve_stage(ref: str | int) -> Stage:
+    if isinstance(ref, int):
+        return Stage.objects.get(pk=ref)
+    if isinstance(ref, str):
+        if ref.isdigit():
+            return Stage.objects.get(pk=int(ref))
+        return Stage.objects.get(name__iexact=ref)
+    raise ValueError(f"Invalid stage reference: {ref!r}")
+
+
+def _stage_dict(s: Stage) -> dict[str, Any]:
+    return {
+        "id": s.id,
+        "name": s.name,
+        "order": s.order,
+        "color": s.color,
+        "is_terminal": s.is_terminal,
+    }
+
+
+def _pipeline_dict(p: Pipeline, *, include_events: bool = False) -> dict[str, Any]:
+    data = {
+        "id": p.id,
+        "key": p.key,
+        "title": p.title,
+        "description": p.description,
+        "counterparty": p.counterparty,
+        "stage": p.stage.name if p.stage_id else None,
+        "stage_id": p.stage_id,
+        "position": p.position,
+        "owner": p.owner.username if p.owner_id else None,
+        "event_count": getattr(p, "event_count", None),
+        "last_event_at": (
+            p.last_event_at.isoformat()
+            if getattr(p, "last_event_at", None)
+            else None
+        ),
+        "created_at": p.created_at.isoformat(),
+        "updated_at": p.updated_at.isoformat(),
+    }
+    if include_events:
+        data["events"] = [
+            _pipeline_event_dict(e) for e in p.events.order_by("created_at", "id")
+        ]
+    return data
+
+
+def _pipeline_event_dict(e: PipelineEvent) -> dict[str, Any]:
+    return {
+        "id": e.id,
+        "pipeline_id": e.pipeline_id,
+        "body": e.body,
+        "author": e.author.username if e.author_id else None,
+        "created_at": e.created_at.isoformat(),
+    }
+
+
+def list_stages() -> list[dict[str, Any]]:
+    return [_stage_dict(s) for s in Stage.objects.order_by("order")]
+
+
+def list_pipelines(
+    stage: str | int | None = None,
+    owner: str | None = None,
+    search: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    filters: dict[str, Any] = {}
+    if stage is not None:
+        filters["stage"] = stage
+    if owner:
+        filters["owner"] = [owner]
+    if search:
+        filters["search"] = search
+    qs = filter_and_sort_pipelines(filters=filters)
+    return [_pipeline_dict(p) for p in qs[:limit]]
+
+
+def get_pipeline(key: str) -> dict[str, Any]:
+    p = base_pipeline_queryset().get(key=key)
+    return _pipeline_dict(p, include_events=True)
+
+
+@transaction.atomic
+def create_pipeline(
+    title: str,
+    description: str = "",
+    counterparty: str = "",
+    stage: str | int | None = None,
+    owner: str | int | None = None,
+    mcp_user=None,
+) -> dict[str, Any]:
+    if stage is not None:
+        stage_obj = _resolve_stage(stage)
+    else:
+        stage_obj = Stage.objects.order_by("order").first()
+        if stage_obj is None:
+            raise ValueError("No stages have been seeded.")
+
+    actor = _resolve_reporter_for_mcp(mcp_user)
+    owner_user = _resolve_user(owner) if owner is not None else actor
+
+    pipeline = Pipeline(
+        title=title,
+        description=description or "",
+        counterparty=counterparty or "",
+        stage=stage_obj,
+        owner=owner_user,
+        created_by=actor,
+    )
+    pipeline.save()
+    broadcast_pipeline_event(
+        "pipeline.created", {"key": pipeline.key, "id": pipeline.id}
+    )
+    fresh = base_pipeline_queryset().get(pk=pipeline.pk)
+    return _pipeline_dict(fresh)
+
+
+@transaction.atomic
+def update_pipeline(
+    key: str,
+    title: str | None = None,
+    description: str | None = None,
+    counterparty: str | None = None,
+    owner: str | int | None = None,
+) -> dict[str, Any]:
+    pipeline = Pipeline.objects.get(key=key)
+
+    if title is not None:
+        pipeline.title = title
+    if description is not None:
+        pipeline.description = description
+    if counterparty is not None:
+        pipeline.counterparty = counterparty
+    if owner is not None:
+        pipeline.owner = _resolve_user(owner)
+
+    pipeline.save()
+    broadcast_pipeline_event(
+        "pipeline.updated", {"key": pipeline.key, "id": pipeline.id}
+    )
+    fresh = base_pipeline_queryset().get(pk=pipeline.pk)
+    return _pipeline_dict(fresh)
+
+
+@transaction.atomic
+def move_pipeline(
+    key: str,
+    stage: str | int,
+    position: str | float | None = None,
+) -> dict[str, Any]:
+    pipeline = Pipeline.objects.get(key=key)
+    stage_obj = _resolve_stage(stage)
+    pipeline.stage = stage_obj
+
+    if position is None or position == "bottom":
+        pipeline.position = _next_pipeline_bottom_position(
+            stage_obj, exclude_pipeline_id=pipeline.id
+        )
+    elif position == "top":
+        pipeline.position = _next_pipeline_top_position(
+            stage_obj, exclude_pipeline_id=pipeline.id
+        )
+    else:
+        try:
+            pipeline.position = float(position)
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"position must be 'top', 'bottom', or a number — got {position!r}"
+            ) from e
+
+    pipeline.save(update_fields=["stage", "position", "updated_at"])
+    broadcast_pipeline_event(
+        "pipeline.moved",
+        {"key": pipeline.key, "id": pipeline.id, "stage_id": stage_obj.id},
+    )
+    fresh = base_pipeline_queryset().get(pk=pipeline.pk)
+    return _pipeline_dict(fresh)
+
+
+@transaction.atomic
+def delete_pipeline(key: str) -> dict[str, Any]:
+    pipeline = Pipeline.objects.get(key=key)
+    pipeline_key = pipeline.key
+    pipeline.delete()
+    broadcast_pipeline_event("pipeline.deleted", {"key": pipeline_key})
+    return {"ok": True, "key": pipeline_key}
+
+
+@transaction.atomic
+def log_pipeline_event(
+    key: str,
+    body: str,
+    mcp_user=None,
+) -> dict[str, Any]:
+    pipeline = Pipeline.objects.get(key=key)
+    actor = mcp_user if mcp_user is not None else None
+    event = PipelineEvent.objects.create(
+        pipeline=pipeline,
+        body=body or "",
+        author=actor,
+    )
+    broadcast_pipeline_event(
+        "pipeline.event_added",
+        {
+            "key": pipeline.key,
+            "id": pipeline.id,
+            "event_id": event.id,
+        },
+    )
+    return _pipeline_event_dict(event)
+
+
+def list_pipeline_events(key: str) -> list[dict[str, Any]]:
+    pipeline = Pipeline.objects.get(key=key)
+    qs = pipeline.events.select_related("author").order_by("created_at", "id")
+    return [_pipeline_event_dict(e) for e in qs]
+
+
+def _next_pipeline_bottom_position(
+    stage: Stage, *, exclude_pipeline_id: int | None = None
+) -> float:
+    qs = stage.pipelines.all()
+    if exclude_pipeline_id is not None:
+        qs = qs.exclude(id=exclude_pipeline_id)
+    current_max = qs.aggregate(m=Max("position"))["m"]
+    return (current_max or 0) + 1000.0
+
+
+def _next_pipeline_top_position(
+    stage: Stage, *, exclude_pipeline_id: int | None = None
+) -> float:
+    qs = stage.pipelines.all()
+    if exclude_pipeline_id is not None:
+        qs = qs.exclude(id=exclude_pipeline_id)
+    current_min = qs.order_by("position").first()
+    if current_min is None:
+        return 1000.0
+    return current_min.position - 1000.0

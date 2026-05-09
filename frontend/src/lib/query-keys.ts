@@ -35,3 +35,11 @@ export const recurringKey = (projectId: number) =>
   ["recurring", projectId] as const;
 
 export const focusKey = () => ["focus"] as const;
+
+// Pipelines (separate from tasks — global, no per-project scoping in v1).
+export const pipelineStagesKey = () => ["pipeline-stages"] as const;
+export const pipelineListKey = (filtersKey: string) =>
+  ["pipelines", filtersKey] as const;
+export const pipelineKey = (key: string) => ["pipeline", key] as const;
+export const pipelineEventsKey = (key: string) =>
+  ["pipeline-events", key] as const;

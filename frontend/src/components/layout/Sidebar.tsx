@@ -8,35 +8,18 @@
  *     and collapsed (w-12, icon-only with tooltips). Toggle via button or ⌘B.
  *   Mobile (<1024px): sidebar is hidden off-screen, opened as an overlay
  *     with a backdrop via a hamburger button rendered by Shell.
- *
- * Sections (v1):
- *   1. Starred projects (only rendered when the user has stars)
- *   2. Projects — non-archived, non-starred (with a "show archived" toggle)
- *   3. Views — saved views (flat list)
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
-import {
-  ChevronDown,
-  ChevronRight,
   ChevronsLeft,
-  ChevronsRight,
-  Layers,
-  LayoutGrid,
-  List,
+  LayoutDashboard,
   LogOut,
-  MoreHorizontal,
-  Pencil,
-  Plus,
   Settings,
   Star,
-  Trash2,
+  Workflow,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -46,40 +29,18 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { UserAvatar } from "@/components/UserAvatar";
-import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
-import { NewViewDialog } from "@/components/views/ViewSwitcher";
 import { ModeToggle } from "./ModeToggle";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
-import { meKey, viewsKey } from "@/lib/query-keys";
+import { meKey } from "@/lib/query-keys";
 import { logout as apiLogout } from "@/lib/auth";
-import { useActiveProject } from "@/lib/active-project";
 import { useSidebar } from "@/lib/sidebar-state";
-import {
-  useProjectsQuery,
-  useStarProject,
-  useUnstarProject,
-  useDeleteProject,
-} from "@/hooks/use-projects";
-import type {
-  Me,
-  Project,
-  SavedView,
-  User,
-  ViewListResponse,
-} from "@/lib/types";
+import type { Me, User } from "@/lib/types";
 
 // ────────────────────────────────────────────────────────────────────────
 // Main Sidebar
@@ -95,78 +56,9 @@ type SidebarProps = {
 export function Sidebar({ user, mobile, onClose }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const qc = useQueryClient();
-  const { projectId, viewId, setProjectId, setViewId } = useActiveProject();
   const { collapsed, toggle } = useSidebar();
 
-  // In mobile overlay mode, sidebar is always expanded
   const isCollapsed = mobile ? false : collapsed;
-
-  const projectsQuery = useProjectsQuery();
-
-  const viewsQuery = useQuery({
-    queryKey: viewsKey(),
-    queryFn: () => apiFetch<ViewListResponse>("/api/views/"),
-  });
-  const allViews: SavedView[] = viewsQuery.data?.results ?? [];
-
-  const deleteView = useMutation({
-    mutationFn: (id: number) =>
-      apiFetch<void>(`/api/views/${id}/`, { method: "DELETE" }),
-    onSuccess: (_data, deletedId) => {
-      qc.invalidateQueries({ queryKey: viewsKey() });
-      if (viewId === deletedId) setViewId(null);
-    },
-  });
-
-  const { starred, ongoing, archived } = useMemo(() => {
-    const all: Project[] = projectsQuery.data?.results ?? [];
-    const starred: Project[] = [];
-    const ongoing: Project[] = [];
-    const archived: Project[] = [];
-    for (const p of all) {
-      if (p.archived) archived.push(p);
-      else if (p.is_starred) starred.push(p);
-      else ongoing.push(p);
-    }
-    return { starred, ongoing, archived };
-  }, [projectsQuery.data]);
-
-  const visibleViews = allViews;
-  const [createProjectOpen, setCreateProjectOpen] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
-  const [editingView, setEditingView] = useState<SavedView | null>(null);
-  const [createViewOpen, setCreateViewOpen] = useState(false);
-
-  function handleAllProjectsClick() {
-    setProjectId(null);
-    if (!pathname.startsWith("/board")) {
-      router.push("/board");
-    }
-    onClose?.();
-  }
-
-  function handleFocusClick() {
-    if (pathname !== "/focus") router.push("/focus");
-    onClose?.();
-  }
-
-  function handleProjectClick(id: number) {
-    setProjectId(id);
-    if (!pathname.startsWith("/board")) {
-      router.push("/board");
-    }
-    onClose?.();
-  }
-
-  function handleViewClick(v: SavedView) {
-    if (v.project) setProjectId(v.project);
-    setViewId(v.id);
-    if (!pathname.startsWith("/board")) {
-      router.push("/board");
-    }
-    onClose?.();
-  }
 
   return (
     <aside
@@ -236,329 +128,69 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
         )}
       </div>
 
-      {/* Scrollable section list */}
-      <nav className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-1 py-2 space-y-3">
-        {/* My Focus — personal priority queue, always at the top so it's the
-            first thing users see when they open the app. */}
-        {isCollapsed ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  onClick={handleFocusClick}
-                  className={cn(
-                    "w-full grid place-items-center py-1.5 rounded-md transition-colors",
-                    pathname === "/focus"
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
-                  )}
-                >
-                  <Star
-                    className={cn(
-                      "size-4",
-                      pathname === "/focus" && "fill-amber-500 text-amber-500",
-                    )}
-                  />
-                </button>
-              }
-            />
-            <TooltipContent side="right">My Focus</TooltipContent>
-          </Tooltip>
-        ) : (
-          <button
-            type="button"
-            onClick={handleFocusClick}
-            className={cn(
-              "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors",
-              pathname === "/focus"
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
-            )}
-          >
+      {/* Scrollable nav list */}
+      <nav className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-1 py-2 space-y-1">
+        <NavLink
+          icon={
             <Star
               className={cn(
-                "size-3.5 shrink-0",
-                pathname === "/focus"
-                  ? "fill-amber-500 text-amber-500"
-                  : "text-muted-foreground",
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground",
+                pathname === "/focus" && "fill-amber-500 text-amber-500",
               )}
             />
-            <span className="truncate">My Focus</span>
-          </button>
-        )}
-
-        {starred.length > 0 && (
-          <SidebarSection title="Starred" collapsed={isCollapsed}>
-            {starred.map((p) => (
-              <ProjectRow
-                key={p.id}
-                project={p}
-                active={p.id === projectId}
-                collapsed={isCollapsed}
-                onClick={() => handleProjectClick(p.id)}
-              />
-            ))}
-          </SidebarSection>
-        )}
-
-        <SidebarSection
-          title="Projects"
-          collapsed={isCollapsed}
-          action={
-            !isCollapsed ? (
-              <button
-                type="button"
-                onClick={() => setCreateProjectOpen(true)}
-                className="size-5 grid place-items-center rounded hover:bg-sidebar-accent/60 transition-colors text-muted-foreground hover:text-sidebar-foreground"
-                aria-label="New project"
-              >
-                <Plus className="size-3.5" />
-              </button>
-            ) : undefined
           }
-        >
-          {/* All projects row */}
-          {isCollapsed ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    onClick={handleAllProjectsClick}
-                    className={cn(
-                      "w-full grid place-items-center py-1.5 rounded-md transition-colors",
-                      projectId === null
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
-                    )}
-                  >
-                    <Layers className="size-4" />
-                  </button>
-                }
-              />
-              <TooltipContent side="right">All projects</TooltipContent>
-            </Tooltip>
-          ) : (
-            <button
-              type="button"
-              onClick={handleAllProjectsClick}
-              className={cn(
-                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors",
-                projectId === null
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
-              )}
-            >
-              <Layers className="size-3.5 shrink-0 text-muted-foreground" />
-              <span className="truncate">All projects</span>
-            </button>
-          )}
-          {ongoing.length === 0 && !projectsQuery.isLoading && !isCollapsed && (
-            <p className="px-2 text-[11px] text-muted-foreground">
-              No projects yet.
-            </p>
-          )}
-          {ongoing.map((p) => (
-            <ProjectRow
-              key={p.id}
-              project={p}
-              active={p.id === projectId}
-              collapsed={isCollapsed}
-              onClick={() => handleProjectClick(p.id)}
+          label="My Focus"
+          active={pathname === "/focus"}
+          collapsed={isCollapsed}
+          onNavigate={() => {
+            if (pathname !== "/focus") router.push("/focus");
+            onClose?.();
+          }}
+        />
+        <NavLink
+          icon={
+            <LayoutDashboard
+              className={
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground"
+              }
             />
-          ))}
-          {archived.length > 0 && !isCollapsed && (
-            <>
-              <button
-                type="button"
-                className="w-full mt-1 flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-muted-foreground hover:bg-sidebar-accent/60 transition-colors"
-                onClick={() => setShowArchived((v) => !v)}
-              >
-                {showArchived ? (
-                  <ChevronDown className="size-3" />
-                ) : (
-                  <ChevronRight className="size-3" />
-                )}
-                Show archived ({archived.length})
-              </button>
-              {showArchived &&
-                archived.map((p) => (
-                  <ProjectRow
-                    key={p.id}
-                    project={p}
-                    active={p.id === projectId}
-                    collapsed={isCollapsed}
-                    onClick={() => handleProjectClick(p.id)}
-                    muted
-                  />
-                ))}
-            </>
-          )}
-        </SidebarSection>
-
-        <SidebarSection
-          title="Views"
-          collapsed={isCollapsed}
-          action={
-            !isCollapsed ? (
-              <button
-                type="button"
-                onClick={() => setCreateViewOpen(true)}
-                className="size-5 grid place-items-center rounded hover:bg-sidebar-accent/60 transition-colors text-muted-foreground hover:text-sidebar-foreground"
-                aria-label="New view"
-              >
-                <Plus className="size-3.5" />
-              </button>
-            ) : undefined
           }
-        >
-          {/* Default view row */}
-          {isCollapsed ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    onClick={() => { setViewId(null); onClose?.(); }}
-                    className={cn(
-                      "w-full grid place-items-center py-1.5 rounded-md transition-colors",
-                      viewId === null
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
-                    )}
-                  >
-                    <Layers className="size-4" />
-                  </button>
-                }
-              />
-              <TooltipContent side="right">All tasks</TooltipContent>
-            </Tooltip>
-          ) : (
-            <button
-              type="button"
-              onClick={() => { setViewId(null); onClose?.(); }}
-              className={cn(
-                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors",
-                viewId === null
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
-              )}
-            >
-              <Layers className="size-3.5 shrink-0 text-muted-foreground" />
-              <span className="truncate">All tasks</span>
-            </button>
-          )}
-            {visibleViews.map((v) =>
-              isCollapsed ? (
-                <Tooltip key={v.id}>
-                  <TooltipTrigger
-                    render={
-                      <button
-                        type="button"
-                        onClick={() => handleViewClick(v)}
-                        className={cn(
-                          "w-full grid place-items-center py-1.5 rounded-md transition-colors",
-                          v.id === viewId
-                            ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                            : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
-                        )}
-                      >
-                        {v.kind === "table" ? (
-                          <List className="size-4" />
-                        ) : (
-                          <LayoutGrid className="size-4" />
-                        )}
-                      </button>
-                    }
-                  />
-                  <TooltipContent side="right">{v.name}</TooltipContent>
-                </Tooltip>
-              ) : (
-                <div
-                  key={v.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleViewClick(v)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      handleViewClick(v);
-                    }
-                  }}
-                  className={cn(
-                    "group w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] cursor-pointer transition-colors",
-                    v.id === viewId
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
-                  )}
-                >
-                  {v.kind === "table" ? (
-                    <List className="size-3.5 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <LayoutGrid className="size-3.5 shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="truncate flex-1">{v.name}</span>
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditingView(v);
-                      }}
-                      className="size-5 grid place-items-center rounded hover:bg-background/60 transition-colors"
-                      aria-label={`Edit ${v.name}`}
-                    >
-                      <Pencil className="size-3 text-muted-foreground" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (confirm(`Delete view "${v.name}"?`))
-                          deleteView.mutate(v.id);
-                      }}
-                      className="size-5 grid place-items-center rounded hover:bg-destructive/10 transition-colors"
-                      aria-label={`Delete ${v.name}`}
-                    >
-                      <Trash2 className="size-3 text-destructive" />
-                    </button>
-                  </div>
-                </div>
-              ),
-            )}
-          </SidebarSection>
+          label="Tasks"
+          active={pathname.startsWith("/board")}
+          collapsed={isCollapsed}
+          onNavigate={() => {
+            router.push("/board");
+            onClose?.();
+          }}
+        />
+        <NavLink
+          icon={
+            <Workflow
+              className={
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground"
+              }
+            />
+          }
+          label="Pipelines"
+          active={pathname.startsWith("/pipelines")}
+          collapsed={isCollapsed}
+          onNavigate={() => {
+            router.push("/pipelines");
+            onClose?.();
+          }}
+        />
       </nav>
 
       {/* Footer: user + theme */}
       <div className="shrink-0 border-t border-sidebar-border p-1.5">
         <UserFooter user={user} collapsed={isCollapsed} />
       </div>
-
-      {createProjectOpen && (
-        <CreateProjectDialog onClose={() => setCreateProjectOpen(false)} />
-      )}
-      {editingView && (
-        <NewViewDialog
-          currentProjectId={projectId}
-          existingView={editingView}
-          onSaved={(id) => {
-            setEditingView(null);
-            setViewId(id);
-          }}
-          onClose={() => setEditingView(null)}
-        />
-      )}
-      {createViewOpen && (
-        <NewViewDialog
-          currentProjectId={projectId}
-          onSaved={(id) => {
-            setCreateViewOpen(false);
-            setViewId(id);
-          }}
-          onClose={() => setCreateViewOpen(false)}
-        />
-      )}
     </aside>
   );
 }
@@ -567,70 +199,19 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
 // Sub-components
 // ────────────────────────────────────────────────────────────────────────
 
-function SidebarSection({
-  title,
-  collapsed,
-  action,
-  children,
-}: {
-  title: string;
-  collapsed: boolean;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  if (collapsed) {
-    return <div className="space-y-0.5">{children}</div>;
-  }
-  return (
-    <div className="space-y-0.5">
-      <div className="px-2 mb-1 flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
-          {title}
-        </span>
-        {action}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function ProjectRow({
-  project,
+function NavLink({
+  icon,
+  label,
   active,
   collapsed,
-  onClick,
-  muted,
+  onNavigate,
 }: {
-  project: Project;
+  icon: React.ReactNode;
+  label: string;
   active: boolean;
   collapsed: boolean;
-  onClick: () => void;
-  muted?: boolean;
+  onNavigate: () => void;
 }) {
-  const router = useRouter();
-  const starProject = useStarProject();
-  const unstarProject = useUnstarProject();
-  const deleteProject = useDeleteProject();
-
-  function toggleStar() {
-    if (project.is_starred) unstarProject.mutate(project.id);
-    else starProject.mutate(project.id);
-  }
-
-  function openSettings() {
-    router.push(`/projects/${project.id}`);
-  }
-
-  function confirmDelete() {
-    if (
-      confirm(
-        `Delete project "${project.name}" (${project.prefix})?\n\nAll tasks, columns, and recurring templates will be permanently deleted.`,
-      )
-    ) {
-      deleteProject.mutate(project.id);
-    }
-  }
-
   if (collapsed) {
     return (
       <Tooltip>
@@ -638,102 +219,37 @@ function ProjectRow({
           render={
             <button
               type="button"
-              onClick={onClick}
+              onClick={onNavigate}
               className={cn(
                 "w-full grid place-items-center py-1.5 rounded-md transition-colors",
                 active
-                  ? "bg-sidebar-accent"
-                  : "hover:bg-sidebar-accent/60",
-                muted && "opacity-60",
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
               )}
+              aria-label={label}
             >
-              <span
-                className="size-3 rounded-full"
-                style={{ background: project.color }}
-                aria-hidden
-              />
+              {icon}
             </button>
           }
         />
-        <TooltipContent side="right">
-          {project.icon ? `${project.icon} ` : ""}
-          {project.name}
-        </TooltipContent>
+        <TooltipContent side="right">{label}</TooltipContent>
       </Tooltip>
     );
   }
-
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onClick();
-        }
-      }}
+    <button
+      type="button"
+      onClick={onNavigate}
       className={cn(
-        "group flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] cursor-pointer transition-colors",
+        "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors",
         active
           ? "bg-sidebar-accent text-sidebar-accent-foreground"
-          : "text-sidebar-foreground/90 hover:bg-sidebar-accent/60",
-        muted && "opacity-60",
+          : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
       )}
     >
-      <span
-        className="size-2.5 rounded-full shrink-0"
-        style={{ background: project.color }}
-        aria-hidden
-      />
-      {project.icon ? (
-        <span className="text-[12px] leading-none w-4 text-center">
-          {project.icon}
-        </span>
-      ) : null}
-      <span className="truncate flex-1">{project.name}</span>
-      {project.is_starred && !active && (
-        <Star className="size-3 fill-current text-muted-foreground shrink-0" />
-      )}
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              onClick={(e) => e.stopPropagation()}
-              className="size-5 grid place-items-center rounded opacity-0 group-hover:opacity-100 hover:bg-background/60 transition-opacity shrink-0"
-              aria-label={`Project ${project.name} menu`}
-            >
-              <MoreHorizontal className="size-3.5" />
-            </button>
-          }
-        />
-        <DropdownMenuContent align="start" className="w-48">
-          <DropdownMenuItem onClick={toggleStar}>
-            <Star
-              className={cn(
-                "size-3.5",
-                project.is_starred && "fill-current",
-              )}
-            />
-            {project.is_starred ? "Unstar" : "Star"}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={openSettings}>
-            <Settings className="size-3.5" />
-            Project settings
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={confirmDelete}
-            className="text-destructive focus:text-destructive"
-          >
-            <Trash2 className="size-3.5" />
-            Delete
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+      {icon}
+      <span className="truncate">{label}</span>
+    </button>
   );
 }
 

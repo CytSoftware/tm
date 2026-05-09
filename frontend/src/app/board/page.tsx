@@ -25,7 +25,15 @@ import {
   attachClosestEdge,
   extractClosestEdge,
 } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
-import { GitBranch, Plus, Repeat, Settings, Tag } from "lucide-react";
+import {
+  ChevronDown,
+  GitBranch,
+  Layers,
+  Plus,
+  Repeat,
+  Settings,
+  Tag,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +41,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { AddColumnCell, KanbanColumn } from "@/components/kanban/Column";
 import { DeleteColumnDialog } from "@/components/kanban/DeleteColumnDialog";
 import { KanbanCard } from "@/components/kanban/Card";
@@ -48,6 +63,7 @@ import {
   boardFiltersFromSavedView,
   savedViewPayloadFromFilters,
 } from "@/components/board/FilterBar";
+import { ViewSwitcher } from "@/components/views/ViewSwitcher";
 import { apiFetch } from "@/lib/api";
 import { viewsKey } from "@/lib/query-keys";
 import { useActiveProject } from "@/lib/active-project";
@@ -788,6 +804,10 @@ export default function BoardPage() {
         projects={projects}
         project={project}
         projectId={projectId}
+        onSelectProject={setProjectId}
+        onCreateProject={() => setCreateProjectOpen(true)}
+        viewId={viewId}
+        onViewChange={setViewId}
         onNewTask={() => taskDialog.createTask({ columnId: null })}
         onManageLabels={() => setLabelManagerOpen(true)}
         onManageRecurring={() => setRecurringManagerOpen(true)}
@@ -1180,6 +1200,10 @@ function BoardHeader({
   projects,
   project,
   projectId,
+  onSelectProject,
+  onCreateProject,
+  viewId,
+  onViewChange,
   onNewTask,
   onManageLabels,
   onManageRecurring,
@@ -1194,6 +1218,10 @@ function BoardHeader({
   projects: Project[];
   project: Project | undefined;
   projectId: number | null;
+  onSelectProject: (id: number | null) => void;
+  onCreateProject: () => void;
+  viewId: number | null;
+  onViewChange: (id: number | null) => void;
   onNewTask: () => void;
   onManageLabels: () => void;
   onManageRecurring: () => void;
@@ -1209,34 +1237,91 @@ function BoardHeader({
 
   return (
     <header className="shrink-0 h-12 flex items-center gap-1.5 px-4 border-b border-border/80 bg-background">
-      {/* Breadcrumb — the sidebar owns project switching. Click to open settings. */}
-      {project ? (
-        <button
-          type="button"
-          onClick={() => router.push(`/projects/${project.id}`)}
-          className="flex items-center gap-2 min-w-0 h-8 px-2 -ml-2 rounded-md hover:bg-accent/60 transition-colors group shrink-0"
-        >
-          <span
-            className="size-2 rounded-full shrink-0"
-            style={{ background: project.color }}
-            aria-hidden
-          />
-          {project.icon && (
-            <span className="text-[13px] leading-none">{project.icon}</span>
+      {/* Project dropdown — switch active project + jump to settings. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <button
+              type="button"
+              className="flex items-center gap-2 min-w-0 h-8 px-2 -ml-2 rounded-md hover:bg-accent/60 transition-colors shrink-0"
+              aria-label="Switch project"
+            >
+              {project ? (
+                <>
+                  <span
+                    className="size-2 rounded-full shrink-0"
+                    style={{ background: project.color }}
+                    aria-hidden
+                  />
+                  {project.icon && (
+                    <span className="text-[13px] leading-none">
+                      {project.icon}
+                    </span>
+                  )}
+                  <span className="text-[13px] font-medium truncate">
+                    {project.name}
+                  </span>
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    {project.prefix}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Layers className="size-3.5 text-muted-foreground" />
+                  <span className="text-[13px] font-medium">All projects</span>
+                </>
+              )}
+              <ChevronDown className="size-3 text-muted-foreground" />
+            </button>
+          }
+        />
+        <DropdownMenuContent align="start" className="w-64">
+          <DropdownMenuItem
+            onClick={() => onSelectProject(null)}
+            className={!projectId ? "bg-accent/40" : undefined}
+          >
+            <Layers className="size-3.5" />
+            All projects
+          </DropdownMenuItem>
+          {projects.length > 0 && <DropdownMenuSeparator />}
+          {projects
+            .filter((p) => !p.archived)
+            .map((p) => (
+              <DropdownMenuItem
+                key={p.id}
+                onClick={() => onSelectProject(p.id)}
+                className={p.id === projectId ? "bg-accent/40" : undefined}
+              >
+                <span
+                  className="size-2 rounded-full shrink-0"
+                  style={{ background: p.color }}
+                  aria-hidden
+                />
+                {p.icon && (
+                  <span className="text-[13px] leading-none">{p.icon}</span>
+                )}
+                <span className="truncate flex-1">{p.name}</span>
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {p.prefix}
+                </span>
+              </DropdownMenuItem>
+            ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={onCreateProject}>
+            <Plus className="size-3.5" />
+            New project
+          </DropdownMenuItem>
+          {project && (
+            <DropdownMenuItem
+              onClick={() => router.push(`/projects/${project.id}`)}
+            >
+              <Settings className="size-3.5" />
+              Settings for {project.name}
+            </DropdownMenuItem>
           )}
-          <span className="text-[13px] font-medium truncate">
-            {project.name}
-          </span>
-          <span className="font-mono text-[10px] text-muted-foreground">
-            {project.prefix}
-          </span>
-          <Settings className="size-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-        </button>
-      ) : (
-        <span className="text-[13px] font-medium text-muted-foreground px-2 -ml-2 shrink-0">
-          All projects
-        </span>
-      )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       {project?.github_repo && (
         <Tooltip>
           <TooltipTrigger
@@ -1257,6 +1342,15 @@ function BoardHeader({
           </TooltipContent>
         </Tooltip>
       )}
+      <div className="h-5 w-px bg-border mx-0.5 shrink-0" />
+
+      {/* View switcher — saved filter+sort presets, lives next to the project. */}
+      <ViewSwitcher
+        projectId={projectId}
+        viewId={viewId}
+        onViewChange={onViewChange}
+      />
+
       <div className="h-5 w-px bg-border mx-0.5 shrink-0" />
 
       {/* Filter + sort + search inlined into the header row */}

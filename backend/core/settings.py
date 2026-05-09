@@ -77,6 +77,7 @@ INSTALLED_APPS = [
     "oauth2_provider",
     # Local apps
     "apps.tasks",
+    "apps.pipelines",
     "apps.mcp_server",
 ]
 

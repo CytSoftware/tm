@@ -339,9 +339,24 @@ def internal_broadcast(request):
         )
 
     data = request.data or {}
-    project_id = data.get("project_id")
     event_type = data.get("type")
     payload = data.get("payload") or {}
+    scope = data.get("scope")
+
+    if scope == "pipelines":
+        # Pipeline broadcasts share this endpoint but route into a dedicated
+        # global Channels group via apps.pipelines.broadcast.
+        from apps.pipelines.broadcast import _broadcast_local as _pipeline_local
+
+        if not isinstance(event_type, str):
+            return Response(
+                {"detail": "Invalid payload."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        _pipeline_local(event_type, payload)
+        return Response({"ok": True})
+
+    project_id = data.get("project_id")
     if not isinstance(project_id, int) or not isinstance(event_type, str):
         return Response(
             {"detail": "Invalid payload."},

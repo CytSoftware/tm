@@ -2,15 +2,13 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Plus, Check, LayoutGrid, List, Pencil, Trash2 } from "lucide-react";
+import { ChevronDown, Plus, Layers, LayoutGrid, List, Pencil, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -85,88 +83,93 @@ export function ViewSwitcher({ projectId, viewId, onViewChange }: Props) {
 
   const activeView = views.find((v) => v.id === viewId);
 
-  const viewIcon =
-    activeView?.kind === "table" ? (
-      <List className="size-3.5 text-muted-foreground" />
-    ) : (
-      <LayoutGrid className="size-3.5 text-muted-foreground" />
-    );
-
   return (
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 min-w-40 justify-between text-[13px]"
+            <button
+              type="button"
+              className="flex items-center gap-2 min-w-0 h-8 px-2 rounded-md hover:bg-accent/60 transition-colors shrink-0"
+              aria-label="Switch view"
             >
-              {viewIcon}
-              {activeView ? activeView.name : "All tasks"}
-              <ChevronDown className="size-3.5" />
-            </Button>
+              {activeView ? (
+                <>
+                  {activeView.kind === "table" ? (
+                    <List className="size-3.5 text-muted-foreground" />
+                  ) : (
+                    <LayoutGrid className="size-3.5 text-muted-foreground" />
+                  )}
+                  <span className="text-[13px] font-medium truncate">
+                    {activeView.name}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Layers className="size-3.5 text-muted-foreground" />
+                  <span className="text-[13px] font-medium">All tasks</span>
+                </>
+              )}
+              <ChevronDown className="size-3 text-muted-foreground" />
+            </button>
           }
         />
-        <DropdownMenuContent align="start" className="w-56">
-          <DropdownMenuGroup>
-            <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Views
-            </DropdownMenuLabel>
-            <DropdownMenuItem onClick={() => onViewChange(null)}>
-              {!viewId && <Check className="size-3.5" />}
-              <span className={viewId ? "ml-5" : ""}>All tasks</span>
+        <DropdownMenuContent align="start" className="w-64">
+          <DropdownMenuItem
+            onClick={() => onViewChange(null)}
+            className={!viewId ? "bg-accent/40" : undefined}
+          >
+            <Layers className="size-3.5" />
+            All tasks
+          </DropdownMenuItem>
+          {views.length > 0 && <DropdownMenuSeparator />}
+          {views.map((v) => (
+            <DropdownMenuItem
+              key={v.id}
+              onClick={() => onViewChange(v.id)}
+              className={cn(
+                "group/view",
+                v.id === viewId ? "bg-accent/40" : undefined,
+              )}
+            >
+              {v.kind === "table" ? (
+                <List className="size-3.5 text-muted-foreground" />
+              ) : (
+                <LayoutGrid className="size-3.5 text-muted-foreground" />
+              )}
+              <span className="truncate flex-1">{v.name}</span>
+              {v.shared && (
+                <span className="text-[10px] text-muted-foreground">
+                  shared
+                </span>
+              )}
+              <div className="flex items-center gap-0.5 opacity-0 group-hover/view:opacity-100 transition-opacity">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingView(v);
+                  }}
+                  className="size-5 grid place-items-center rounded hover:bg-background/60 transition-colors"
+                  aria-label={`Edit ${v.name}`}
+                >
+                  <Pencil className="size-3 text-muted-foreground" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm(`Delete view "${v.name}"?`))
+                      deleteView.mutate(v.id);
+                  }}
+                  className="size-5 grid place-items-center rounded hover:bg-destructive/10 transition-colors"
+                  aria-label={`Delete ${v.name}`}
+                >
+                  <Trash2 className="size-3 text-destructive" />
+                </button>
+              </div>
             </DropdownMenuItem>
-            {views.map((v) => (
-              <DropdownMenuItem
-                key={v.id}
-                className="flex items-center justify-between group/view"
-                onClick={() => onViewChange(v.id)}
-              >
-                <div className="flex items-center gap-0 min-w-0">
-                  {viewId === v.id && <Check className="size-3.5 shrink-0" />}
-                  <span className={viewId === v.id ? "" : "ml-5"}>
-                    {v.kind === "table" ? (
-                      <List className="inline size-3 mr-1 text-muted-foreground" />
-                    ) : (
-                      <LayoutGrid className="inline size-3 mr-1 text-muted-foreground" />
-                    )}
-                    {v.name}
-                    {v.shared && (
-                      <span className="text-[10px] text-muted-foreground ml-1">
-                        (shared)
-                      </span>
-                    )}
-                  </span>
-                </div>
-                <div className="flex items-center gap-0.5 opacity-0 group-hover/view:opacity-100 transition-opacity">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingView(v);
-                    }}
-                    className="size-6 grid place-items-center rounded hover:bg-accent transition-colors"
-                    aria-label={`Edit ${v.name}`}
-                  >
-                    <Pencil className="size-3 text-muted-foreground" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm(`Delete view "${v.name}"?`))
-                        deleteView.mutate(v.id);
-                    }}
-                    className="size-6 grid place-items-center rounded hover:bg-destructive/10 transition-colors"
-                    aria-label={`Delete ${v.name}`}
-                  >
-                    <Trash2 className="size-3 text-destructive" />
-                  </button>
-                </div>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
+          ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setDialogOpen(true)}>
             <Plus className="size-3.5" />
