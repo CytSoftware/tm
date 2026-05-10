@@ -78,6 +78,7 @@ INSTALLED_APPS = [
     # Local apps
     "apps.tasks",
     "apps.pipelines",
+    "apps.crm",
     "apps.mcp_server",
 ]
 

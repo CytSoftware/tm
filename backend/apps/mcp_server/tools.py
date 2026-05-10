@@ -1128,3 +1128,354 @@ def _next_pipeline_top_position(
     if current_min is None:
         return 1000.0
     return current_min.position - 1000.0
+
+
+# =========================================================================
+# CRM (Contacts)
+# =========================================================================
+# Contact CRUD with the same shape as the DRF viewset (single source of
+# truth lives in apps.crm.query). No realtime broadcast in v1 — CRM is a
+# table view, not a kanban with multiple watchers.
+
+from apps.crm.country_codes import normalize_country
+from apps.crm.models import (
+    ALLOWED_SOCIAL_KEYS,
+    Contact,
+    ContactLabel,
+)
+from apps.crm.query import (
+    apply_contact_filters,
+    apply_contact_sort,
+    base_contact_queryset,
+)
+
+
+def _contact_label_dict(label: ContactLabel) -> dict[str, Any]:
+    return {
+        "id": label.id,
+        "name": label.name,
+        "color": label.color,
+    }
+
+
+def _contact_dict(c: Contact) -> dict[str, Any]:
+    return {
+        "id": c.id,
+        "key": c.key,
+        "company": c.company,
+        "first_name": c.first_name,
+        "last_name": c.last_name,
+        "industry": c.industry,
+        "job_title": c.job_title,
+        "email": c.email,
+        "phone": c.phone,
+        "address_line1": c.address_line1,
+        "address_line2": c.address_line2,
+        "city": c.city,
+        "region": c.region,
+        "postal_code": c.postal_code,
+        "country": c.country,
+        "websites": list(c.websites or []),
+        "socials": dict(c.socials or {}),
+        "labels": [_contact_label_dict(label) for label in c.labels.all()],
+        "notes": c.notes,
+        "created_by": c.created_by.username if c.created_by_id else None,
+        "created_at": c.created_at.isoformat(),
+        "updated_at": c.updated_at.isoformat(),
+    }
+
+
+def _resolve_country_arg(value: str | None) -> str | None:
+    """For filter/list args: turn a free-text country into ISO-2 (or pass through)."""
+    if value is None or value == "":
+        return None
+    normalized = normalize_country(value)
+    return normalized or value.strip().upper()[:2]
+
+
+def list_contact_labels() -> list[dict[str, Any]]:
+    return [_contact_label_dict(label) for label in ContactLabel.objects.all().order_by("name")]
+
+
+def list_contacts(
+    *,
+    search: str | None = None,
+    country: str | None = None,
+    city: str | None = None,
+    industry: str | None = None,
+    job_title: str | None = None,
+    labels: list[str] | None = None,
+    has_email: bool | None = None,
+    has_phone: bool | None = None,
+    has_linkedin: bool | None = None,
+    has_website: bool | None = None,
+    sort_field: str | None = None,
+    sort_dir: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """List contacts with the same filter shape DRF uses."""
+    filters: dict[str, Any] = {}
+    if search:
+        filters["search"] = search
+    if (resolved_country := _resolve_country_arg(country)):
+        filters["country"] = resolved_country
+    if city:
+        filters["city"] = city
+    if industry:
+        filters["industry"] = industry
+    if job_title:
+        filters["job_title"] = job_title
+    if labels:
+        filters["labels"] = labels
+    if has_email is not None:
+        filters["has_email"] = bool(has_email)
+    if has_phone is not None:
+        filters["has_phone"] = bool(has_phone)
+    if has_linkedin is not None:
+        filters["has_linkedin"] = bool(has_linkedin)
+    if has_website is not None:
+        filters["has_website"] = bool(has_website)
+
+    sort = None
+    if sort_field:
+        direction = (sort_dir or "asc").lower()
+        if direction not in {"asc", "desc"}:
+            direction = "asc"
+        sort = [{"field": sort_field, "dir": direction}]
+
+    qs = apply_contact_sort(
+        apply_contact_filters(base_contact_queryset(), filters),
+        sort,
+    )
+
+    # Defensive bounds — protects the DB from bad MCP args.
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, int(offset))
+
+    total = qs.count()
+    page = qs[offset : offset + limit]
+    return {
+        "count": total,
+        "limit": limit,
+        "offset": offset,
+        "results": [_contact_dict(c) for c in page],
+    }
+
+
+def get_contact(key: str) -> dict[str, Any]:
+    contact = base_contact_queryset().get(key=key)
+    return _contact_dict(contact)
+
+
+def _coerce_socials_payload(
+    *,
+    linkedin: str | None,
+    twitter: str | None,
+    facebook: str | None,
+    instagram: str | None,
+    existing: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Merge per-platform string args into a socials dict.
+
+    None means "leave alone" (keep existing); empty string means "clear it";
+    a value sets/replaces.
+    """
+    out: dict[str, str] = dict(existing or {})
+    pairs = (
+        ("linkedin", linkedin),
+        ("twitter", twitter),
+        ("facebook", facebook),
+        ("instagram", instagram),
+    )
+    for key, value in pairs:
+        if value is None:
+            continue
+        v = value.strip()
+        if v:
+            out[key] = v
+        else:
+            out.pop(key, None)
+    # Belt-and-braces: drop any keys that snuck in from `existing` and aren't allowed.
+    return {k: v for k, v in out.items() if k in ALLOWED_SOCIAL_KEYS}
+
+
+def _resolve_or_create_label(name: str) -> ContactLabel:
+    name = name.strip()
+    label, _ = ContactLabel.objects.get_or_create(name=name)
+    return label
+
+
+@transaction.atomic
+def create_contact(
+    *,
+    company: str = "",
+    first_name: str = "",
+    last_name: str = "",
+    industry: str = "",
+    job_title: str = "",
+    email: str = "",
+    phone: str = "",
+    address_line1: str = "",
+    address_line2: str = "",
+    city: str = "",
+    region: str = "",
+    postal_code: str = "",
+    country: str = "",
+    websites: list[str] | None = None,
+    linkedin: str = "",
+    twitter: str = "",
+    facebook: str = "",
+    instagram: str = "",
+    labels: list[str] | None = None,
+    notes: str = "",
+    mcp_user=None,
+) -> dict[str, Any]:
+    if not any([company, first_name, last_name, email]):
+        raise ValueError(
+            "Provide at least one of: company, first_name, last_name, email."
+        )
+
+    sanitized_websites = [
+        u.strip() for u in (websites or []) if isinstance(u, str) and u.strip()
+    ]
+    sanitized_socials = _coerce_socials_payload(
+        linkedin=linkedin or None,
+        twitter=twitter or None,
+        facebook=facebook or None,
+        instagram=instagram or None,
+    )
+    iso_country = (
+        normalize_country(country) or country.strip().upper()[:2] if country else ""
+    )
+
+    contact = Contact(
+        company=company,
+        first_name=first_name,
+        last_name=last_name,
+        industry=industry,
+        job_title=job_title,
+        email=(email or "").lower(),
+        phone=phone,
+        address_line1=address_line1,
+        address_line2=address_line2,
+        city=city,
+        region=region,
+        postal_code=postal_code,
+        country=iso_country,
+        websites=sanitized_websites,
+        socials=sanitized_socials,
+        notes=notes,
+        created_by=mcp_user if mcp_user is not None else None,
+    )
+    contact.save()
+
+    if labels:
+        for name in labels:
+            if isinstance(name, str) and name.strip():
+                contact.labels.add(_resolve_or_create_label(name))
+
+    fresh = base_contact_queryset().get(pk=contact.pk)
+    return _contact_dict(fresh)
+
+
+@transaction.atomic
+def update_contact(
+    *,
+    key: str,
+    company: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    industry: str | None = None,
+    job_title: str | None = None,
+    email: str | None = None,
+    phone: str | None = None,
+    address_line1: str | None = None,
+    address_line2: str | None = None,
+    city: str | None = None,
+    region: str | None = None,
+    postal_code: str | None = None,
+    country: str | None = None,
+    websites: list[str] | None = None,
+    linkedin: str | None = None,
+    twitter: str | None = None,
+    facebook: str | None = None,
+    instagram: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    contact = Contact.objects.get(key=key)
+
+    simple_fields = {
+        "company": company,
+        "first_name": first_name,
+        "last_name": last_name,
+        "industry": industry,
+        "job_title": job_title,
+        "phone": phone,
+        "address_line1": address_line1,
+        "address_line2": address_line2,
+        "city": city,
+        "region": region,
+        "postal_code": postal_code,
+        "notes": notes,
+    }
+    for field, value in simple_fields.items():
+        if value is not None:
+            setattr(contact, field, value)
+
+    if email is not None:
+        contact.email = (email or "").lower()
+
+    if country is not None:
+        if country == "":
+            contact.country = ""
+        else:
+            iso = normalize_country(country)
+            contact.country = iso or country.strip().upper()[:2]
+
+    if websites is not None:
+        contact.websites = [
+            u.strip() for u in websites if isinstance(u, str) and u.strip()
+        ]
+
+    if any(v is not None for v in (linkedin, twitter, facebook, instagram)):
+        contact.socials = _coerce_socials_payload(
+            linkedin=linkedin,
+            twitter=twitter,
+            facebook=facebook,
+            instagram=instagram,
+            existing=contact.socials,
+        )
+
+    contact.save()
+    fresh = base_contact_queryset().get(pk=contact.pk)
+    return _contact_dict(fresh)
+
+
+@transaction.atomic
+def delete_contact(key: str) -> dict[str, Any]:
+    contact = Contact.objects.get(key=key)
+    deleted_key = contact.key
+    contact.delete()
+    return {"deleted": True, "key": deleted_key}
+
+
+@transaction.atomic
+def add_contact_label(*, key: str, label: str) -> dict[str, Any]:
+    contact = Contact.objects.get(key=key)
+    if not isinstance(label, str) or not label.strip():
+        raise ValueError("Label name is required.")
+    label_obj = _resolve_or_create_label(label)
+    contact.labels.add(label_obj)
+    fresh = base_contact_queryset().get(pk=contact.pk)
+    return _contact_dict(fresh)
+
+
+@transaction.atomic
+def remove_contact_label(*, key: str, label: str) -> dict[str, Any]:
+    contact = Contact.objects.get(key=key)
+    label_obj = ContactLabel.objects.filter(name__iexact=(label or "").strip()).first()
+    if label_obj is not None:
+        contact.labels.remove(label_obj)
+    fresh = base_contact_queryset().get(pk=contact.pk)
+    return _contact_dict(fresh)

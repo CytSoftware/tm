@@ -43,3 +43,24 @@ export const pipelineListKey = (filtersKey: string) =>
 export const pipelineKey = (key: string) => ["pipeline", key] as const;
 export const pipelineEventsKey = (key: string) =>
   ["pipeline-events", key] as const;
+
+// CRM — flat contact table (no realtime in v1; no project scoping).
+export const contactLabelsKey = () => ["contact-labels"] as const;
+/** List key includes filters + sort + page so each unique view caches
+ *  independently. ``filtersKey`` is the JSON-stringified state. */
+export const contactListKey = (
+  filtersKey: string,
+  sortField: string | null,
+  sortDir: string | null,
+  page: number,
+  pageSize: number,
+) =>
+  [
+    "contacts",
+    filtersKey,
+    sortField ?? "",
+    sortDir ?? "",
+    page,
+    pageSize,
+  ] as const;
+export const contactKey = (key: string) => ["contact", key] as const;

@@ -551,6 +551,199 @@ async def list_pipeline_events(key: str) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# CRM (contacts)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_contact_labels() -> list[dict[str, Any]]:
+    """List all contact labels (preset + user-created), alphabetically."""
+    return await _async(tools.list_contact_labels)()
+
+
+@mcp.tool()
+async def list_contacts(
+    search: str | None = None,
+    country: str | None = None,
+    city: str | None = None,
+    industry: str | None = None,
+    job_title: str | None = None,
+    labels: list[str] | None = None,
+    has_email: bool | None = None,
+    has_phone: bool | None = None,
+    has_linkedin: bool | None = None,
+    has_website: bool | None = None,
+    sort_field: str | None = None,
+    sort_dir: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """List contacts (CRM) with server-side filter / sort / pagination.
+
+    All arguments are optional. ``country`` accepts an ISO-2 code or any
+    common name (``"USA"``, ``"United States"``, ``"uk"``, …).
+    ``industry`` (e.g. ``"Banking"``) and ``job_title`` (e.g. ``"CEO"``)
+    use substring (icontains) match so variants and typos still hit.
+    ``labels`` is a list of label names or ids — every selected label must
+    be attached (intersection). ``sort_field`` accepts ``company``,
+    ``first_name``, ``last_name``, ``email``, ``country``, ``city``,
+    ``industry``, ``job_title``, ``created_at``, or ``updated_at``;
+    ``sort_dir`` is ``asc`` (default) or ``desc``. Returns
+    ``{"count": N, "results": [...]}``.
+    """
+    return await _async(tools.list_contacts)(
+        search=search,
+        country=country,
+        city=city,
+        industry=industry,
+        job_title=job_title,
+        labels=labels,
+        has_email=has_email,
+        has_phone=has_phone,
+        has_linkedin=has_linkedin,
+        has_website=has_website,
+        sort_field=sort_field,
+        sort_dir=sort_dir,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@mcp.tool()
+async def get_contact(key: str) -> dict[str, Any]:
+    """Return a contact for a key like ``"CONT-0001"``."""
+    return await _async(tools.get_contact)(key)
+
+
+@mcp.tool()
+async def create_contact(
+    company: str = "",
+    first_name: str = "",
+    last_name: str = "",
+    industry: str = "",
+    job_title: str = "",
+    email: str = "",
+    phone: str = "",
+    address_line1: str = "",
+    address_line2: str = "",
+    city: str = "",
+    region: str = "",
+    postal_code: str = "",
+    country: str = "",
+    websites: list[str] | None = None,
+    linkedin: str = "",
+    twitter: str = "",
+    facebook: str = "",
+    instagram: str = "",
+    labels: list[str] | None = None,
+    notes: str = "",
+) -> dict[str, Any]:
+    """Create a new contact.
+
+    At least one of company / first_name / last_name / email should be
+    provided — completely empty contacts are rejected. ``industry`` is the
+    type of company (e.g. ``"Banking"``) and ``job_title`` is the person's
+    role (e.g. ``"CEO"``). ``country`` accepts a 2-letter code or a
+    free-text name (normalized to ISO-2). ``labels`` is a list of label
+    names; unknown names auto-create the label.
+    """
+    return await _async(tools.create_contact)(
+        company=company,
+        first_name=first_name,
+        last_name=last_name,
+        industry=industry,
+        job_title=job_title,
+        email=email,
+        phone=phone,
+        address_line1=address_line1,
+        address_line2=address_line2,
+        city=city,
+        region=region,
+        postal_code=postal_code,
+        country=country,
+        websites=websites,
+        linkedin=linkedin,
+        twitter=twitter,
+        facebook=facebook,
+        instagram=instagram,
+        labels=labels,
+        notes=notes,
+        mcp_user=_get_mcp_user(),
+    )
+
+
+@mcp.tool()
+async def update_contact(
+    key: str,
+    company: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    industry: str | None = None,
+    job_title: str | None = None,
+    email: str | None = None,
+    phone: str | None = None,
+    address_line1: str | None = None,
+    address_line2: str | None = None,
+    city: str | None = None,
+    region: str | None = None,
+    postal_code: str | None = None,
+    country: str | None = None,
+    websites: list[str] | None = None,
+    linkedin: str | None = None,
+    twitter: str | None = None,
+    facebook: str | None = None,
+    instagram: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Update any subset of a contact's fields. Omitted fields are left alone.
+
+    To replace the whole websites list, pass the new list. To clear a
+    social URL, pass an empty string. Labels are managed via the dedicated
+    ``add_contact_label`` / ``remove_contact_label`` tools.
+    """
+    return await _async(tools.update_contact)(
+        key=key,
+        company=company,
+        first_name=first_name,
+        last_name=last_name,
+        industry=industry,
+        job_title=job_title,
+        email=email,
+        phone=phone,
+        address_line1=address_line1,
+        address_line2=address_line2,
+        city=city,
+        region=region,
+        postal_code=postal_code,
+        country=country,
+        websites=websites,
+        linkedin=linkedin,
+        twitter=twitter,
+        facebook=facebook,
+        instagram=instagram,
+        notes=notes,
+    )
+
+
+@mcp.tool()
+async def delete_contact(key: str) -> dict[str, Any]:
+    """Delete a contact by key. Returns ``{"deleted": True, "key": ...}``."""
+    return await _async(tools.delete_contact)(key)
+
+
+@mcp.tool()
+async def add_contact_label(key: str, label: str) -> dict[str, Any]:
+    """Attach ``label`` (by name) to a contact. Auto-creates the label if new."""
+    return await _async(tools.add_contact_label)(key=key, label=label)
+
+
+@mcp.tool()
+async def remove_contact_label(key: str, label: str) -> dict[str, Any]:
+    """Detach ``label`` (by name) from a contact. No-op if not attached."""
+    return await _async(tools.remove_contact_label)(key=key, label=label)
+
+
+# ---------------------------------------------------------------------------
 # Entry point (stdio mode for Claude Desktop)
 # ---------------------------------------------------------------------------
 

@@ -12,6 +12,7 @@ dependencies = [
     "drf-spectacular>=0.29.0",
     "markdownify>=1.2.2",
     "mcp[cli]>=1.27.0",
+    "openpyxl>=3.1.5",
     "pillow>=12.2.0",
     "python-dateutil>=2.9.0.post0",
     "whitenoise>=6.12.0",

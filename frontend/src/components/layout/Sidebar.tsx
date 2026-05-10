@@ -19,6 +19,7 @@ import {
   LogOut,
   Settings,
   Star,
+  Users,
   Workflow,
 } from "lucide-react";
 
@@ -182,6 +183,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           collapsed={isCollapsed}
           onNavigate={() => {
             router.push("/pipelines");
+            onClose?.();
+          }}
+        />
+        <NavLink
+          icon={
+            <Users
+              className={
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground"
+              }
+            />
+          }
+          label="Contacts"
+          active={pathname.startsWith("/crm")}
+          collapsed={isCollapsed}
+          onNavigate={() => {
+            router.push("/crm");
             onClose?.();
           }}
         />
