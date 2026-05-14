@@ -19,9 +19,9 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping
 
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Max, Q, QuerySet
+from django.db.models import Count, Max, OuterRef, Q, QuerySet, Subquery
 
-from .models import Pipeline
+from .models import Pipeline, PipelineEvent
 
 User = get_user_model()
 
@@ -36,6 +36,9 @@ SORTABLE_FIELDS = {
 
 def base_pipeline_queryset() -> QuerySet[Pipeline]:
     """Pre-joined queryset with event-count + last-event annotations."""
+    latest = PipelineEvent.objects.filter(pipeline=OuterRef("pk")).order_by(
+        "-created_at", "-id"
+    )
     return (
         Pipeline.objects.select_related(
             "stage", "owner", "owner__profile", "created_by"
@@ -43,6 +46,7 @@ def base_pipeline_queryset() -> QuerySet[Pipeline]:
         .annotate(
             event_count=Count("events", distinct=True),
             last_event_at=Max("events__created_at"),
+            last_event_body=Subquery(latest.values("body")[:1]),
         )
         .order_by("stage__order", "position", "id")
     )

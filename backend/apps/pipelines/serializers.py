@@ -60,6 +60,7 @@ class PipelineReadSerializer(serializers.ModelSerializer):
     created_by = _UserSlim(read_only=True)
     event_count = serializers.IntegerField(read_only=True)
     last_event_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    last_event_body = serializers.CharField(read_only=True, allow_null=True, allow_blank=True)
 
     class Meta:
         model = Pipeline
@@ -75,6 +76,7 @@ class PipelineReadSerializer(serializers.ModelSerializer):
             "created_by",
             "event_count",
             "last_event_at",
+            "last_event_body",
             "created_at",
             "updated_at",
         )

@@ -353,6 +353,7 @@ export type Pipeline = {
   created_by: User | null;
   event_count: number;
   last_event_at: string | null;
+  last_event_body: string | null;
   created_at: string;
   updated_at: string;
 };

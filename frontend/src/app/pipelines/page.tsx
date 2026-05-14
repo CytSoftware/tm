@@ -116,12 +116,10 @@ function DroppableStage({
   stage,
   count,
   children,
-  onAdd,
 }: {
   stage: Stage;
   count: number;
   children: ReactNode;
-  onAdd?: () => void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -143,7 +141,6 @@ function DroppableStage({
     <PipelineColumn
       stage={stage}
       count={count}
-      onAdd={onAdd}
       bodyRef={bodyRef}
       isDraggingOver={isDraggingOver}
     >
@@ -164,9 +161,6 @@ export default function PipelinesPage() {
   const pipelinesQuery = usePipelinesQuery(filters);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [createInitialStageId, setCreateInitialStageId] = useState<
-    number | null
-  >(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   // One global pipelines socket per page mount.
@@ -355,10 +349,7 @@ export default function PipelinesPage() {
           <Button
             size="sm"
             className="h-8 text-[13px]"
-            onClick={() => {
-              setCreateInitialStageId(null);
-              setCreateOpen(true);
-            }}
+            onClick={() => setCreateOpen(true)}
           >
             <Plus className="size-3.5" />
             New pipeline
@@ -396,10 +387,6 @@ export default function PipelinesPage() {
                     key={stage.id}
                     stage={stage}
                     count={list.length}
-                    onAdd={() => {
-                      setCreateInitialStageId(stage.id);
-                      setCreateOpen(true);
-                    }}
                   >
                     {visible.map((pipeline, idx) => (
                       <div key={pipeline.id}>
@@ -438,7 +425,6 @@ export default function PipelinesPage() {
       <CreatePipelineDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        initialStageId={createInitialStageId}
       />
     </div>
   );
