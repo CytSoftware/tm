@@ -251,18 +251,27 @@ def apply_task_filters(
     if search := filters.get("search"):
         if isinstance(search, str) and (stripped := search.strip()):
             for word in stripped.split():
-                cond = (
-                    Q(key__icontains=word)
+                if word.isdigit():
+                    # Bare number → the task numbered N. Anchor to the key's
+                    # "-NNN" suffix (zero-padded) so "85" finds MOW-085 but not
+                    # the noise of MOW-185 / MOW-850 that a loose substring hits.
+                    number = int(word)
+                    key_cond = Q(key__iendswith=f"-{number:03d}") | Q(
+                        key__iendswith=f"-{number}"
+                    )
+                else:
+                    # Keys are stored zero-padded (e.g. ``MOW-042``), so a raw
+                    # substring match on an unpadded token like ``MOW-42`` misses.
+                    # Add the zero-padded variant so users can type the natural,
+                    # unpadded number.
+                    key_cond = Q(key__icontains=word)
+                    for variant in _key_search_variants(word):
+                        key_cond |= Q(key__icontains=variant)
+                qs = qs.filter(
+                    key_cond
                     | Q(title__icontains=word)
                     | Q(description__icontains=word)
                 )
-                # Keys are stored zero-padded (e.g. ``MOW-042``), so a raw
-                # substring match on an unpadded token like ``MOW-42`` misses.
-                # Add the zero-padded variant so users can type the natural,
-                # unpadded number.
-                for variant in _key_search_variants(word):
-                    cond |= Q(key__icontains=variant)
-                qs = qs.filter(cond)
 
     return qs
 
