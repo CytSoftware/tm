@@ -28,6 +28,7 @@ ignored silently (saved views may carry fields this version doesn't know yet).
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable, Mapping
 
 from django.contrib.auth import get_user_model
@@ -163,6 +164,31 @@ def _resolve_project(value: Any) -> Project | None:
     return None
 
 
+# Matches a task-key-like token: a prefix, a hyphen, and a run of digits
+# (e.g. ``MOW-42``, ``cyt-007``). The prefix part mirrors how keys are built.
+_KEY_TOKEN_RE = re.compile(r"^([A-Za-z][A-Za-z0-9]*)-0*(\d+)$")
+
+
+def _key_search_variants(word: str) -> list[str]:
+    """Zero-padding-normalized key variants for a hyphenated token.
+
+    Task keys are stored zero-padded to at least three digits (``MOW-042``),
+    but users naturally type the unpadded number (``MOW-42``) or an
+    over-padded one (``MOW-0042``). Given such a token, return the canonical
+    padded form so the caller can OR it into a ``key__icontains`` match.
+    Returns an empty list for tokens that don't look like a key.
+    """
+    match = _KEY_TOKEN_RE.match(word)
+    if not match:
+        return []
+    prefix, digits = match.group(1), match.group(2)
+    number = int(digits)
+    variants = {f"{prefix}-{number:03d}", f"{prefix}-{number}"}
+    # Drop the variant identical (case-insensitively) to what was typed; it
+    # adds nothing beyond the existing raw ``key__icontains=word`` clause.
+    return [v for v in variants if v.lower() != word.lower()]
+
+
 def apply_task_filters(
     qs: QuerySet[Task],
     filters: Mapping[str, Any] | None,
@@ -225,11 +251,18 @@ def apply_task_filters(
     if search := filters.get("search"):
         if isinstance(search, str) and (stripped := search.strip()):
             for word in stripped.split():
-                qs = qs.filter(
+                cond = (
                     Q(key__icontains=word)
                     | Q(title__icontains=word)
                     | Q(description__icontains=word)
                 )
+                # Keys are stored zero-padded (e.g. ``MOW-042``), so a raw
+                # substring match on an unpadded token like ``MOW-42`` misses.
+                # Add the zero-padded variant so users can type the natural,
+                # unpadded number.
+                for variant in _key_search_variants(word):
+                    cond |= Q(key__icontains=variant)
+                qs = qs.filter(cond)
 
     return qs
 
