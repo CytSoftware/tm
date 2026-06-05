@@ -10,15 +10,31 @@
  *     with a backdrop via a hamburger button rendered by Shell.
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
 import {
+  draggable,
+  dropTargetForElements,
+  monitorForElements,
+} from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
+import {
+  attachClosestEdge,
+  extractClosestEdge,
+} from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronRight,
   ChevronsLeft,
   LayoutDashboard,
   LogOut,
+  MoreHorizontal,
+  Plus,
   Settings,
   Star,
+  Trash2,
   Users,
   Workflow,
 } from "lucide-react";
@@ -34,14 +50,57 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { UserAvatar } from "@/components/UserAvatar";
+import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import { ModeToggle } from "./ModeToggle";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import { meKey } from "@/lib/query-keys";
 import { logout as apiLogout } from "@/lib/auth";
 import { useSidebar } from "@/lib/sidebar-state";
-import type { Me, User } from "@/lib/types";
+import { useActiveProject } from "@/lib/active-project";
+import {
+  useProjectsQuery,
+  useStarProject,
+  useUnstarProject,
+  useDeleteProject,
+  useUpdateProject,
+  useReorderProjects,
+} from "@/hooks/use-projects";
+import type { Me, Project, User } from "@/lib/types";
+
+type ProjectSection = "favorites" | "projects";
+
+type ProjectDragData = {
+  type: "sidebar-project";
+  projectId: number;
+  section: ProjectSection;
+};
+
+function isProjectDrag(
+  d: Record<string, unknown>,
+): d is ProjectDragData & Record<string, unknown> {
+  return d.type === "sidebar-project";
+}
+
+/** Sort by the user's manual sidebar order (nulls last), then name. */
+function sortForSidebar(list: Project[]): Project[] {
+  return [...list].sort((a, b) => {
+    const ap = a.sidebar_position;
+    const bp = b.sidebar_position;
+    if (ap != null && bp != null && ap !== bp) return ap - bp;
+    if (ap != null && bp == null) return -1;
+    if (ap == null && bp != null) return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
 
 // ────────────────────────────────────────────────────────────────────────
 // Main Sidebar
@@ -58,8 +117,77 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { collapsed, toggle } = useSidebar();
+  const { projectId, setProjectId } = useActiveProject();
 
   const isCollapsed = mobile ? false : collapsed;
+
+  const projectsQuery = useProjectsQuery();
+  const reorderProjects = useReorderProjects();
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+
+  const allProjects = useMemo(
+    () => projectsQuery.data?.results ?? [],
+    [projectsQuery.data],
+  );
+  const favorites = useMemo(
+    () => sortForSidebar(allProjects.filter((p) => p.is_starred && !p.archived)),
+    [allProjects],
+  );
+  const projects = useMemo(
+    () => sortForSidebar(allProjects.filter((p) => !p.is_starred && !p.archived)),
+    [allProjects],
+  );
+  const archived = useMemo(
+    () =>
+      [...allProjects.filter((p) => p.archived)].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      ),
+    [allProjects],
+  );
+
+  function openProject(id: number) {
+    setProjectId(id);
+    router.push("/board");
+    onClose?.();
+  }
+
+  // Single drop monitor: reorder within a section, then persist the full
+  // per-user order (favorites-in-order ++ projects-in-order). Re-subscribes
+  // when the ordered lists change so it always reads current arrangement.
+  useEffect(() => {
+    return monitorForElements({
+      canMonitor: ({ source }) => isProjectDrag(source.data),
+      onDrop: ({ source, location }) => {
+        if (!isProjectDrag(source.data)) return;
+        const target = location.current.dropTargets[0];
+        if (!target || !isProjectDrag(target.data)) return;
+        const { section } = source.data;
+        if (target.data.section !== section) return;
+        if (target.data.projectId === source.data.projectId) return;
+
+        const sectionList = section === "favorites" ? favorites : projects;
+        const ids = sectionList.map((p) => p.id);
+        const fromIdx = ids.indexOf(source.data.projectId);
+        const overIdx = ids.indexOf(target.data.projectId);
+        if (fromIdx === -1 || overIdx === -1) return;
+
+        const edge = extractClosestEdge(target.data);
+        const without = ids.filter((id) => id !== source.data.projectId);
+        const overInWithout = without.indexOf(target.data.projectId);
+        const insertIdx = overInWithout + (edge === "bottom" ? 1 : 0);
+        without.splice(insertIdx, 0, source.data.projectId);
+
+        const favIds = favorites.map((p) => p.id);
+        const projIds = projects.map((p) => p.id);
+        const fullOrder =
+          section === "favorites"
+            ? [...without, ...projIds]
+            : [...favIds, ...without];
+        reorderProjects.mutate(fullOrder);
+      },
+    });
+  }, [favorites, projects, reorderProjects]);
 
   return (
     <aside
@@ -204,13 +332,357 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
             onClose?.();
           }}
         />
+
+        {/* ── Projects ────────────────────────────────────────────── */}
+        {favorites.length > 0 && (
+          <ProjectGroup
+            title="Favorites"
+            collapsed={isCollapsed}
+            count={favorites.length}
+          >
+            {favorites.map((p) => (
+              <ProjectRow
+                key={p.id}
+                project={p}
+                section="favorites"
+                active={p.id === projectId && pathname.startsWith("/board")}
+                collapsed={isCollapsed}
+                draggable={!isCollapsed && favorites.length > 1}
+                onClick={() => openProject(p.id)}
+              />
+            ))}
+          </ProjectGroup>
+        )}
+
+        <ProjectGroup
+          title="Projects"
+          collapsed={isCollapsed}
+          action={
+            !isCollapsed && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      onClick={() => setCreateProjectOpen(true)}
+                      className="size-5 grid place-items-center rounded text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground transition-colors"
+                      aria-label="New project"
+                    >
+                      <Plus className="size-3.5" />
+                    </button>
+                  }
+                />
+                <TooltipContent>New project</TooltipContent>
+              </Tooltip>
+            )
+          }
+        >
+          {projects.length === 0 && !isCollapsed ? (
+            <p className="px-2 py-1.5 text-[12px] text-muted-foreground/70">
+              No projects yet.
+            </p>
+          ) : (
+            projects.map((p) => (
+              <ProjectRow
+                key={p.id}
+                project={p}
+                section="projects"
+                active={p.id === projectId && pathname.startsWith("/board")}
+                collapsed={isCollapsed}
+                draggable={!isCollapsed && projects.length > 1}
+                onClick={() => openProject(p.id)}
+              />
+            ))
+          )}
+        </ProjectGroup>
+
+        {!isCollapsed && archived.length > 0 && (
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setArchivedOpen((v) => !v)}
+              className="w-full flex items-center gap-1 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70 hover:text-foreground transition-colors"
+            >
+              <ChevronRight
+                className={cn(
+                  "size-3 transition-transform",
+                  archivedOpen && "rotate-90",
+                )}
+              />
+              <span>Archived</span>
+              <span className="tabular-nums">{archived.length}</span>
+            </button>
+            {archivedOpen &&
+              archived.map((p) => (
+                <ProjectRow
+                  key={p.id}
+                  project={p}
+                  section="projects"
+                  active={p.id === projectId && pathname.startsWith("/board")}
+                  collapsed={false}
+                  draggable={false}
+                  muted
+                  onClick={() => openProject(p.id)}
+                />
+              ))}
+          </div>
+        )}
       </nav>
 
       {/* Footer: user + theme */}
       <div className="shrink-0 border-t border-sidebar-border p-1.5">
         <UserFooter user={user} collapsed={isCollapsed} />
       </div>
+
+      {createProjectOpen && (
+        <CreateProjectDialog onClose={() => setCreateProjectOpen(false)} />
+      )}
     </aside>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Project sections
+// ────────────────────────────────────────────────────────────────────────
+
+function ProjectGroup({
+  title,
+  collapsed,
+  count,
+  action,
+  children,
+}: {
+  title: string;
+  collapsed: boolean;
+  count?: number;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="pt-3">
+      {collapsed ? (
+        <div className="h-px bg-sidebar-border/60 mx-2 mb-1" aria-hidden />
+      ) : (
+        <div className="flex items-center gap-1 px-2 py-1">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            {title}
+          </span>
+          {count != null && count > 0 && (
+            <span className="text-[11px] tabular-nums text-muted-foreground/50">
+              {count}
+            </span>
+          )}
+          <span className="ml-auto">{action}</span>
+        </div>
+      )}
+      <div className="space-y-0.5">{children}</div>
+    </div>
+  );
+}
+
+function ProjectRow({
+  project,
+  section,
+  active,
+  collapsed,
+  draggable: isDraggable,
+  muted,
+  onClick,
+}: {
+  project: Project;
+  section: ProjectSection;
+  active: boolean;
+  collapsed: boolean;
+  draggable: boolean;
+  muted?: boolean;
+  onClick: () => void;
+}) {
+  const router = useRouter();
+  const starProject = useStarProject();
+  const unstarProject = useUnstarProject();
+  const deleteProject = useDeleteProject();
+  const updateProject = useUpdateProject(project.id);
+
+  const ref = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [closestEdge, setClosestEdge] = useState<"top" | "bottom" | null>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !isDraggable) return;
+    const data: ProjectDragData = {
+      type: "sidebar-project",
+      projectId: project.id,
+      section,
+    };
+    return combine(
+      draggable({
+        element: el,
+        getInitialData: () => ({ ...data }),
+        onDragStart: () => setIsDragging(true),
+        onDrop: () => setIsDragging(false),
+      }),
+      dropTargetForElements({
+        element: el,
+        canDrop: ({ source }) =>
+          isProjectDrag(source.data) &&
+          source.data.section === section &&
+          source.data.projectId !== project.id,
+        getData: ({ input, element }) =>
+          attachClosestEdge(
+            { ...data },
+            { input, element, allowedEdges: ["top", "bottom"] },
+          ),
+        onDrag: ({ self }) => {
+          const edge = extractClosestEdge(self.data);
+          setClosestEdge(edge === "top" || edge === "bottom" ? edge : null);
+        },
+        onDragLeave: () => setClosestEdge(null),
+        onDrop: () => setClosestEdge(null),
+        getIsSticky: () => true,
+      }),
+    );
+  }, [project.id, section, isDraggable]);
+
+  function toggleStar() {
+    if (project.is_starred) unstarProject.mutate(project.id);
+    else starProject.mutate(project.id);
+  }
+
+  function toggleArchive() {
+    updateProject.mutate({ archived: !project.archived });
+  }
+
+  function confirmDelete() {
+    if (
+      confirm(
+        `Delete project "${project.name}" (${project.prefix})?\n\nAll tasks, columns, and recurring templates will be permanently deleted.`,
+      )
+    ) {
+      deleteProject.mutate(project.id);
+    }
+  }
+
+  if (collapsed) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={onClick}
+              className={cn(
+                "w-full grid place-items-center py-1.5 rounded-md transition-colors",
+                active ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60",
+                muted && "opacity-60",
+              )}
+            >
+              <span
+                className="size-3 rounded-full"
+                style={{ background: project.color }}
+                aria-hidden
+              />
+            </button>
+          }
+        />
+        <TooltipContent side="right">
+          {project.icon ? `${project.icon} ` : ""}
+          {project.name}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <div
+      ref={ref}
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className={cn(
+        "group relative flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] cursor-pointer transition-colors",
+        active
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "text-sidebar-foreground/90 hover:bg-sidebar-accent/60",
+        muted && "opacity-60",
+        isDragging && "opacity-40",
+      )}
+    >
+      {closestEdge && (
+        <span
+          className={cn(
+            "absolute left-1 right-1 h-0.5 rounded-full bg-primary",
+            closestEdge === "top" ? "-top-px" : "-bottom-px",
+          )}
+          aria-hidden
+        />
+      )}
+      <span
+        className="size-2.5 rounded-full shrink-0"
+        style={{ background: project.color }}
+        aria-hidden
+      />
+      {project.icon ? (
+        <span className="text-[12px] leading-none w-4 text-center shrink-0">
+          {project.icon}
+        </span>
+      ) : null}
+      <span className="truncate flex-1">{project.name}</span>
+      {project.is_starred && !active && (
+        <Star className="size-3 fill-current text-muted-foreground shrink-0" />
+      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <button
+              type="button"
+              onClick={(e) => e.stopPropagation()}
+              className="size-5 grid place-items-center rounded opacity-0 group-hover:opacity-100 hover:bg-background/60 transition-opacity shrink-0"
+              aria-label={`Project ${project.name} menu`}
+            >
+              <MoreHorizontal className="size-3.5" />
+            </button>
+          }
+        />
+        <DropdownMenuContent align="start" className="w-48">
+          <DropdownMenuItem onClick={toggleStar}>
+            <Star className={cn("size-3.5", project.is_starred && "fill-current")} />
+            {project.is_starred ? "Unstar" : "Star"}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => router.push(`/projects/${project.id}`)}>
+            <Settings className="size-3.5" />
+            Project settings
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={toggleArchive}>
+            {project.archived ? (
+              <>
+                <ArchiveRestore className="size-3.5" />
+                Unarchive
+              </>
+            ) : (
+              <>
+                <Archive className="size-3.5" />
+                Archive
+              </>
+            )}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={confirmDelete}
+            className="text-destructive focus:text-destructive"
+          >
+            <Trash2 className="size-3.5" />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 

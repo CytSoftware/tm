@@ -488,6 +488,41 @@ class ProjectViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(project)
         return Response(serializer.data)
 
+    @action(detail=False, methods=["post"])
+    def reorder(self, request):
+        """Persist this user's personal sidebar project ordering.
+
+        Body: ``{"order": [<project_id>, ...]}`` — the full desired order
+        (favorites-in-order followed by active-non-starred-in-order). Each
+        project's index becomes its ``sidebar_position``. Per-user only; no
+        broadcast (purely personal state).
+        """
+        from .models import UserProfile
+
+        raw = request.data.get("order")
+        if not isinstance(raw, list):
+            return Response(
+                {"detail": "`order` must be a list of project ids."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order: list[int] = []
+        seen: set[int] = set()
+        for value in raw:
+            try:
+                pid = int(value)
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "`order` must contain integer project ids."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if pid not in seen:
+                seen.add(pid)
+                order.append(pid)
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        profile.sidebar_project_order = order
+        profile.save(update_fields=["sidebar_project_order"])
+        return Response({"order": order})
+
 
 class ColumnViewSet(viewsets.ModelViewSet):
     queryset = Column.objects.all().order_by("project_id", "order")

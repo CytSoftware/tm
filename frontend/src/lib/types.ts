@@ -72,7 +72,36 @@ export type Project = {
   task_counter: number;
   columns: Column[];
   is_starred: boolean;
+  /** This user's manual sidebar ordering index, or null if never reordered.
+   *  Lower sorts first; nulls sort last (then by name). Per-user. */
+  sidebar_position: number | null;
   created_at: string;
+  updated_at: string;
+};
+
+export type LinkedPRRepository = {
+  id: number;
+  repo_id: number;
+  repo_full_name: string;
+  default_branch: string;
+};
+
+export type LinkedPR = {
+  id: number;
+  pr_number: number;
+  pr_title: string;
+  /** GitHub PR state. "closed" + merged=true is how GitHub represents a merge. */
+  state: "open" | "closed";
+  merged: boolean;
+  is_draft: boolean;
+  head_ref: string;
+  base_ref: string;
+  html_url: string;
+  author_login: string;
+  repository: LinkedPRRepository | null;
+  opened_at: string | null;
+  merged_at: string | null;
+  closed_at: string | null;
   updated_at: string;
 };
 
@@ -104,6 +133,8 @@ export type Task = {
   /** Derived staleness badge: yellow = past yellow_days, red = past red_days.
    *  Null means not configured or in a Done column. */
   staleness: "yellow" | "red" | null;
+  /** GitHub PRs linked to this task (empty array when none). */
+  linked_prs: LinkedPR[];
 };
 
 export type StateTransition = {
@@ -231,7 +262,8 @@ export type CardField =
   | "labels"
   | "points"
   | "due_date"
-  | "project";
+  | "project"
+  | "linked_pr";
 
 export const ALL_CARD_FIELDS: CardField[] = [
   "key",
@@ -242,6 +274,7 @@ export const ALL_CARD_FIELDS: CardField[] = [
   "points",
   "due_date",
   "project",
+  "linked_pr",
 ];
 
 export const CARD_FIELD_LABELS: Record<CardField, string> = {
@@ -253,6 +286,7 @@ export const CARD_FIELD_LABELS: Record<CardField, string> = {
   points: "Story points",
   due_date: "Due date",
   project: "Project prefix",
+  linked_pr: "Linked PRs",
 };
 
 export type SavedView = {

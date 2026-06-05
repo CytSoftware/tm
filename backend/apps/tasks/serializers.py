@@ -75,6 +75,7 @@ class ColumnSerializer(serializers.ModelSerializer):
 class ProjectSerializer(serializers.ModelSerializer):
     columns = ColumnSerializer(many=True, read_only=True)
     is_starred = serializers.SerializerMethodField()
+    sidebar_position = serializers.SerializerMethodField()
     # Explicit field so DRF doesn't auto-attach the model's RegexValidator —
     # we want our ``validate_github_repo`` normalization (strips github URL
     # prefix + ``.git`` suffix) to run *before* the regex check, not after.
@@ -98,12 +99,14 @@ class ProjectSerializer(serializers.ModelSerializer):
             "task_counter",
             "columns",
             "is_starred",
+            "sidebar_position",
             "created_at",
             "updated_at",
         )
         read_only_fields = (
             "task_counter",
             "is_starred",
+            "sidebar_position",
             "created_at",
             "updated_at",
         )
@@ -141,6 +144,26 @@ class ProjectSerializer(serializers.ModelSerializer):
             return False
         return profile.starred_projects.filter(pk=obj.pk).exists()
 
+    def _sidebar_order_map(self) -> dict[int, int]:
+        # Memoize {project_id: position} for the requesting user so list
+        # serialization is O(n) instead of O(n²) ``.index()`` lookups.
+        cached = getattr(self, "_cached_sidebar_order_map", None)
+        if cached is not None:
+            return cached
+        order_map: dict[int, int] = {}
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        profile = getattr(user, "profile", None) if user and user.is_authenticated else None
+        if profile is not None:
+            order_map = {
+                pid: idx for idx, pid in enumerate(profile.sidebar_project_order or [])
+            }
+        self._cached_sidebar_order_map = order_map
+        return order_map
+
+    def get_sidebar_position(self, obj: Project) -> int | None:
+        return self._sidebar_order_map().get(obj.pk)
+
 
 # ---------------------------------------------------------------------------
 # Task — read vs write split
@@ -168,6 +191,7 @@ class TaskReadSerializer(serializers.ModelSerializer):
     # legacy tasks whose transitions have been purged.
     current_column_since = serializers.DateTimeField(read_only=True, allow_null=True)
     staleness = serializers.SerializerMethodField()
+    linked_prs = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
@@ -194,6 +218,7 @@ class TaskReadSerializer(serializers.ModelSerializer):
             "updated_at",
             "current_column_since",
             "staleness",
+            "linked_prs",
         )
         read_only_fields = fields  # the write serializer is separate
 
@@ -203,6 +228,13 @@ class TaskReadSerializer(serializers.ModelSerializer):
     def get_staleness(self, obj: Task) -> str | None:
         thresholds = self.context.get("staleness_thresholds")
         return compute_staleness(obj, thresholds=thresholds)
+
+    def get_linked_prs(self, obj: Task) -> list[dict]:
+        # Lazy import — apps.integrations depends on apps.tasks at runtime,
+        # so we can't import at module level without a circular reference.
+        from apps.integrations.serializers import LinkedPRSerializer
+
+        return LinkedPRSerializer(obj.pull_requests.all(), many=True).data
 
 
 class StateTransitionSerializer(serializers.ModelSerializer):

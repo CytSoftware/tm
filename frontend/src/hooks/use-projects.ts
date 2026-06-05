@@ -151,3 +151,43 @@ export function useUnstarProject() {
     },
   });
 }
+
+/**
+ * Optimistic per-user sidebar reorder. `order` is the full desired list of
+ * project ids (favorites-in-order followed by active-non-starred-in-order).
+ * We rewrite each project's `sidebar_position` to its index in that list so
+ * the sidebar settles instantly; the POST persists it server-side.
+ */
+export function useReorderProjects() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (order: number[]) =>
+      apiFetch<{ order: number[] }>("/api/projects/reorder/", {
+        method: "POST",
+        body: { order },
+      }),
+    onMutate: async (order) => {
+      await qc.cancelQueries({ queryKey: projectsKey() });
+      const previous = qc.getQueryData<ProjectListResponse>(projectsKey());
+      if (previous) {
+        const positionById = new Map(order.map((id, idx) => [id, idx]));
+        qc.setQueryData<ProjectListResponse>(projectsKey(), {
+          ...previous,
+          results: previous.results.map((p) => ({
+            ...p,
+            sidebar_position: positionById.has(p.id)
+              ? (positionById.get(p.id) as number)
+              : null,
+          })),
+        });
+      }
+      return { previous };
+    },
+    onError: (_err, _order, ctx) => {
+      if (ctx?.previous) qc.setQueryData(projectsKey(), ctx.previous);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: projectsKey() });
+    },
+  });
+}
