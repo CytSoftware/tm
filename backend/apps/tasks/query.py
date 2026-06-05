@@ -103,6 +103,7 @@ def base_task_queryset() -> QuerySet[Task]:
                 "assignees",
                 queryset=User.objects.select_related("profile"),
             ),
+            "pull_requests__repository",
         )
         .annotate(current_column_since=Subquery(latest_entry))
         .order_by("project_id", "column__order", "position", "id")
