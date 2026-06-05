@@ -201,10 +201,31 @@ def _task_dict(t: Task, *, include_description: bool = True) -> dict[str, Any]:
         "recurrence_template_id": t.recurrence_template_id,
         "current_column_since": since.isoformat() if since else None,
         "staleness": compute_staleness(t),
+        "linked_prs": [_linked_pr_dict(link) for link in t.pull_requests.all()],
     }
     if include_description:
         data["description"] = t.description
     return data
+
+
+def _linked_pr_dict(link) -> dict[str, Any]:
+    return {
+        "pr_number": link.pr_number,
+        "pr_title": link.pr_title,
+        "state": link.state,
+        "merged": link.merged,
+        "is_draft": link.is_draft,
+        "head_ref": link.head_ref,
+        "base_ref": link.base_ref,
+        "html_url": link.html_url,
+        "author_login": link.author_login,
+        "repository": (
+            link.repository.repo_full_name if link.repository_id else None
+        ),
+        "opened_at": link.opened_at.isoformat() if link.opened_at else None,
+        "merged_at": link.merged_at.isoformat() if link.merged_at else None,
+        "closed_at": link.closed_at.isoformat() if link.closed_at else None,
+    }
 
 
 def _template_dict(tpl: RecurringTaskTemplate) -> dict[str, Any]:

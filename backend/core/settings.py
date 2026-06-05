@@ -80,6 +80,7 @@ INSTALLED_APPS = [
     "apps.pipelines",
     "apps.crm",
     "apps.mcp_server",
+    "apps.integrations",
 ]
 
 MIDDLEWARE = [
@@ -279,6 +280,14 @@ import os as _os
 CYT_BROADCAST_SECRET = _os.environ.get(
     "CYT_BROADCAST_SECRET", "dev-broadcast-secret-change-me"
 )
+
+# ---------------------------------------------------------------------------
+# GitHub integration (P0: manual webhook only)
+# ---------------------------------------------------------------------------
+# Shared secret configured in the GitHub repo/App webhook settings. The
+# webhook view verifies an X-Hub-Signature-256 HMAC against this value.
+# Leave empty to disable the endpoint (it will reject every request with 403).
+GITHUB_WEBHOOK_SECRET = _os.environ.get("GITHUB_WEBHOOK_SECRET", "")
 
 # ---------------------------------------------------------------------------
 # Remote MCP authentication

@@ -420,6 +420,16 @@ class UserProfile(models.Model):
             "user id} so 'press key -> find user' is a direct dict lookup."
         ),
     )
+    sidebar_project_order = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Ordered list of project IDs defining this user's personal sidebar "
+            "ordering (drag-to-reorder). A project's index in this list is its "
+            "``sidebar_position``; IDs absent from the list sort last by name. "
+            "Stale IDs (deleted projects) are ignored at read time."
+        ),
+    )
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.user.username} profile"
@@ -476,6 +486,7 @@ class TransitionSource(models.TextChoices):
     MCP = "mcp", "MCP"
     RECURRING = "recurring", "Recurring generator"
     BACKFILL = "backfill", "Backfill"
+    GITHUB = "github", "GitHub webhook"
 
 
 class StateTransition(models.Model):
