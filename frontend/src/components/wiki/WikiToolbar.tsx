@@ -11,6 +11,7 @@ import {
   insertTableRow,
 } from "@platejs/table";
 import { insertImage } from "@platejs/media";
+import { toggleBulletedList, toggleNumberedList } from "@platejs/list-classic";
 import {
   BetweenHorizontalEnd,
   BetweenVerticalEnd,
@@ -23,6 +24,8 @@ import {
   Image as ImageIcon,
   Italic,
   Link2,
+  List,
+  ListOrdered,
   Minus,
   Quote,
   Rows3,
@@ -139,6 +142,18 @@ export function WikiToolbar() {
         onClick={() => toggleBlock(KEYS.codeBlock)}
       >
         <Code className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Bulleted list"
+        onClick={() => toggleBulletedList(editor)}
+      >
+        <List className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Numbered list"
+        onClick={() => toggleNumberedList(editor)}
+      >
+        <ListOrdered className="size-4" />
       </ToolbarButton>
 
       <Divider />

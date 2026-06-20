@@ -86,32 +86,35 @@ export function CodeLineElement(props: PlateElementProps) {
   return <PlateElement {...props} />;
 }
 
-// ── Lists (indent-based model) ──────────────────────────────────────────────
-// In Plate's list system a block carries `listStyleType` + `indent`. We render
-// the marker via CSS `display:list-item` and the appropriate list-style.
+// ── Lists (classic ul / ol / li / lic) ──────────────────────────────────────
 
-export function ListItemElement(props: PlateElementProps) {
-  const element = props.element as {
-    listStyleType?: string;
-    indent?: number;
-    listStart?: number;
-  };
-  const listStyleType = element.listStyleType ?? "disc";
-  const indent = element.indent ?? 1;
+export function BulletedListElement(props: PlateElementProps) {
   return (
     <PlateElement
       {...props}
-      as="div"
-      style={{
-        listStyleType,
-        marginInlineStart: indent * 20,
-        ...(element.listStart != null
-          ? ({ counterSet: `list-item ${element.listStart}` } as object)
-          : {}),
-      }}
-      className="list-item leading-7"
+      as="ul"
+      className="my-1 list-disc pl-6 marker:text-muted-foreground [&_ul]:list-[circle] [&_ul_ul]:list-[square]"
     />
   );
+}
+
+export function NumberedListElement(props: PlateElementProps) {
+  return (
+    <PlateElement
+      {...props}
+      as="ol"
+      className="my-1 list-decimal pl-6 marker:text-muted-foreground"
+    />
+  );
+}
+
+export function ListItemElement(props: PlateElementProps) {
+  return <PlateElement {...props} as="li" className="leading-7" />;
+}
+
+export function ListItemContentElement(props: PlateElementProps) {
+  // The text content of a list item (sits inside <li>, before any nested list).
+  return <PlateElement {...props} />;
 }
 
 // ── Tables ──────────────────────────────────────────────────────────────────

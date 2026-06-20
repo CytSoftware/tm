@@ -26,11 +26,19 @@ import { LinkPlugin } from "@platejs/link/react";
 import { CodeBlockPlugin } from "@platejs/code-block/react";
 import { TablePlugin } from "@platejs/table/react";
 import { ImagePlugin } from "@platejs/media/react";
+import {
+  BulletedListPlugin,
+  ListItemContentPlugin,
+  ListItemPlugin,
+  ListPlugin,
+  NumberedListPlugin,
+} from "@platejs/list-classic/react";
 import { SlashInputPlugin, SlashPlugin } from "@platejs/slash-command/react";
 
 import {
   BlockquoteElement,
   BoldLeaf,
+  BulletedListElement,
   CodeBlockElement,
   CodeLeaf,
   CodeLineElement,
@@ -41,6 +49,9 @@ import {
   ImageElement,
   ItalicLeaf,
   LinkElement,
+  ListItemContentElement,
+  ListItemElement,
+  NumberedListElement,
   ParagraphElement,
   StrikethroughLeaf,
   TableCellElement,
@@ -73,6 +84,7 @@ export const wikiBasePlugins = [
   CodeBlockPlugin,
   TablePlugin,
   ImagePlugin,
+  ListPlugin,
   WikiLinkPlugin,
   SlashPlugin.configure({
     options: {
@@ -103,6 +115,10 @@ export const wikiComponents = {
   [KEYS.td]: TableCellElement,
   [KEYS.th]: TableCellHeaderElement,
   [KEYS.img]: ImageElement,
+  [BulletedListPlugin.key]: BulletedListElement,
+  [NumberedListPlugin.key]: NumberedListElement,
+  [ListItemPlugin.key]: ListItemElement,
+  [ListItemContentPlugin.key]: ListItemContentElement,
   [KEYS.bold]: BoldLeaf,
   [KEYS.italic]: ItalicLeaf,
   [KEYS.underline]: UnderlineLeaf,

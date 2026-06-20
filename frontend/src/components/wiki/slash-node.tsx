@@ -13,6 +13,7 @@ import {
 } from "platejs/react";
 import { insertTable } from "@platejs/table";
 import { insertImage } from "@platejs/media";
+import { toggleBulletedList, toggleNumberedList } from "@platejs/list-classic";
 import {
   Code,
   Heading1,
@@ -20,6 +21,8 @@ import {
   Heading3,
   Image as ImageIcon,
   Link2,
+  List,
+  ListOrdered,
   Minus,
   Quote,
   Table as TableIcon,
@@ -91,6 +94,20 @@ const groups: { group: string; items: SlashItem[] }[] = [
             },
             { select: true },
           ),
+      },
+      {
+        icon: <List />,
+        label: "Bulleted list",
+        value: "bulleted-list",
+        keywords: ["unordered", "ul", "bullet", "-"],
+        onSelect: (editor) => toggleBulletedList(editor),
+      },
+      {
+        icon: <ListOrdered />,
+        label: "Numbered list",
+        value: "numbered-list",
+        keywords: ["ordered", "ol", "number", "1."],
+        onSelect: (editor) => toggleNumberedList(editor),
       },
     ],
   },
