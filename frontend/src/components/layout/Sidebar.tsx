@@ -26,6 +26,7 @@ import {
 import {
   Archive,
   ArchiveRestore,
+  BookText,
   ChevronRight,
   ChevronsLeft,
   LayoutDashboard,
@@ -329,6 +330,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           collapsed={isCollapsed}
           onNavigate={() => {
             router.push("/crm");
+            onClose?.();
+          }}
+        />
+        <NavLink
+          icon={
+            <BookText
+              className={
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground"
+              }
+            />
+          }
+          label="Wiki"
+          active={pathname.startsWith("/wiki")}
+          collapsed={isCollapsed}
+          onNavigate={() => {
+            router.push("/wiki");
             onClose?.();
           }}
         />

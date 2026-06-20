@@ -356,6 +356,18 @@ def internal_broadcast(request):
         _pipeline_local(event_type, payload)
         return Response({"ok": True})
 
+    if scope == "wiki":
+        # Wiki tree broadcasts route into the dedicated global ``wiki`` group.
+        from apps.wiki.broadcast import _broadcast_local as _wiki_local
+
+        if not isinstance(event_type, str):
+            return Response(
+                {"detail": "Invalid payload."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        _wiki_local(event_type, payload)
+        return Response({"ok": True})
+
     project_id = data.get("project_id")
     if not isinstance(project_id, int) or not isinstance(event_type, str):
         return Response(

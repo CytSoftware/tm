@@ -81,6 +81,7 @@ INSTALLED_APPS = [
     "apps.crm",
     "apps.mcp_server",
     "apps.integrations",
+    "apps.wiki",
 ]
 
 MIDDLEWARE = [

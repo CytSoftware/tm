@@ -29,6 +29,9 @@ from apps.pipelines.routing import (  # noqa: E402
     websocket_urlpatterns as pipeline_ws_urlpatterns,
 )
 from apps.tasks.routing import websocket_urlpatterns  # noqa: E402
+from apps.wiki.routing import (  # noqa: E402
+    websocket_urlpatterns as wiki_ws_urlpatterns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +42,9 @@ mcp_authenticated_user: contextvars.ContextVar = contextvars.ContextVar(
 )
 
 _channels_ws = AuthMiddlewareStack(
-    URLRouter(websocket_urlpatterns + pipeline_ws_urlpatterns)
+    URLRouter(
+        websocket_urlpatterns + pipeline_ws_urlpatterns + wiki_ws_urlpatterns
+    )
 )
 
 # ---------------------------------------------------------------------------

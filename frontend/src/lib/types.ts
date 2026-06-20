@@ -561,3 +561,39 @@ export type ContactImportResult = {
   skipped: number;
   errors: { row: number; reason: string }[];
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Wiki — hierarchical, workspace-global docs (Notion-style page tree).
+// Body content is edited collaboratively (Plate + Yjs) over a dedicated
+// socket; the REST surface carries only the tree + a denormalized snapshot.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** A Plate/Slate document value — an array of nodes. Kept loose here so the
+ *  shared types file doesn't depend on Plate. The editor casts it. */
+export type WikiValue = unknown[];
+
+export type WikiDoc = {
+  id: number;
+  key: string;
+  title: string;
+  parent: number | null;
+  position: number;
+  project: number | null;
+  created_by: User | null;
+  last_edited_by: User | null;
+  has_children: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Returned by the retrieve-by-key endpoint; adds the body snapshot. */
+export type WikiDocDetail = WikiDoc & {
+  content: WikiValue;
+};
+
+export type WikiEvent =
+  | { type: "connected" }
+  | { type: "wiki.created"; key: string; id: number; parent_id: number | null }
+  | { type: "wiki.updated"; key: string; id: number; parent_id: number | null }
+  | { type: "wiki.moved"; key: string; id: number; parent_id: number | null }
+  | { type: "wiki.deleted"; key: string };

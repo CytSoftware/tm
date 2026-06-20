@@ -166,6 +166,7 @@ urlpatterns = [
     path("api/", include("apps.tasks.urls")),
     path("api/", include("apps.pipelines.urls")),
     path("api/", include("apps.crm.urls")),
+    path("api/", include("apps.wiki.urls")),
     path("api/integrations/", include("apps.integrations.urls")),
     path("oauth/", include("oauth2_provider.urls", namespace="oauth2_provider")),
 ]

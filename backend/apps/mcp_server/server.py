@@ -744,6 +744,85 @@ async def remove_contact_label(key: str, label: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Wiki (docs)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_wiki_docs(
+    parent: str | int | None = None,
+    project: str | int | None = None,
+    search: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """List wiki pages (the workspace knowledge base).
+
+    Returns lightweight tree nodes (no body). ``parent`` accepts a doc key/id,
+    or ``"root"`` for top-level pages only. ``project`` accepts a project
+    key/id, or ``"none"`` for workspace-global pages only. ``search`` matches
+    key / title / body text.
+    """
+    return await _async(tools.list_wiki_docs)(
+        parent=parent, project=project, search=search, limit=limit
+    )
+
+
+@mcp.tool()
+async def get_wiki_doc(key: str) -> dict[str, Any]:
+    """Return a wiki page (with body content + plain text) for a key like ``"DOC-001"``."""
+    return await _async(tools.get_wiki_doc)(key)
+
+
+@mcp.tool()
+async def create_wiki_doc(
+    title: str = "Untitled",
+    parent: str | int | None = None,
+    project: str | int | None = None,
+) -> dict[str, Any]:
+    """Create a wiki page.
+
+    ``parent`` (doc key/id) nests it under another page; omit for a top-level
+    page. ``project`` (key/id) optionally links it to a project. The page body
+    starts empty — content is written by people in the collaborative editor,
+    not via MCP.
+    """
+    return await _async(tools.create_wiki_doc)(
+        title=title, parent=parent, project=project, mcp_user=_get_mcp_user()
+    )
+
+
+@mcp.tool()
+async def update_wiki_doc(
+    key: str,
+    title: str | None = None,
+    parent: str | int | None = None,
+    project: str | int | None = None,
+    clear_parent: bool = False,
+    clear_project: bool = False,
+) -> dict[str, Any]:
+    """Update a wiki page's title / parent / project (NOT its body).
+
+    Pass ``parent`` (key/id) to re-nest the page, or ``clear_parent=True`` to
+    move it to the top level. Likewise ``project`` / ``clear_project``. Moving a
+    page into its own subtree is rejected.
+    """
+    return await _async(tools.update_wiki_doc)(
+        key=key,
+        title=title,
+        parent=parent,
+        project=project,
+        clear_parent=clear_parent,
+        clear_project=clear_project,
+    )
+
+
+@mcp.tool()
+async def delete_wiki_doc(key: str) -> dict[str, Any]:
+    """Delete a wiki page and its entire subtree of child pages."""
+    return await _async(tools.delete_wiki_doc)(key)
+
+
+# ---------------------------------------------------------------------------
 # Entry point (stdio mode for Claude Desktop)
 # ---------------------------------------------------------------------------
 

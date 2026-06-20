@@ -1500,3 +1500,174 @@ def remove_contact_label(*, key: str, label: str) -> dict[str, Any]:
         contact.labels.remove(label_obj)
     fresh = base_contact_queryset().get(pk=contact.pk)
     return _contact_dict(fresh)
+
+
+# ---------------------------------------------------------------------------
+# Wiki (docs)
+# ---------------------------------------------------------------------------
+#
+# A hierarchical, workspace-global knowledge base (Notion-style page tree).
+# MCP can READ pages and manage STRUCTURE/METADATA (title / parent / project),
+# but never writes the page BODY: the body is a Yjs CRDT owned by the live
+# collaborative editor, and any server-side body write would silently diverge
+# from — and clobber — connected editors. Agents that need to add content
+# should tell the user to type it, or we expose a dedicated import path later.
+
+from apps.wiki.broadcast import broadcast_wiki_event
+from apps.wiki.models import Doc as WikiDoc
+from apps.wiki.query import (
+    base_doc_queryset as base_wiki_queryset,
+    filter_and_sort_docs as filter_and_sort_wiki_docs,
+)
+
+
+def _resolve_wiki_doc(ref: str | int) -> WikiDoc:
+    if isinstance(ref, int):
+        return WikiDoc.objects.get(pk=ref)
+    if isinstance(ref, str):
+        if ref.isdigit():
+            return WikiDoc.objects.get(pk=int(ref))
+        return WikiDoc.objects.get(key=ref)
+    raise ValueError(f"Invalid doc reference: {ref!r}")
+
+
+def _wiki_doc_dict(d: WikiDoc, *, include_content: bool = False) -> dict[str, Any]:
+    data = {
+        "id": d.id,
+        "key": d.key,
+        "title": d.title,
+        "parent": d.parent.key if d.parent_id else None,
+        "parent_id": d.parent_id,
+        "position": d.position,
+        "project": d.project.name if d.project_id else None,
+        "project_id": d.project_id,
+        "has_children": getattr(d, "has_children", None),
+        "created_by": d.created_by.username if d.created_by_id else None,
+        "last_edited_by": (
+            d.last_edited_by.username if d.last_edited_by_id else None
+        ),
+        "created_at": d.created_at.isoformat(),
+        "updated_at": d.updated_at.isoformat(),
+    }
+    if include_content:
+        data["content"] = d.content
+        data["text"] = d.plain_text
+    return data
+
+
+def list_wiki_docs(
+    parent: str | int | None = None,
+    project: str | int | None = None,
+    search: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    filters: dict[str, Any] = {}
+    if parent is not None:
+        if isinstance(parent, str) and parent.lower() in ("root", "none", "null"):
+            filters["parent"] = "root"
+        else:
+            filters["parent"] = _resolve_wiki_doc(parent).id
+    if project is not None:
+        if isinstance(project, str) and project.lower() in ("none", "null"):
+            filters["project"] = "none"
+        else:
+            filters["project"] = _resolve_project(project).id
+    if search:
+        filters["search"] = search
+    qs = filter_and_sort_wiki_docs(filters=filters)
+    return [_wiki_doc_dict(d) for d in qs[:limit]]
+
+
+def get_wiki_doc(key: str) -> dict[str, Any]:
+    d = base_wiki_queryset().get(key=key)
+    return _wiki_doc_dict(d, include_content=True)
+
+
+def _wiki_tail_position(parent_id: int | None, *, exclude_id: int | None = None) -> float:
+    qs = WikiDoc.objects.filter(parent_id=parent_id)
+    if exclude_id is not None:
+        qs = qs.exclude(pk=exclude_id)
+    tail = qs.aggregate(m=Max("position"))["m"]
+    return (tail or 0) + 1000.0
+
+
+@transaction.atomic
+def create_wiki_doc(
+    title: str = "Untitled",
+    parent: str | int | None = None,
+    project: str | int | None = None,
+    mcp_user=None,
+) -> dict[str, Any]:
+    actor = _resolve_reporter_for_mcp(mcp_user)
+    parent_obj = _resolve_wiki_doc(parent) if parent is not None else None
+    project_obj = _resolve_project(project) if project is not None else None
+
+    doc = WikiDoc(
+        title=title or "Untitled",
+        parent=parent_obj,
+        project=project_obj,
+        created_by=actor,
+        last_edited_by=actor,
+    )
+    doc.save()
+    broadcast_wiki_event(
+        "wiki.created",
+        {"key": doc.key, "id": doc.id, "parent_id": doc.parent_id},
+    )
+    fresh = base_wiki_queryset().get(pk=doc.pk)
+    return _wiki_doc_dict(fresh, include_content=True)
+
+
+@transaction.atomic
+def update_wiki_doc(
+    key: str,
+    title: str | None = None,
+    parent: str | int | None = None,
+    project: str | int | None = None,
+    clear_parent: bool = False,
+    clear_project: bool = False,
+) -> dict[str, Any]:
+    from apps.wiki.views import _would_cycle
+
+    doc = WikiDoc.objects.get(key=key)
+    parent_changed = False
+
+    if title is not None:
+        doc.title = title
+
+    if clear_parent:
+        doc.parent = None
+        parent_changed = True
+    elif parent is not None:
+        parent_obj = _resolve_wiki_doc(parent)
+        if parent_obj.id == doc.id:
+            raise ValueError("A page cannot be its own parent.")
+        if _would_cycle(parent_obj.id, doc.id):
+            raise ValueError("Cannot move a page into its own subtree.")
+        doc.parent = parent_obj
+        parent_changed = True
+
+    if clear_project:
+        doc.project = None
+    elif project is not None:
+        doc.project = _resolve_project(project)
+
+    if parent_changed:
+        doc.position = _wiki_tail_position(doc.parent_id, exclude_id=doc.id)
+
+    doc.save()
+    broadcast_wiki_event(
+        "wiki.updated",
+        {"key": doc.key, "id": doc.id, "parent_id": doc.parent_id},
+    )
+    fresh = base_wiki_queryset().get(pk=doc.pk)
+    return _wiki_doc_dict(fresh, include_content=True)
+
+
+@transaction.atomic
+def delete_wiki_doc(key: str) -> dict[str, Any]:
+    doc = WikiDoc.objects.get(key=key)
+    doc_id = doc.id
+    doc.delete()  # cascades the subtree
+    broadcast_wiki_event("wiki.deleted", {"key": key})
+    return {"deleted": key, "id": doc_id}

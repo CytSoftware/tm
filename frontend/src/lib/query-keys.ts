@@ -64,3 +64,9 @@ export const contactListKey = (
     pageSize,
   ] as const;
 export const contactKey = (key: string) => ["contact", key] as const;
+
+// Wiki — hierarchical docs (workspace-global). Everything lives under the
+// ["wiki"] namespace so the tree socket can invalidate it all at once.
+export const wikiTreeKey = (filtersKey = "") =>
+  ["wiki", "tree", filtersKey] as const;
+export const wikiDocKey = (key: string) => ["wiki", "doc", key] as const;
