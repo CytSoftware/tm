@@ -316,3 +316,16 @@ OAUTH2_PROVIDER = {
 # COOKIE_DOMAIN=.cytsoftware.com), so the OAuth authorize page works.
 _frontend_url = _os.environ.get("FRONTEND_URL", "http://localhost:3000")
 LOGIN_URL = f"{_frontend_url}/login"
+
+# ---------------------------------------------------------------------------
+# Wiki Markdown ↔ Yjs encoder (frontend route)
+# ---------------------------------------------------------------------------
+# Wiki page bodies are slate-yjs CRDTs whose encoding lives in JS. MCP content
+# writes POST Markdown to this frontend route, which reuses the editor's exact
+# yjs/@slate-yjs/core to produce byte-compatible CRDT updates. Gated by a shared
+# secret (defaults to the broadcast secret). Override the URL if the frontend is
+# reachable at a non-default address from the backend.
+WIKI_ENCODE_URL = _os.environ.get(
+    "WIKI_ENCODE_URL", f"{_frontend_url}/api/wiki/encode"
+)
+WIKI_ENCODE_SECRET = _os.environ.get("WIKI_ENCODE_SECRET", CYT_BROADCAST_SECRET)

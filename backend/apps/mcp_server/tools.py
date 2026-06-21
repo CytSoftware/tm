@@ -1507,11 +1507,13 @@ def remove_contact_label(*, key: str, label: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 #
 # A hierarchical, workspace-global knowledge base (Notion-style page tree).
-# MCP can READ pages and manage STRUCTURE/METADATA (title / parent / project),
-# but never writes the page BODY: the body is a Yjs CRDT owned by the live
-# collaborative editor, and any server-side body write would silently diverge
-# from — and clobber — connected editors. Agents that need to add content
-# should tell the user to type it, or we expose a dedicated import path later.
+# MCP READs pages, manages STRUCTURE/METADATA (title / parent / project), and
+# writes the page BODY via Markdown. The body is a Yjs CRDT owned by the live
+# collaborative editor; rather than re-encode it in Python (fragile), body
+# writes are delegated to a frontend route that reuses the editor's exact
+# yjs/@slate-yjs/core, and the resulting update is applied to the live room +
+# persisted. See ``apps.wiki.content_ops`` and the ``*_wiki_content`` tools in
+# ``server.py``.
 
 from apps.wiki.broadcast import broadcast_wiki_event
 from apps.wiki.models import Doc as WikiDoc
@@ -1579,8 +1581,14 @@ def list_wiki_docs(
 
 
 def get_wiki_doc(key: str) -> dict[str, Any]:
+    from apps.wiki.content_ops import serialize_markdown
+
     d = base_wiki_queryset().get(key=key)
-    return _wiki_doc_dict(d, include_content=True)
+    data = _wiki_doc_dict(d, include_content=True)
+    markdown = serialize_markdown(d.content)
+    if markdown is not None:
+        data["markdown"] = markdown
+    return data
 
 
 def _wiki_tail_position(parent_id: int | None, *, exclude_id: int | None = None) -> float:

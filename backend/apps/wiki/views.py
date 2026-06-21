@@ -8,11 +8,13 @@ into the CRDT.
 
 from __future__ import annotations
 
+from asgiref.sync import async_to_sync
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
-from rest_framework import status, viewsets
-from rest_framework.decorators import action
+from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
@@ -254,3 +256,53 @@ def _rebalance_if_tied(parent_id: int | None, *, exclude_doc_id: int) -> None:
     for i, p in enumerate(ordered, start=1):
         p.position = i * 1000.0
     Doc.objects.bulk_update(ordered, ["position"])
+
+
+# ---------------------------------------------------------------------------
+# Internal: cross-process wiki content-write bridge (stdio MCP → daphne)
+# ---------------------------------------------------------------------------
+
+
+@api_view(["POST"])
+@permission_classes([permissions.AllowAny])
+def internal_wiki_apply(request):
+    """Run a Markdown body write inside daphne, for the stdio MCP process.
+
+    The stdio MCP process can't reach daphne's in-memory collab rooms or the
+    Channels layer, so it POSTs the operation here. ``async_to_sync`` re-enters
+    daphne's own event loop (asgiref routes it back to the parent loop), so the
+    write touches the live room + connected editors correctly. Authenticated by
+    the shared broadcast secret; refuses non-loopback callers.
+    """
+    from .content_ops import apply_content
+
+    host = request.META.get("REMOTE_ADDR", "")
+    if host not in ("127.0.0.1", "::1"):
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+
+    provided = request.META.get("HTTP_X_CYT_BROADCAST_SECRET", "")
+    if provided != getattr(settings, "CYT_BROADCAST_SECRET", ""):
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+
+    data = request.data or {}
+    key = data.get("key")
+    markdown = data.get("markdown")
+    operation = data.get("operation")
+    index = data.get("index")
+    user_id = data.get("user_id")
+    if not isinstance(key, str) or not isinstance(markdown, str):
+        return Response(
+            {"detail": "Invalid payload."}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        result = async_to_sync(apply_content)(
+            key,
+            markdown=markdown,
+            operation=operation,
+            index=index,
+            user_id=user_id,
+        )
+    except ValueError as e:
+        return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)

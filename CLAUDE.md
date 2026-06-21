@@ -105,6 +105,12 @@ OAuth is handled by `django-oauth-toolkit` mounted at `/oauth/`, plus two shim v
 
 `LOGIN_URL` points at the frontend (`/login`) so OAuth's "not logged in" redirect hands off cleanly; in production, `COOKIE_DOMAIN=.cytsoftware.com` lets the session cookie be shared between frontend and backend subdomains.
 
+#### Wiki body writes over MCP (`apps/wiki/content_ops.py`)
+
+The wiki structure/metadata MCP tools (`create/update/delete/list/get_wiki_doc`) touch plain `Doc` rows. Writing the page **body** is different: the body is a slate-yjs CRDT and Python cannot faithfully encode it (`pycrdt` can't even bind the root `XmlText` slate-yjs uses). So the `set/append/insert_wiki_content` tools delegate Markdown↔CRDT encoding to a **frontend route** (`frontend/src/app/api/wiki/encode/route.ts`) that reuses the editor's exact `yjs` + `@slate-yjs/core` + `@platejs/markdown` (headless schema in `wiki-schema.ts`, kept in sync with `editor-kit.tsx`). The route returns an incremental update + new full state.
+
+`apply_content` (a coroutine — it must run on Daphne's event loop) reads the current state (the live in-memory room doc if the page is open, else the `DocState` blob), calls the encoder, and on success applies the diff to the shared room doc + pushes a `create_update_message` into the `wiki_doc_<key>` group so open editors converge live, then persists the new state + snapshot and broadcasts a `wiki.updated` tree event. The HTTP MCP transport (in-process) awaits it directly; the stdio MCP process routes through `/api/internal/wiki/apply/` (loopback + `CYT_BROADCAST_SECRET`), which re-enters the loop via `async_to_sync`. Note the stock `YjsConsumer` does **not** auto-forward server-side doc mutations — the explicit `group_send` is required.
+
 ### Frontend data flow
 
 `frontend/src/lib/api.ts` — `apiFetch` wrapper that auto-attaches the `csrftoken` cookie on unsafe methods and uses `credentials: "include"` throughout. Seed the CSRF cookie once on boot via `ensureCsrfCookie()` → `/api/auth/csrf/`.
@@ -129,7 +135,9 @@ Backend (see `core/settings.py`):
 - `CYT_MCP_TOKEN` — static Bearer for the HTTP MCP endpoint. Empty = open (local dev only).
 - `CYT_BROADCAST_SECRET` — shared secret for the cross-process broadcast bridge.
 - `CYT_BROADCAST_URL` — set in the MCP stdio process so broadcasts reach Daphne via HTTP.
-- `FRONTEND_URL` — used to build `LOGIN_URL` for OAuth redirects.
+- `FRONTEND_URL` — used to build `LOGIN_URL` for OAuth redirects, and the default for `WIKI_ENCODE_URL`.
+- `WIKI_ENCODE_URL` — frontend Markdown↔Yjs encoder route for wiki body writes (default `${FRONTEND_URL}/api/wiki/encode`). Must be reachable from the backend.
+- `WIKI_ENCODE_SECRET` — shared secret the backend sends and the frontend route checks (default: falls back to `CYT_BROADCAST_SECRET`).
 - `DB_DIR` — override the SQLite directory (so the Docker volume at `/app/db.sqlite3` persists).
 - `MEDIA_DIR` — override `MEDIA_ROOT` (the on-disk upload directory). Defaults to `/app/media` inside the container — point a Dokploy volume at the chosen path to keep avatars across redeploys.
 - `DJANGO_SUPERUSER_USERNAME` / `DJANGO_SUPERUSER_EMAIL` — consumed by `entrypoint.sh` for idempotent superuser creation.
@@ -138,8 +146,9 @@ Frontend:
 
 - `NEXT_PUBLIC_API_URL` (default `http://localhost:8000`)
 - `NEXT_PUBLIC_WS_URL` (default `ws://localhost:8000`)
+- `WIKI_ENCODE_SECRET` — server-only (not `NEXT_PUBLIC_`); the `/api/wiki/encode` route rejects requests whose `X-Cyt-Broadcast-Secret` header doesn't match. Empty = no check (local dev). Set it to the same value as the backend in prod.
 
-Both are baked in at `next build` time — the Dockerfile passes them as `ARG`s.
+The two `NEXT_PUBLIC_*` vars are baked in at `next build` time — the Dockerfile passes them as `ARG`s. `WIKI_ENCODE_SECRET` is read at runtime.
 
 ## Things to keep in mind
 
@@ -147,4 +156,5 @@ Both are baked in at `next build` time — the Dockerfile passes them as `ARG`s.
 - `broadcast_task_event` is fire-and-forget and must not throw; any new write path needs a matching broadcast call to keep browsers in sync.
 - When adding a new MCP write tool, read the user from `mcp_authenticated_user.get(None)` via `_get_mcp_user()` in `server.py` and pass it through to the underlying helper so writes are attributed correctly.
 - `Task.save()` runs key generation inside a transaction only on first save; don't set `key` manually.
+- Never write the wiki body (`DocState`/`content`) by re-encoding the CRDT in Python — it diverges from the editor. Route body writes through `apps.wiki.content_ops.apply_content` (→ the frontend encoder). If you add a node type to the editor, mirror it in `frontend/src/components/wiki/wiki-schema.ts` or MCP-written content will lose it.
 - Phase 1 uses SQLite + `channels.layers.InMemoryChannelLayer` + `locmem` cache. Swapping to Postgres/Redis is planned — don't bake assumptions that would break the swap (e.g. SQLite-only SQL).

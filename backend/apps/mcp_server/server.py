@@ -783,8 +783,8 @@ async def create_wiki_doc(
 
     ``parent`` (doc key/id) nests it under another page; omit for a top-level
     page. ``project`` (key/id) optionally links it to a project. The page body
-    starts empty — content is written by people in the collaborative editor,
-    not via MCP.
+    starts empty — write content with ``set_wiki_content`` /
+    ``append_wiki_content`` / ``insert_wiki_content``.
     """
     return await _async(tools.create_wiki_doc)(
         title=title, parent=parent, project=project, mcp_user=_get_mcp_user()
@@ -820,6 +820,77 @@ async def update_wiki_doc(
 async def delete_wiki_doc(key: str) -> dict[str, Any]:
     """Delete a wiki page and its entire subtree of child pages."""
     return await _async(tools.delete_wiki_doc)(key)
+
+
+async def _wiki_apply(
+    key: str, markdown: str, operation: str, index: int | None
+) -> dict[str, Any]:
+    """Apply a Markdown body write, then return the refreshed page.
+
+    Runs the body write on daphne's event loop when invoked over the HTTP MCP
+    transport (in-process), or routes it to daphne via the internal bridge when
+    invoked from the stdio MCP process.
+    """
+    from apps.wiki import content_ops
+
+    user = _get_mcp_user()
+    user_id = user.id if user is not None else None
+
+    bridge_url = os.environ.get("CYT_BROADCAST_URL")
+    if bridge_url:
+        await _async(content_ops.apply_content_via_bridge)(
+            bridge_url,
+            key,
+            markdown=markdown,
+            operation=operation,
+            index=index,
+            user_id=user_id,
+        )
+    else:
+        await content_ops.apply_content(
+            key,
+            markdown=markdown,
+            operation=operation,
+            index=index,
+            user_id=user_id,
+        )
+    return await _async(tools.get_wiki_doc)(key)
+
+
+@mcp.tool()
+async def set_wiki_content(key: str, markdown: str) -> dict[str, Any]:
+    """Replace a wiki page's entire body with the given Markdown.
+
+    Writes the page body (the collaborative document), reusing the editor's own
+    encoder so the result is byte-identical to typing it in — open editors update
+    live. Supports headings, **bold**/*italic*/`code`, links, bulleted &
+    numbered lists, block quotes, fenced code blocks, GFM tables, and rules.
+    Returns the refreshed page (incl. ``markdown``).
+    """
+    return await _wiki_apply(key, markdown, "replace", None)
+
+
+@mcp.tool()
+async def append_wiki_content(key: str, markdown: str) -> dict[str, Any]:
+    """Append the given Markdown as new blocks at the end of a wiki page's body.
+
+    Leaves existing content untouched. Same Markdown support as
+    ``set_wiki_content``. Returns the refreshed page.
+    """
+    return await _wiki_apply(key, markdown, "append", None)
+
+
+@mcp.tool()
+async def insert_wiki_content(
+    key: str, markdown: str, index: int
+) -> dict[str, Any]:
+    """Insert the given Markdown's blocks at top-level block position ``index``.
+
+    ``index`` is 0-based over the page's top-level blocks: ``0`` inserts at the
+    very top; a value at or beyond the block count appends at the end. Existing
+    blocks shift down. Returns the refreshed page.
+    """
+    return await _wiki_apply(key, markdown, "insert", index)
 
 
 # ---------------------------------------------------------------------------
