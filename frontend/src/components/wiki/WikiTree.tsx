@@ -1,12 +1,35 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, FileText, Plus, Trash2 } from "lucide-react";
+import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
+import {
+  draggable,
+  dropTargetForElements,
+} from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
+import {
+  attachInstruction,
+  extractInstruction,
+} from "@atlaskit/pragmatic-drag-and-drop-hitbox/tree-item";
 
 import { cn } from "@/lib/utils";
+import { useMoveDoc, type MoveDocPayload } from "@/hooks/use-wiki";
 import type { WikiDoc } from "@/lib/types";
 
+const INDENT = 12; // px per nesting level — must match the row paddingLeft step
+
 type TreeNode = WikiDoc & { children: TreeNode[] };
+
+type WikiDragData = {
+  type: "wiki-tree-item";
+  id: number;
+  key: string;
+  parent: number | null;
+};
+const isWikiDrag = (d: Record<string, unknown>): d is WikiDragData =>
+  d.type === "wiki-tree-item";
+
+type Instruction = NonNullable<ReturnType<typeof extractInstruction>>;
 
 function buildTree(docs: WikiDoc[]): TreeNode[] {
   const byId = new Map<number, TreeNode>();
@@ -42,13 +65,43 @@ export function WikiTree({
 }: WikiTreeProps) {
   const roots = useMemo(() => buildTree(docs), [docs]);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const move = useMoveDoc();
 
-  const toggle = (id: number) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+  const toggle = useCallback(
+    (id: number) =>
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }),
+    [],
+  );
+  const expand = useCallback(
+    (id: number) => setExpanded((prev) => new Set(prev).add(id)),
+    [],
+  );
+
+  // True when `targetId` is `draggedId` itself or anywhere in its subtree —
+  // i.e. dropping there would make a page its own ancestor. Mirrors the
+  // backend's cycle guard so we never offer (or send) an illegal move.
+  const isSelfOrDescendant = useMemo(() => {
+    const parentOf = new Map<number, number | null>();
+    for (const d of docs) parentOf.set(d.id, d.parent);
+    return (targetId: number, draggedId: number) => {
+      let cur: number | null | undefined = targetId;
+      while (cur != null) {
+        if (cur === draggedId) return true;
+        cur = parentOf.get(cur);
+      }
+      return false;
+    };
+  }, [docs]);
+
+  const onMove = useCallback(
+    (payload: MoveDocPayload) => move.mutate(payload),
+    [move],
+  );
 
   if (roots.length === 0) {
     return (
@@ -67,10 +120,13 @@ export function WikiTree({
           depth={0}
           expanded={expanded}
           toggle={toggle}
+          expand={expand}
           selectedKey={selectedKey}
           onSelect={onSelect}
           onCreateChild={onCreateChild}
           onDelete={onDelete}
+          onMove={onMove}
+          isSelfOrDescendant={isSelfOrDescendant}
         />
       ))}
     </ul>
@@ -82,36 +138,129 @@ function TreeRow({
   depth,
   expanded,
   toggle,
+  expand,
   selectedKey,
   onSelect,
   onCreateChild,
   onDelete,
+  onMove,
+  isSelfOrDescendant,
 }: {
   node: TreeNode;
   depth: number;
   expanded: Set<number>;
   toggle: (id: number) => void;
+  expand: (id: number) => void;
   selectedKey: string | null;
   onSelect: (key: string) => void;
   onCreateChild: (parentId: number) => void;
   onDelete: (key: string) => void;
+  onMove: (payload: MoveDocPayload) => void;
+  isSelfOrDescendant: (targetId: number, draggedId: number) => boolean;
 }) {
   const isOpen = expanded.has(node.id);
   const hasChildren = node.children.length > 0;
   const active = node.key === selectedKey;
 
+  const ref = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [instruction, setInstruction] = useState<Instruction | null>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const data: WikiDragData = {
+      type: "wiki-tree-item",
+      id: node.id,
+      key: node.key,
+      parent: node.parent,
+    };
+    return combine(
+      draggable({
+        element: el,
+        getInitialData: () => ({ ...data }),
+        onDragStart: () => setDragging(true),
+        onDrop: () => setDragging(false),
+      }),
+      dropTargetForElements({
+        element: el,
+        canDrop: ({ source }) =>
+          isWikiDrag(source.data) &&
+          !isSelfOrDescendant(node.id, source.data.id),
+        getData: ({ input, element }) =>
+          attachInstruction(
+            { ...data },
+            {
+              input,
+              element,
+              currentLevel: depth,
+              indentPerLevel: INDENT,
+              // Expanded parents: dropping below the row means "first child",
+              // so treat everything but the top edge as make-child.
+              mode: hasChildren && isOpen ? "expanded" : "standard",
+            },
+          ),
+        onDrag: ({ self }) => setInstruction(extractInstruction(self.data)),
+        onDragLeave: () => setInstruction(null),
+        onDrop: ({ self, source }) => {
+          setInstruction(null);
+          if (!isWikiDrag(source.data)) return;
+          const instr = extractInstruction(self.data);
+          if (!instr) return;
+          const key = source.data.key;
+          if (instr.type === "make-child") {
+            onMove({ key, parent_id: node.id });
+            expand(node.id); // reveal the newly nested page
+          } else if (instr.type === "reorder-above") {
+            onMove({ key, parent_id: node.parent, before_id: node.id });
+          } else if (instr.type === "reorder-below") {
+            onMove({ key, parent_id: node.parent, after_id: node.id });
+          }
+        },
+        getIsSticky: () => true,
+      }),
+    );
+  }, [
+    node.id,
+    node.key,
+    node.parent,
+    depth,
+    hasChildren,
+    isOpen,
+    onMove,
+    expand,
+    isSelfOrDescendant,
+  ]);
+
+  const makeChild = instruction?.type === "make-child";
+
   return (
     <li>
       <div
+        ref={ref}
         className={cn(
-          "group flex items-center gap-1 pr-1 rounded-md text-[13px] cursor-pointer transition-colors",
+          "group relative flex items-center gap-1 pr-1 rounded-md text-[13px] cursor-pointer transition-colors",
           active
             ? "bg-sidebar-accent text-sidebar-accent-foreground"
             : "hover:bg-sidebar-accent/60 text-sidebar-foreground/90",
+          dragging && "opacity-40",
+          makeChild && "ring-1 ring-inset ring-primary bg-primary/5",
         )}
-        style={{ paddingLeft: depth * 12 + 4 }}
+        style={{ paddingLeft: depth * INDENT + 4 }}
         onClick={() => onSelect(node.key)}
       >
+        {instruction?.type === "reorder-above" && (
+          <span
+            className="absolute left-1 right-1 -top-px h-0.5 rounded-full bg-primary"
+            aria-hidden
+          />
+        )}
+        {instruction?.type === "reorder-below" && (
+          <span
+            className="absolute left-1 right-1 -bottom-px h-0.5 rounded-full bg-primary"
+            aria-hidden
+          />
+        )}
         <button
           type="button"
           aria-label={isOpen ? "Collapse" : "Expand"}
@@ -150,9 +299,7 @@ function TreeRow({
           onClick={(e) => {
             e.stopPropagation();
             const label = node.title || "Untitled";
-            const extra = node.has_children
-              ? " and all of its sub-pages"
-              : "";
+            const extra = node.has_children ? " and all of its sub-pages" : "";
             if (confirm(`Delete "${label}"${extra}? This cannot be undone.`)) {
               onDelete(node.key);
             }
@@ -170,10 +317,13 @@ function TreeRow({
               depth={depth + 1}
               expanded={expanded}
               toggle={toggle}
+              expand={expand}
               selectedKey={selectedKey}
               onSelect={onSelect}
               onCreateChild={onCreateChild}
               onDelete={onDelete}
+              onMove={onMove}
+              isSelfOrDescendant={isSelfOrDescendant}
             />
           ))}
         </ul>
