@@ -35,6 +35,7 @@ import {
   MoreHorizontal,
   Plus,
   Settings,
+  Sparkles,
   Star,
   Trash2,
   Users,
@@ -367,6 +368,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           collapsed={isCollapsed}
           onNavigate={() => {
             router.push("/drive");
+            onClose?.();
+          }}
+        />
+        <NavLink
+          icon={
+            <Sparkles
+              className={
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground"
+              }
+            />
+          }
+          label="LLM Wiki"
+          active={pathname.startsWith("/llm-wiki")}
+          collapsed={isCollapsed}
+          onNavigate={() => {
+            router.push("/llm-wiki");
             onClose?.();
           }}
         />

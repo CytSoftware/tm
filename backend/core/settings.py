@@ -80,6 +80,7 @@ INSTALLED_APPS = [
     "apps.pipelines",
     "apps.crm",
     "apps.drive",
+    "apps.knowledge",
     "apps.mcp_server",
     "apps.integrations",
     "apps.wiki",

@@ -940,6 +940,40 @@ async def drive_upload(
 
 
 # ---------------------------------------------------------------------------
+# Knowledge (LLM wiki — markdown pages under the llm-wiki/ prefix)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def knowledge_list() -> list[dict[str, Any]]:
+    """List LLM-wiki pages (the agent-maintained markdown knowledge base).
+
+    Returns ``[{slug, title, size, updated_at}, ...]``. Pages live in B2 under
+    the ``llm-wiki/`` prefix, separate from the Drive.
+    """
+    return await _async(tools.knowledge_list)()
+
+
+@mcp.tool()
+async def knowledge_read(slug: str) -> dict[str, Any]:
+    """Return one LLM-wiki page: ``{slug, title, markdown, updated_at}``."""
+    return await _async(tools.knowledge_read)(slug=slug)
+
+
+@mcp.tool()
+async def knowledge_write(slug: str, markdown: str) -> dict[str, Any]:
+    """Create or overwrite an LLM-wiki page with Markdown.
+
+    ``slug`` is the page name (normalised to a safe slug; stored at
+    ``llm-wiki/<slug>.md``). Single writer, last-write-wins. This is how an
+    agent maintains the knowledge base; humans see it read-only.
+    """
+    return await _async(tools.knowledge_write)(
+        slug=slug, markdown=markdown, mcp_user=_get_mcp_user(),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Entry point (stdio mode for Claude Desktop)
 # ---------------------------------------------------------------------------
 

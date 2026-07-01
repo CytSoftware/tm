@@ -20,6 +20,7 @@ they can be handed straight to DRF ``Response`` or an MCP tool result.
 from __future__ import annotations
 
 import functools
+import re
 from typing import Any
 
 from django.conf import settings
@@ -41,6 +42,12 @@ class B2Upstream(B2Error):
     """A failure from B2 itself (transient/service error) — surfaced as 5xx."""
 
     status_code = 502
+
+
+class B2NotFound(B2Error):
+    """Requested object does not exist — surfaced as HTTP 404."""
+
+    status_code = 404
 
 
 def _upstream(exc: Exception) -> B2Upstream:
@@ -273,3 +280,99 @@ def delete(rel: str) -> dict[str, Any]:
     except Exception as exc:
         raise _upstream(exc) from exc
     return {"ok": True, "deleted": _rel(key)}
+
+
+# ---------------------------------------------------------------------------
+# LLM-wiki access (the ``llm-wiki/`` prefix)
+# ---------------------------------------------------------------------------
+#
+# Markdown pages live at ``llm-wiki/<slug>.md`` in the SAME bucket. This prefix
+# is deliberately EXCLUDED from every Drive operation above (loop-prevention),
+# so the wiki gets its own key builder + ops here that intentionally reach into
+# it. Agent-owned content — writes come from MCP, humans read only.
+
+
+def _wiki_prefix() -> str:
+    return settings.B2_LLM_WIKI_PREFIX or "llm-wiki/"
+
+
+_SLUG_RE = re.compile(r"[^a-z0-9._-]+")
+
+
+def slugify(name: str) -> str:
+    slug = _SLUG_RE.sub("-", (name or "").strip().lower()).strip("-.")
+    if not slug or ".." in slug or "/" in slug:
+        raise B2Error("Invalid page name.")
+    return slug
+
+
+def wiki_key(slug: str) -> str:
+    return f"{_wiki_prefix()}{slugify(slug)}.md"
+
+
+def _title_from_markdown(markdown: str, fallback: str) -> str:
+    for line in markdown.splitlines():
+        if line.startswith("# "):
+            return line[2:].strip() or fallback
+    return fallback
+
+
+def wiki_list() -> list[dict[str, Any]]:
+    prefix = _wiki_prefix()
+    try:
+        pages: list[dict[str, Any]] = []
+        token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {"Bucket": _bucket(), "Prefix": prefix}
+            if token:
+                kwargs["ContinuationToken"] = token
+            resp = client().list_objects_v2(**kwargs)
+            for obj in resp.get("Contents", []):
+                k = obj["Key"]
+                if not k.endswith(".md"):
+                    continue
+                slug = k[len(prefix):-3]
+                lm = obj.get("LastModified")
+                pages.append({
+                    "slug": slug,
+                    "title": slug,
+                    "size": obj.get("Size", 0),
+                    "updated_at": lm.isoformat() if lm else None,
+                })
+            token = resp.get("NextContinuationToken")
+            if not token:
+                break
+    except Exception as exc:
+        raise _upstream(exc) from exc
+    return sorted(pages, key=lambda p: p["slug"])
+
+
+def wiki_read(slug: str) -> dict[str, Any]:
+    key = wiki_key(slug)
+    try:
+        r = client().get_object(Bucket=_bucket(), Key=key)
+        markdown = r["Body"].read().decode("utf-8")
+    except Exception as exc:
+        resp = getattr(exc, "response", None) or {}
+        if (resp.get("ResponseMetadata") or {}).get("HTTPStatusCode") == 404:
+            raise B2NotFound(f"No such wiki page: {slugify(slug)!r}") from exc
+        raise _upstream(exc) from exc
+    lm = r.get("LastModified")
+    norm = slugify(slug)
+    return {
+        "slug": norm,
+        "title": _title_from_markdown(markdown, norm),
+        "markdown": markdown,
+        "updated_at": lm.isoformat() if lm else None,
+    }
+
+
+def wiki_write(slug: str, markdown: str) -> dict[str, Any]:
+    key = wiki_key(slug)
+    data = (markdown or "").encode("utf-8")
+    try:
+        client().put_object(Bucket=_bucket(), Key=key, Body=data,
+                            ContentType="text/markdown; charset=utf-8")
+    except Exception as exc:
+        raise _upstream(exc) from exc
+    return {"ok": True, "slug": slugify(slug), "size": len(data)}

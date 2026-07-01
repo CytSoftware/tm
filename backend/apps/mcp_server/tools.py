@@ -1749,3 +1749,38 @@ def drive_upload(key: str, content: str = "", content_base64: str | None = None,
             result.get("size", 0),
         )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Knowledge (LLM wiki — markdown pages in B2 under the llm-wiki/ prefix)
+# ---------------------------------------------------------------------------
+#
+# The Karpathy-style wiki: markdown pages an agent maintains. Humans read only
+# (via the /api/knowledge DRF endpoints + frontend tab); agents create/update
+# here. Single writer, last-write-wins — no synthesis worker yet.
+
+def knowledge_list() -> list[dict[str, Any]]:
+    from apps.drive import b2
+    return b2.wiki_list()
+
+
+def knowledge_read(slug: str) -> dict[str, Any]:
+    from apps.drive import b2
+    return b2.wiki_read(slug)
+
+
+def knowledge_write(slug: str, markdown: str, mcp_user=None) -> dict[str, Any]:
+    import logging
+
+    from apps.drive import b2
+
+    if len((markdown or "").encode("utf-8")) > 5_000_000:
+        raise ValueError("Markdown too large (max 5 MB per wiki page).")
+    result = b2.wiki_write(slug, markdown)
+    if mcp_user is not None:
+        logging.getLogger("apps.mcp_server").info(
+            "knowledge_write by %s -> %s (%d bytes)",
+            getattr(mcp_user, "username", mcp_user), result.get("slug"),
+            result.get("size", 0),
+        )
+    return result

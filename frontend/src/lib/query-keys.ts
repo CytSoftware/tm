@@ -73,3 +73,8 @@ export const wikiDocKey = (key: string) => ["wiki", "doc", key] as const;
 
 // Drive — B2 object browser (no realtime; mutations invalidate ["drive"]).
 export const driveListKey = (prefix = "") => ["drive", "list", prefix] as const;
+
+// LLM Wiki — read-only markdown pages in B2 (llm-wiki/ prefix); agents write.
+export const llmWikiListKey = () => ["llm-wiki", "list"] as const;
+export const llmWikiPageKey = (slug: string) =>
+  ["llm-wiki", "page", slug] as const;
