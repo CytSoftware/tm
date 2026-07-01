@@ -82,6 +82,14 @@ export function useDeleteObject() {
   });
 }
 
+/** Presigned GET URL served inline (own Content-Type) — for the file viewer. */
+export async function getViewUrl(key: string): Promise<string> {
+  const { url } = await apiFetch<{ url: string }>("/api/drive/download-url/", {
+    query: { key, disposition: "inline" },
+  });
+  return url;
+}
+
 /** Fetch a presigned GET URL and trigger a browser download. */
 export async function downloadObject(key: string, name: string): Promise<void> {
   const { url } = await apiFetch<{ url: string }>("/api/drive/download-url/", {

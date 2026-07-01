@@ -73,8 +73,13 @@ class DriveDownloadUrlView(APIView):
         if not key:
             return Response({"detail": "key is required."},
                             status=status.HTTP_400_BAD_REQUEST)
+        # ?disposition=inline serves with the object's own Content-Type (for the
+        # in-browser viewer); the default forces a download (attachment).
+        inline = request.query_params.get("disposition") == "inline"
         try:
-            url = b2.presign_get(key, download_name=os.path.basename(key))
+            url = b2.presign_get(
+                key, download_name=None if inline else os.path.basename(key)
+            )
         except b2.B2Error as exc:
             return Response({"detail": str(exc)}, status=getattr(exc, "status_code", 400))
         return Response({"url": url})
