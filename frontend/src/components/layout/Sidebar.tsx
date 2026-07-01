@@ -29,6 +29,7 @@ import {
   BookText,
   ChevronRight,
   ChevronsLeft,
+  HardDrive,
   LayoutDashboard,
   LogOut,
   MoreHorizontal,
@@ -348,6 +349,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           collapsed={isCollapsed}
           onNavigate={() => {
             router.push("/wiki");
+            onClose?.();
+          }}
+        />
+        <NavLink
+          icon={
+            <HardDrive
+              className={
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground"
+              }
+            />
+          }
+          label="Drive"
+          active={pathname.startsWith("/drive")}
+          collapsed={isCollapsed}
+          onNavigate={() => {
+            router.push("/drive");
             onClose?.();
           }}
         />

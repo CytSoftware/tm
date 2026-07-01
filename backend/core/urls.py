@@ -167,6 +167,7 @@ urlpatterns = [
     path("api/", include("apps.pipelines.urls")),
     path("api/", include("apps.crm.urls")),
     path("api/", include("apps.wiki.urls")),
+    path("api/", include("apps.drive.urls")),          # /api/drive — B2 file browser
     path("api/integrations/", include("apps.integrations.urls")),
     path("oauth/", include("oauth2_provider.urls", namespace="oauth2_provider")),
 ]

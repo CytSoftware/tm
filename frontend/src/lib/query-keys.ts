@@ -70,3 +70,6 @@ export const contactKey = (key: string) => ["contact", key] as const;
 export const wikiTreeKey = (filtersKey = "") =>
   ["wiki", "tree", filtersKey] as const;
 export const wikiDocKey = (key: string) => ["wiki", "doc", key] as const;
+
+// Drive — B2 object browser (no realtime; mutations invalidate ["drive"]).
+export const driveListKey = (prefix = "") => ["drive", "list", prefix] as const;

@@ -894,6 +894,52 @@ async def insert_wiki_content(
 
 
 # ---------------------------------------------------------------------------
+# Drive (Backblaze B2 file storage)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def drive_list(prefix: str = "", token: str | None = None) -> dict[str, Any]:
+    """List folders and files in the company Drive (Backblaze B2) under a prefix.
+
+    ``prefix`` is a folder path like ``"docs/"`` (empty = bucket root). Returns
+    ``{prefix, folders, files, next_token}``; pass ``next_token`` back to page
+    through large folders. The internal ``llm-wiki/`` and trash prefixes are
+    hidden.
+    """
+    return await _async(tools.drive_list)(prefix=prefix, token=token)
+
+
+@mcp.tool()
+async def drive_read(key: str, max_bytes: int = 65536) -> dict[str, Any]:
+    """Return a Drive file's metadata plus a temporary download URL.
+
+    ``key`` is the object key from ``drive_list`` (e.g. ``"docs/spec.pdf"``).
+    Small UTF-8 text files are also returned inline as ``text``.
+    """
+    return await _async(tools.drive_read)(key=key, max_bytes=max_bytes)
+
+
+@mcp.tool()
+async def drive_upload(
+    key: str,
+    content: str = "",
+    content_base64: str | None = None,
+    content_type: str = "text/plain; charset=utf-8",
+) -> dict[str, Any]:
+    """Create or overwrite a Drive file with inline content.
+
+    Provide text via ``content`` or binary via ``content_base64`` (exactly one).
+    ``key`` is the destination path like ``"notes/todo.md"``. Deleting Drive
+    files is intentionally not available over MCP.
+    """
+    return await _async(tools.drive_upload)(
+        key=key, content=content, content_base64=content_base64,
+        content_type=content_type, mcp_user=_get_mcp_user(),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Entry point (stdio mode for Claude Desktop)
 # ---------------------------------------------------------------------------
 

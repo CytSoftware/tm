@@ -1679,3 +1679,73 @@ def delete_wiki_doc(key: str) -> dict[str, Any]:
     doc.delete()  # cascades the subtree
     broadcast_wiki_event("wiki.deleted", {"key": key})
     return {"deleted": key, "id": doc_id}
+
+
+# ---------------------------------------------------------------------------
+# Drive (Backblaze B2 object storage)
+# ---------------------------------------------------------------------------
+#
+# The company file drive, backed by the cyt-drive B2 bucket. B2 is the source of
+# truth (no models). Agents get list / read / upload. Delete is intentionally
+# NOT exposed over MCP — deletes touch real company files (UI/human only).
+
+def drive_list(prefix: str = "", token: str | None = None) -> dict[str, Any]:
+    from apps.drive import b2
+    return b2.list_objects(prefix, token=token)
+
+
+def drive_read(key: str, max_bytes: int = 65536) -> dict[str, Any]:
+    from apps.drive import b2
+
+    max_bytes = min(max(0, max_bytes), 1_048_576)  # cap at 1 MB — no OOM via a huge read
+    meta = b2.head(key)
+    if meta is None:
+        raise ValueError(f"No such Drive object: {key!r}")
+    out = dict(meta)
+    out["url"] = b2.presign_get(key, download_name=meta.get("name"))
+    # Best-effort inline text for small, texty objects.
+    ctype = meta.get("content_type") or ""
+    ext = (meta.get("name") or "").rsplit(".", 1)[-1].lower()
+    texty = (
+        ctype.startswith("text/")
+        or ctype in ("application/json", "application/xml", "application/x-yaml")
+        or ext in ("md", "txt", "csv", "json", "yaml", "yml", "log",
+                   "py", "js", "ts", "tsx", "html", "css")
+    )
+    if texty and 0 < meta.get("size", 0) <= max_bytes:
+        try:
+            out["text"] = b2.get_bytes(key, max_bytes=max_bytes).decode("utf-8")
+        except Exception:
+            pass
+    return out
+
+
+def drive_upload(key: str, content: str = "", content_base64: str | None = None,
+                 content_type: str = "text/plain; charset=utf-8",
+                 mcp_user=None) -> dict[str, Any]:
+    import base64 as _b64
+    import binascii
+    import logging
+
+    from apps.drive import b2
+
+    if content and content_base64:
+        raise ValueError("Provide either `content` or `content_base64`, not both.")
+    if content_base64 is not None:
+        if len(content_base64) > 14_000_000:  # ~10 MB decoded — guard the stdio transport
+            raise ValueError("content_base64 too large (max ~10 MB).")
+        try:
+            data = _b64.b64decode(content_base64, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError(f"Invalid base64 content: {exc}") from exc
+    else:
+        data = content.encode("utf-8")
+
+    result = b2.put_bytes(key, data, content_type)
+    if mcp_user is not None:  # attribute the write for audit (B2 has no per-user field)
+        logging.getLogger("apps.mcp_server").info(
+            "drive_upload by %s -> %s (%d bytes)",
+            getattr(mcp_user, "username", mcp_user), result.get("key"),
+            result.get("size", 0),
+        )
+    return result

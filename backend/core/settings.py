@@ -79,6 +79,7 @@ INSTALLED_APPS = [
     "apps.tasks",
     "apps.pipelines",
     "apps.crm",
+    "apps.drive",
     "apps.mcp_server",
     "apps.integrations",
     "apps.wiki",
@@ -164,6 +165,23 @@ STORAGES = {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
 }
+
+# ---------------------------------------------------------------------------
+# Backblaze B2 (S3-compatible) — Drive + LLM-wiki object storage
+# ---------------------------------------------------------------------------
+# One bucket (cyt-drive), two disjoint prefixes. Everything reads from env; an
+# empty endpoint/bucket disables the feature (endpoints return 503). The app key
+# is the only real secret — set it in Dokploy/.env, never commit it. Drive lives
+# at the bucket ROOT (B2_DRIVE_PREFIX="") so the 23 GB of existing company files
+# show up; the llm-wiki/ prefix is hard-excluded from every Drive op.
+B2_ENDPOINT_URL = _os_early.environ.get("B2_ENDPOINT_URL", "")
+B2_REGION_NAME = _os_early.environ.get("B2_REGION_NAME", "eu-central-003")
+B2_KEY_ID = _os_early.environ.get("B2_KEY_ID", "")
+B2_APP_KEY = _os_early.environ.get("B2_APP_KEY", "")
+B2_BUCKET_NAME = _os_early.environ.get("B2_BUCKET_NAME", "")
+B2_DRIVE_PREFIX = _os_early.environ.get("B2_DRIVE_PREFIX", "")  # "" = bucket root
+B2_LLM_WIKI_PREFIX = _os_early.environ.get("B2_LLM_WIKI_PREFIX", "llm-wiki/")
+B2_PRESIGN_EXPIRY = int(_os_early.environ.get("B2_PRESIGN_EXPIRY", "3600"))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
