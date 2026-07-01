@@ -53,3 +53,6 @@ yarn-error.log*
 # Generated OpenAPI types
 frontend/src/types/api.ts
 .screenshots/
+
+# Local MCP client config (contains a bearer token)
+.mcp.json
