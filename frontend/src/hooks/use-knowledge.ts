@@ -23,6 +23,7 @@ export type WikiPageDetail = {
   slug: string;
   title: string;
   markdown: string;
+  meta: Record<string, string | string[]>;
   updated_at: string | null;
 };
 
@@ -38,7 +39,11 @@ export function useKnowledgePage(slug: string | null) {
     queryKey: slug ? llmWikiPageKey(slug) : ["llm-wiki", "page", "__none__"],
     queryFn: () =>
       apiFetch<WikiPageDetail>(
-        `/api/knowledge/pages/${encodeURIComponent(slug ?? "")}/`,
+        // encode per segment so nested slugs keep their "/" for <path:slug>
+        `/api/knowledge/pages/${(slug ?? "")
+          .split("/")
+          .map(encodeURIComponent)
+          .join("/")}/`,
       ),
     enabled: !!slug,
   });

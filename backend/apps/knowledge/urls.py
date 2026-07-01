@@ -7,7 +7,7 @@ from .views import KnowledgePageDetailView, KnowledgePageListView
 urlpatterns = [
     path("knowledge/pages/", KnowledgePageListView.as_view(), name="knowledge-list"),
     path(
-        "knowledge/pages/<str:slug>/",
+        "knowledge/pages/<path:slug>/",
         KnowledgePageDetailView.as_view(),
         name="knowledge-detail",
     ),

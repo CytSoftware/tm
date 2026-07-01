@@ -296,25 +296,75 @@ def _wiki_prefix() -> str:
     return settings.B2_LLM_WIKI_PREFIX or "llm-wiki/"
 
 
-_SLUG_RE = re.compile(r"[^a-z0-9._-]+")
+_INGEST_DIR = "_ingest/"
+_WIKI_SEG_RE = re.compile(r"[^a-z0-9._-]+")
 
 
-def slugify(name: str) -> str:
-    slug = _SLUG_RE.sub("-", (name or "").strip().lower()).strip("-.")
-    if not slug or ".." in slug or "/" in slug:
+def _wiki_norm(slug: str) -> str:
+    """Normalise a (possibly nested) wiki slug, e.g. ``entities/people/ali``.
+
+    Lowercases, slugifies each path segment, forbids ``..`` traversal, keeps
+    ``/`` so pages live in folders, and strips any trailing ``.md``.
+    """
+    raw = (slug or "").strip().strip("/").lower()
+    if raw.endswith(".md"):
+        raw = raw[:-3]
+    if not raw:
         raise B2Error("Invalid page name.")
-    return slug
+    segs = []
+    for seg in raw.split("/"):
+        seg = _WIKI_SEG_RE.sub("-", seg).strip("-.")
+        if not seg or seg == "..":
+            raise B2Error("Invalid page name.")
+        segs.append(seg)
+    return "/".join(segs)
+
+
+# Back-compat alias (now nesting-aware).
+slugify = _wiki_norm
 
 
 def wiki_key(slug: str) -> str:
-    return f"{_wiki_prefix()}{slugify(slug)}.md"
+    norm = _wiki_norm(slug)
+    if norm == "_ingest" or norm.startswith(_INGEST_DIR):
+        raise B2Error("That path is reserved.")  # keep agents out of _ingest/
+    return f"{_wiki_prefix()}{norm}.md"
 
 
-def _title_from_markdown(markdown: str, fallback: str) -> str:
+def _split_frontmatter(markdown: str) -> tuple[dict[str, Any], str]:
+    """Split leading ``---`` YAML frontmatter from the body.
+
+    Shallow parse (``key: value`` + simple ``[a, b]`` lists) — enough for
+    title/tags/type without a YAML dependency; the body is returned separately
+    so it renders clean.
+    """
+    if not markdown.startswith("---"):
+        return {}, markdown
+    end = markdown.find("\n---", 3)
+    if end == -1:
+        return {}, markdown
+    block = markdown[3:end].strip("\n")
+    body = markdown[end + 4:].lstrip("\n")
+    meta: dict[str, Any] = {}
+    for line in block.splitlines():
+        if ":" not in line or line.lstrip().startswith("#"):
+            continue
+        k, _, v = line.partition(":")
+        k, v = k.strip(), v.strip()
+        if not k:
+            continue
+        if v.startswith("[") and v.endswith("]"):
+            meta[k] = [x.strip().strip("'\"") for x in v[1:-1].split(",") if x.strip()]
+        else:
+            meta[k] = v.strip("'\"")
+    return meta, body
+
+
+def _h1(markdown: str) -> str | None:
     for line in markdown.splitlines():
         if line.startswith("# "):
-            return line[2:].strip() or fallback
-    return fallback
+            return line[2:].strip() or None
+    return None
 
 
 def wiki_list() -> list[dict[str, Any]]:
@@ -328,14 +378,14 @@ def wiki_list() -> list[dict[str, Any]]:
                 kwargs["ContinuationToken"] = token
             resp = client().list_objects_v2(**kwargs)
             for obj in resp.get("Contents", []):
-                k = obj["Key"]
-                if not k.endswith(".md"):
+                rel = obj["Key"][len(prefix):]
+                if not rel.endswith(".md") or rel.startswith(_INGEST_DIR):
                     continue
-                slug = k[len(prefix):-3]
+                slug = rel[:-3]
                 lm = obj.get("LastModified")
                 pages.append({
                     "slug": slug,
-                    "title": slug,
+                    "title": slug.split("/")[-1],
                     "size": obj.get("Size", 0),
                     "updated_at": lm.isoformat() if lm else None,
                 })
@@ -351,18 +401,21 @@ def wiki_read(slug: str) -> dict[str, Any]:
     key = wiki_key(slug)
     try:
         r = client().get_object(Bucket=_bucket(), Key=key)
-        markdown = r["Body"].read().decode("utf-8")
+        raw = r["Body"].read().decode("utf-8")
     except Exception as exc:
         resp = getattr(exc, "response", None) or {}
         if (resp.get("ResponseMetadata") or {}).get("HTTPStatusCode") == 404:
-            raise B2NotFound(f"No such wiki page: {slugify(slug)!r}") from exc
+            raise B2NotFound(f"No such wiki page: {_wiki_norm(slug)!r}") from exc
         raise _upstream(exc) from exc
     lm = r.get("LastModified")
-    norm = slugify(slug)
+    norm = _wiki_norm(slug)
+    meta, body = _split_frontmatter(raw)
+    title = str(meta.get("title") or _h1(body) or norm.split("/")[-1])
     return {
         "slug": norm,
-        "title": _title_from_markdown(markdown, norm),
-        "markdown": markdown,
+        "title": title,
+        "markdown": body,
+        "meta": meta,
         "updated_at": lm.isoformat() if lm else None,
     }
 
@@ -375,4 +428,57 @@ def wiki_write(slug: str, markdown: str) -> dict[str, Any]:
                             ContentType="text/markdown; charset=utf-8")
     except Exception as exc:
         raise _upstream(exc) from exc
-    return {"ok": True, "slug": slugify(slug), "size": len(data)}
+    return {"ok": True, "slug": _wiki_norm(slug), "size": len(data)}
+
+
+def wiki_delete(slug: str) -> dict[str, Any]:
+    key = wiki_key(slug)
+    try:
+        client().delete_object(Bucket=_bucket(), Key=key)
+    except Exception as exc:
+        raise _upstream(exc) from exc
+    return {"ok": True, "deleted": _wiki_norm(slug)}
+
+
+# ---------------------------------------------------------------------------
+# Ingestion manifest (machine ledger of what's been ingested into the wiki)
+# ---------------------------------------------------------------------------
+#
+# Stored at ``llm-wiki/_ingest/manifest.json`` — under the excluded prefix (so
+# Drive never shows it) and not a ``.md`` (so wiki_list ignores it). Keyed by
+# the Drive source key, valued by content etag + ingest time + produced pages.
+# A future ingest agent diffs ``drive_list("sources/")`` against this by etag
+# to find new/changed sources.
+
+
+def _manifest_key() -> str:
+    return f"{_wiki_prefix()}{_INGEST_DIR}manifest.json"
+
+
+def read_manifest() -> dict[str, Any]:
+    import json
+    try:
+        r = client().get_object(Bucket=_bucket(), Key=_manifest_key())
+        return json.loads(r["Body"].read().decode("utf-8"))
+    except Exception as exc:
+        resp = getattr(exc, "response", None) or {}
+        if (resp.get("ResponseMetadata") or {}).get("HTTPStatusCode") == 404:
+            return {"version": 1, "sources": {}}
+        raise _upstream(exc) from exc
+
+
+def write_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    import json
+    data = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
+    try:
+        client().put_object(Bucket=_bucket(), Key=_manifest_key(), Body=data,
+                            ContentType="application/json")
+    except Exception as exc:
+        raise _upstream(exc) from exc
+    return {"ok": True, "sources": len(manifest.get("sources") or {}), "size": len(data)}
+
+
+def manifest_sources() -> list[dict[str, Any]]:
+    """Flat list of ingested-source records (for tooling / the ingest agent)."""
+    m = read_manifest()
+    return [{"source": k, **rec} for k, rec in sorted((m.get("sources") or {}).items())]

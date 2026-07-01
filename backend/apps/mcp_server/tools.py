@@ -1769,6 +1769,11 @@ def knowledge_read(slug: str) -> dict[str, Any]:
     return b2.wiki_read(slug)
 
 
+def knowledge_sources() -> list[dict[str, Any]]:
+    from apps.drive import b2
+    return b2.manifest_sources()
+
+
 def knowledge_write(slug: str, markdown: str, mcp_user=None) -> dict[str, Any]:
     import logging
 

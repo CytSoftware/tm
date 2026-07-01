@@ -956,8 +956,22 @@ async def knowledge_list() -> list[dict[str, Any]]:
 
 @mcp.tool()
 async def knowledge_read(slug: str) -> dict[str, Any]:
-    """Return one LLM-wiki page: ``{slug, title, markdown, updated_at}``."""
+    """Return one LLM-wiki page: ``{slug, title, markdown, meta, updated_at}``.
+
+    ``slug`` may be nested, e.g. ``entities/people/ali-soukarieh``.
+    """
     return await _async(tools.knowledge_read)(slug=slug)
+
+
+@mcp.tool()
+async def knowledge_sources() -> list[dict[str, Any]]:
+    """List source documents already ingested into the LLM wiki.
+
+    Returns ``[{source, etag, ingested_at, wiki_pages, ...}]`` from the ingest
+    manifest. Diff this against ``drive_list("sources/")`` by ``etag`` to find
+    documents that are new or changed and still need ingesting.
+    """
+    return await _async(tools.knowledge_sources)()
 
 
 @mcp.tool()
