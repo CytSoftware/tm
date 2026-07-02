@@ -1068,6 +1068,21 @@ function ColumnContainer({
   // Real columns have positive ids + a concrete `project` fk. All-projects
   // virtual columns have negative ids and only a column name.
   const isVirtual = column.id < 0;
+  // Done columns order by completion time (= when the task entered the
+  // column), most recent first — but only while the board is on the default
+  // manual sort; an explicitly chosen sort applies to every column alike.
+  const completionSort =
+    column.is_done && (filters.sort[0]?.field ?? "position") === "position";
+  const effectiveFilters = useMemo<BoardFilters>(
+    () =>
+      completionSort
+        ? {
+            ...filters,
+            sort: [{ field: "current_column_since", dir: "desc" }],
+          }
+        : filters,
+    [filters, completionSort],
+  );
   // 25 is enough to fill the initial viewport on most screens; the sentinel
   // fetches more on scroll. Halved from 50 to shave initial-load latency
   // when the user has many tasks — a 250-row first paint across five
@@ -1076,7 +1091,7 @@ function ColumnContainer({
     projectId,
     columnId: isVirtual ? null : column.id,
     columnName: isVirtual ? column.name : null,
-    filters,
+    filters: effectiveFilters,
     limit: 25,
   });
 

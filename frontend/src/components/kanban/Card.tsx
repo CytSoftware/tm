@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Repeat, Star } from "lucide-react";
+import { CalendarDays, Repeat } from "lucide-react";
 
 import {
   Tooltip,
@@ -9,11 +9,6 @@ import {
 } from "@/components/ui/tooltip";
 import { UserAvatar } from "@/components/UserAvatar";
 import { TimeInColumn } from "@/components/task/TimeInColumn";
-import {
-  useAddFocus,
-  useFocusedIds,
-  useRemoveFocus,
-} from "@/hooks/use-focus";
 import { LinkedPRBadge } from "@/components/integrations/LinkedPRBadge";
 import { cn } from "@/lib/utils";
 import { withAlpha } from "@/lib/colors";
@@ -129,20 +124,16 @@ export function KanbanCard({
       )}
     >
       {/* Title — the visual anchor. Clamps at 2 lines on word boundaries with
-          a clean ellipsis; full text on hover. The focus star floats top-right
-          so the title can use the card's full width (pr-6 keeps it clear). */}
+          a clean ellipsis; full text on hover. */}
       <div className="relative px-3 pt-2.5 pb-1.5">
         {showTitle && (
           <div
-            className="pr-6 font-medium text-[13px] leading-[1.4] tracking-tight line-clamp-2 break-words text-foreground"
+            className="font-medium text-[13px] leading-[1.4] tracking-tight line-clamp-2 break-words text-foreground"
             title={task.title}
           >
             {task.title}
           </div>
         )}
-        <div className="absolute right-1.5 top-1.5">
-          <FocusStar task={task} />
-        </div>
       </div>
 
       {/* Optional rows — each appears only when it carries data, so cards with
@@ -271,51 +262,6 @@ function DueBadge({ due }: { due: string }) {
         })}
       </span>
     </div>
-  );
-}
-
-/** Star toggle — pin a task to the user's "This week" focus list, or remove it.
- *  Always-visible filled star when the task is focused, hover-reveal outline
- *  when it isn't, so adding to focus is just discoverable enough without
- *  competing with the priority badge. */
-function FocusStar({ task }: { task: Task }) {
-  const focusedIds = useFocusedIds();
-  const addFocus = useAddFocus();
-  const removeFocus = useRemoveFocus();
-  const isFocused = focusedIds.has(task.id);
-
-  function toggle(e: React.MouseEvent) {
-    e.stopPropagation();
-    if (isFocused) removeFocus.mutate(task.key);
-    else addFocus.mutate({ taskKey: task.key, period: "week" });
-  }
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            onClick={toggle}
-            aria-label={isFocused ? "Remove from focus" : "Add to This week"}
-            aria-pressed={isFocused}
-            className={cn(
-              "size-5 grid place-items-center rounded transition-colors",
-              isFocused
-                ? "text-amber-500"
-                : "text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:text-amber-500",
-            )}
-          >
-            <Star
-              className={cn("size-3.5", isFocused && "fill-current")}
-            />
-          </button>
-        }
-      />
-      <TooltipContent>
-        {isFocused ? "Remove from focus" : "Add to This week"}
-      </TooltipContent>
-    </Tooltip>
   );
 }
 

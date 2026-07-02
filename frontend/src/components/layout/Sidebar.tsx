@@ -264,25 +264,6 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
       <nav className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-1 py-2 space-y-1">
         <NavLink
           icon={
-            <Star
-              className={cn(
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground",
-                pathname === "/focus" && "fill-amber-500 text-amber-500",
-              )}
-            />
-          }
-          label="My Focus"
-          active={pathname === "/focus"}
-          collapsed={isCollapsed}
-          onNavigate={() => {
-            if (pathname !== "/focus") router.push("/focus");
-            onClose?.();
-          }}
-        />
-        <NavLink
-          icon={
             <LayoutDashboard
               className={
                 isCollapsed
@@ -707,7 +688,11 @@ function ProjectRow({
             </button>
           }
         />
-        <DropdownMenuContent align="start" className="w-48">
+        <DropdownMenuContent
+          align="start"
+          className="w-48"
+          onClick={(e) => e.stopPropagation()}
+        >
           <DropdownMenuItem onClick={toggleStar}>
             <Star className={cn("size-3.5", project.is_starred && "fill-current")} />
             {project.is_starred ? "Unstar" : "Star"}

@@ -198,7 +198,8 @@ export type SavedViewSort = Array<{
     | "position"
     | "story_points"
     | "priority"
-    | "staleness";
+    | "staleness"
+    | "current_column_since";
   dir: "asc" | "desc";
 }>;
 
@@ -224,6 +225,7 @@ export const SORT_FIELD_LABELS: Record<SortField, string> = {
   title: "Title",
   story_points: "Story points",
   position: "Manual order",
+  current_column_since: "Entered column",
 };
 
 /** In-memory state for the FilterBar — superset of SavedViewFilters + sort. */
