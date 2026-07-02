@@ -50,7 +50,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { AddColumnCell, CollapsedColumn, KanbanColumn } from "@/components/kanban/Column";
 import { DeleteColumnDialog } from "@/components/kanban/DeleteColumnDialog";
-import { KanbanCard } from "@/components/kanban/Card";
+import { KanbanCard, type EditorKind } from "@/components/kanban/Card";
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import { LabelManager } from "@/components/label/LabelManager";
 import { RecurringManager } from "@/components/recurring/RecurringManager";
@@ -58,6 +58,12 @@ import { ListView } from "@/components/list/ListView";
 import { CommandPalette } from "@/components/CommandPalette";
 import { DeclutterDialog } from "@/components/declutter/DeclutterDialog";
 import { AssignDialog } from "@/components/declutter/AssignDialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   FilterBar,
   boardFiltersFromSavedView,
@@ -73,6 +79,7 @@ import {
   flattenInfinite,
   useMoveTask,
   useTasksInfinite,
+  useUpdateTask,
 } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import {
@@ -87,6 +94,7 @@ import type {
   BoardFilters,
   Column,
   Label,
+  Priority,
   Project,
   Task,
   SavedView,
@@ -290,6 +298,7 @@ export default function BoardPage() {
   const cardDisplay: CardField[] | null = activeView?.card_display ?? null;
 
   const moveTask = useMoveTask();
+  const updateTask = useUpdateTask();
 
   const usersQuery = useUsersQuery();
   const allUsers = usersQuery.data ?? [];
@@ -360,6 +369,12 @@ export default function BoardPage() {
   const [labelManagerOpen, setLabelManagerOpen] = useState(false);
   const [recurringManagerOpen, setRecurringManagerOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  // Which of the selected card's chip popovers the keyboard has forced open
+  // (`p`/`a`/`l` — see the keyboard effect below). Passed down to exactly one
+  // <KanbanCard> (the selected one) so its Popovers become controlled; every
+  // other card's Popovers stay fully uncontrolled.
+  const [openEditor, setOpenEditor] = useState<EditorKind | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [declutterOpen, setDeclutterOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
@@ -456,8 +471,154 @@ export default function BoardPage() {
     return null;
   }, [dragPreview, tasksByColumn]);
 
-  // Keyboard navigation — arrow keys, Enter, Esc, Space
+  // Keyboard navigation — arrow keys, Enter, Esc, Space, plus Phase 3's
+  // Linear-style modifier moves / priority keys / field-editor keys / help.
   useEffect(() => {
+    /** Resolve the concrete `Column` a task should land in for a given
+     *  *display* column (which may be a virtual all-projects column). Mirrors
+     *  the drag monitor's onDrop resolution below (same virtual→real mapping
+     *  by column name), so keyboard moves and drag-and-drop drop into
+     *  identical places. */
+    function resolveRealColumn(
+      displayCol: Column,
+      task: Task,
+    ): Column | undefined {
+      if (displayCol.id > 0) return displayCol;
+      const realProject = projects.find((p) => p.id === task.project);
+      return realProject?.columns.find((c) => c.name === displayCol.name);
+    }
+
+    /** Cmd/Alt+←/→ — move the selected task into the previous/next VISIBLE
+     *  column (collapsed columns are skipped), appended at the end of that
+     *  column's currently-loaded list. Selection stays on the moved task
+     *  since its id doesn't change. */
+    function moveTaskAcrossColumns(
+      direction: "left" | "right",
+      colTaskIds: number[][],
+    ) {
+      if (!selectedTask) return;
+      const ci = colTaskIds.findIndex((ids) => ids.includes(selectedTask.id));
+      if (ci === -1) return;
+      let ni = direction === "right" ? ci + 1 : ci - 1;
+      while (
+        ni >= 0 &&
+        ni < displayColumns.length &&
+        hiddenColumns.has(displayColumns[ni].id)
+      ) {
+        ni += direction === "right" ? 1 : -1;
+      }
+      if (ni < 0 || ni >= displayColumns.length) return; // no visible column that way
+
+      const destDisplayCol = displayColumns[ni];
+      const targetColumn = resolveRealColumn(destDisplayCol, selectedTask);
+      if (!targetColumn) return;
+
+      // Append at the end — if the dest column's loaded list is empty both
+      // ids are null, same as dropping into an empty column body.
+      const destTasks = tasksByColumn.get(destDisplayCol.id) ?? [];
+      const tail = destTasks[destTasks.length - 1];
+      moveTask.mutate({
+        key: selectedTask.key,
+        column_id: targetColumn.id,
+        before_id: null,
+        after_id: tail?.id ?? null,
+        optimistic: {
+          destColumn: targetColumn,
+          estimatedPosition: tail ? tail.position + 1000 : 1000,
+        },
+      });
+    }
+
+    /** Cmd/Alt+↑/↓ — swap the selected task with its neighbor within the
+     *  current column. Note: the Done column sorts by completion time (not
+     *  position) while completion-sort is active (see `completionSort` in
+     *  ColumnContainer) — the move still persists a new position, but it may
+     *  not visibly reorder the column, same tradeoff drag-and-drop already
+     *  accepts there. */
+    function reorderTaskWithinColumn(
+      direction: "up" | "down",
+      colTaskIds: number[][],
+    ) {
+      if (!selectedTask || !selectedTask.column) return;
+      const ci = colTaskIds.findIndex((ids) => ids.includes(selectedTask.id));
+      if (ci === -1) return;
+      const ids = colTaskIds[ci];
+      const idx = ids.indexOf(selectedTask.id);
+      const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= ids.length) return; // already at the edge
+
+      const tasks = tasksByColumn.get(displayColumns[ci].id) ?? [];
+      let beforeId: number | null;
+      let afterId: number | null;
+      if (direction === "up") {
+        afterId = swapIdx > 0 ? tasks[swapIdx - 1].id : null;
+        beforeId = tasks[swapIdx].id;
+      } else {
+        afterId = tasks[swapIdx].id;
+        beforeId = swapIdx + 1 < tasks.length ? tasks[swapIdx + 1].id : null;
+      }
+
+      const afterTask = afterId ? tasks.find((t) => t.id === afterId) : undefined;
+      const beforeTask = beforeId ? tasks.find((t) => t.id === beforeId) : undefined;
+      let estimatedPosition: number;
+      if (afterTask && beforeTask) {
+        estimatedPosition = (afterTask.position + beforeTask.position) / 2;
+      } else if (afterTask) {
+        estimatedPosition = afterTask.position + 1000;
+      } else if (beforeTask) {
+        estimatedPosition = beforeTask.position - 1000;
+      } else {
+        estimatedPosition = 1000;
+      }
+
+      moveTask.mutate({
+        key: selectedTask.key,
+        column_id: selectedTask.column.id,
+        before_id: beforeId,
+        after_id: afterId,
+        optimistic: { destColumn: selectedTask.column, estimatedPosition },
+      });
+    }
+
+    /** `d` — move the selected task to its own project's rightmost `is_done`
+     *  column. Resolved directly from `task.project` rather than the
+     *  currently-displayed virtual column, so — unlike drag-and-drop, which
+     *  has to map a *drop target* back to a real column by name — this works
+     *  identically on the all-projects board. */
+    function moveToDoneColumn() {
+      if (!selectedTask) return;
+      const realProject = projects.find((p) => p.id === selectedTask.project);
+      if (!realProject) return;
+      const doneCol = realProject.columns
+        .filter((c) => c.is_done)
+        .sort((a, b) => b.order - a.order)[0];
+      if (!doneCol || doneCol.id === selectedTask.column?.id) return;
+
+      const destKey = isAllProjects
+        ? displayColumns.find((c) => c.name === doneCol.name)?.id ?? doneCol.id
+        : doneCol.id;
+      const destTasks = tasksByColumn.get(destKey) ?? [];
+      const tail = destTasks[destTasks.length - 1];
+      moveTask.mutate({
+        key: selectedTask.key,
+        column_id: doneCol.id,
+        before_id: null,
+        after_id: tail?.id ?? null,
+        optimistic: {
+          destColumn: doneCol,
+          estimatedPosition: tail ? tail.position + 1000 : 1000,
+        },
+      });
+    }
+
+    /** Selecting a task (or deselecting) always drops any keyboard-forced
+     *  popover — otherwise `openEditor` could keep pointing at a chip on a
+     *  card that's no longer selected. */
+    function selectTask(id: number | null) {
+      setOpenEditor(null);
+      setSelectedTaskId(id);
+    }
+
     function handler(e: KeyboardEvent) {
       // Skip when an input/textarea/contenteditable is focused
       const el = document.activeElement;
@@ -469,14 +630,19 @@ export default function BoardPage() {
         return;
       }
 
-      // Skip when palette or any dialog is open
+      // Skip when palette, a dialog, or a keyboard-forced chip popover is
+      // open — while a popover is open its own Escape/outside-click dismiss
+      // logic owns the keyboard, and we don't want e.g. arrow keys changing
+      // the selection out from under it.
       if (
         paletteOpen ||
         taskDialog.isOpen ||
         createProjectOpen ||
         labelManagerOpen ||
         recurringManagerOpen ||
-        declutterOpen
+        declutterOpen ||
+        helpOpen ||
+        openEditor !== null
       ) {
         return;
       }
@@ -489,14 +655,23 @@ export default function BoardPage() {
         (col) => (tasksByColumn.get(col.id) ?? []).map((t) => t.id),
       );
 
+      // Modifier held (Cmd, or Alt as an alias) + arrow → move/reorder the
+      // selected task instead of just changing the selection.
+      const moveModifier = e.metaKey || e.altKey;
+      const noModifiers = !e.metaKey && !e.ctrlKey && !e.altKey;
+
       switch (e.key) {
         case "ArrowDown": {
           e.preventDefault();
+          if (moveModifier) {
+            reorderTaskWithinColumn("down", colTaskIds);
+            return;
+          }
           if (selectedTaskId === null) {
             // Select first task of first non-empty column
             for (const ids of colTaskIds) {
               if (ids.length > 0) {
-                setSelectedTaskId(ids[0]);
+                selectTask(ids[0]);
                 return;
               }
             }
@@ -506,7 +681,7 @@ export default function BoardPage() {
           for (const ids of colTaskIds) {
             const idx = ids.indexOf(selectedTaskId);
             if (idx !== -1 && idx < ids.length - 1) {
-              setSelectedTaskId(ids[idx + 1]);
+              selectTask(ids[idx + 1]);
               return;
             }
           }
@@ -514,11 +689,15 @@ export default function BoardPage() {
         }
         case "ArrowUp": {
           e.preventDefault();
+          if (moveModifier) {
+            reorderTaskWithinColumn("up", colTaskIds);
+            return;
+          }
           if (selectedTaskId === null) return;
           for (const ids of colTaskIds) {
             const idx = ids.indexOf(selectedTaskId);
             if (idx !== -1 && idx > 0) {
-              setSelectedTaskId(ids[idx - 1]);
+              selectTask(ids[idx - 1]);
               return;
             }
           }
@@ -526,11 +705,15 @@ export default function BoardPage() {
         }
         case "ArrowRight": {
           e.preventDefault();
+          if (moveModifier) {
+            moveTaskAcrossColumns("right", colTaskIds);
+            return;
+          }
           if (selectedTaskId === null) {
             // Select first task of first non-empty column
             for (const ids of colTaskIds) {
               if (ids.length > 0) {
-                setSelectedTaskId(ids[0]);
+                selectTask(ids[0]);
                 return;
               }
             }
@@ -544,7 +727,7 @@ export default function BoardPage() {
               for (let ni = ci + 1; ni < colTaskIds.length; ni++) {
                 if (colTaskIds[ni].length > 0) {
                   const targetIdx = Math.min(idx, colTaskIds[ni].length - 1);
-                  setSelectedTaskId(colTaskIds[ni][targetIdx]);
+                  selectTask(colTaskIds[ni][targetIdx]);
                   return;
                 }
               }
@@ -555,6 +738,10 @@ export default function BoardPage() {
         }
         case "ArrowLeft": {
           e.preventDefault();
+          if (moveModifier) {
+            moveTaskAcrossColumns("left", colTaskIds);
+            return;
+          }
           if (selectedTaskId === null) return;
           for (let ci = 0; ci < colTaskIds.length; ci++) {
             const idx = colTaskIds[ci].indexOf(selectedTaskId);
@@ -563,7 +750,7 @@ export default function BoardPage() {
               for (let ni = ci - 1; ni >= 0; ni--) {
                 if (colTaskIds[ni].length > 0) {
                   const targetIdx = Math.min(idx, colTaskIds[ni].length - 1);
-                  setSelectedTaskId(colTaskIds[ni][targetIdx]);
+                  selectTask(colTaskIds[ni][targetIdx]);
                   return;
                 }
               }
@@ -581,12 +768,54 @@ export default function BoardPage() {
         }
         case "Escape": {
           e.preventDefault();
-          setSelectedTaskId(null);
+          selectTask(null);
           break;
         }
         case " ": {
           e.preventDefault();
           setPaletteOpen(true);
+          break;
+        }
+        case "0":
+        case "1":
+        case "2":
+        case "3":
+        case "4": {
+          if (!noModifiers || !selectedTask) return;
+          e.preventDefault();
+          const next = e.key === "0" ? null : (`P${e.key}` as Priority);
+          if (next === selectedTask.priority) return;
+          updateTask.mutate({ key: selectedTask.key, priority: next });
+          break;
+        }
+        case "d": {
+          if (!noModifiers || !selectedTask) return;
+          e.preventDefault();
+          moveToDoneColumn();
+          break;
+        }
+        case "p": {
+          if (!noModifiers || !selectedTask) return;
+          e.preventDefault();
+          setOpenEditor("priority");
+          break;
+        }
+        case "a": {
+          if (!noModifiers || !selectedTask) return;
+          e.preventDefault();
+          setOpenEditor("assignee");
+          break;
+        }
+        case "l": {
+          if (!noModifiers || !selectedTask) return;
+          e.preventDefault();
+          setOpenEditor("labels");
+          break;
+        }
+        case "?": {
+          if (!noModifiers) return;
+          e.preventDefault();
+          setHelpOpen(true);
           break;
         }
       }
@@ -599,6 +828,13 @@ export default function BoardPage() {
     selectedTask,
     displayColumns,
     tasksByColumn,
+    hiddenColumns,
+    projects,
+    isAllProjects,
+    moveTask,
+    updateTask,
+    openEditor,
+    helpOpen,
     paletteOpen,
     taskDialog,
     createProjectOpen,
@@ -871,6 +1107,8 @@ export default function BoardPage() {
                 isAllProjects={isAllProjects}
                 cardDisplay={cardDisplay}
                 selectedTaskId={selectedTaskId}
+                openEditor={openEditor}
+                onOpenEditorChange={setOpenEditor}
                 onTasksChange={onColumnTasksChange}
                 onAddTask={
                   project
@@ -1016,7 +1254,68 @@ export default function BoardPage() {
         users={allUsers}
         scopeProjectId={projectId}
       />
+      <ShortcutsHelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
     </div>
+  );
+}
+
+const SHORTCUT_ROWS: { keys: string[]; description: string }[] = [
+  { keys: ["↑", "↓", "←", "→"], description: "Move selection" },
+  { keys: ["Enter"], description: "Open selected task" },
+  { keys: ["Esc"], description: "Deselect / close popover" },
+  { keys: ["Space"], description: "Command palette" },
+  { keys: ["c"], description: "New task" },
+  { keys: ["⌘/Alt", "←", "→"], description: "Move task to prev/next column" },
+  { keys: ["⌘/Alt", "↑", "↓"], description: "Reorder task in column" },
+  { keys: ["1", "–", "4"], description: "Set priority P1–P4" },
+  { keys: ["0"], description: "Clear priority" },
+  { keys: ["d"], description: "Move to Done" },
+  { keys: ["p"], description: "Edit priority" },
+  { keys: ["a"], description: "Edit assignees" },
+  { keys: ["l"], description: "Edit labels" },
+  { keys: ["?"], description: "Show this help" },
+];
+
+/** Compact keyboard-shortcut reference — opened via `?` on the board. Reuses
+ *  the same Dialog primitives as the other board dialogs (e.g.
+ *  DeleteColumnDialog). Two-column key/description rows only apply while a
+ *  task is selected on a kanban (not table) view — see the board's keydown
+ *  effect for the guards. */
+function ShortcutsHelpDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Keyboard shortcuts</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-1">
+          {SHORTCUT_ROWS.map((row) => (
+            <div
+              key={row.description}
+              className="flex items-center justify-between gap-3 text-[12px]"
+            >
+              <span className="text-muted-foreground">{row.description}</span>
+              <span className="flex items-center gap-1 shrink-0">
+                {row.keys.map((k, i) => (
+                  <kbd
+                    key={i}
+                    className="inline-flex items-center justify-center min-w-[1.5rem] px-1.5 py-0.5 rounded border border-border/60 bg-muted text-[10px] font-mono text-foreground"
+                  >
+                    {k}
+                  </kbd>
+                ))}
+              </span>
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1036,6 +1335,10 @@ type ColumnContainerProps = {
   isAllProjects: boolean;
   cardDisplay: CardField[] | null;
   selectedTaskId: number | null;
+  /** Which chip popover the keyboard wants forced open, and the setter —
+   *  only threaded down to the selected card (see `KanbanCard` below). */
+  openEditor: EditorKind | null;
+  onOpenEditorChange: (editor: EditorKind | null) => void;
   onTasksChange: (columnId: number, tasks: Task[]) => void;
   onAddTask?: () => void;
   onEditTask: (task: Task) => void;
@@ -1069,6 +1372,8 @@ function ColumnContainer({
   isAllProjects,
   cardDisplay,
   selectedTaskId,
+  openEditor,
+  onOpenEditorChange,
   onTasksChange,
   onAddTask,
   onEditTask,
@@ -1183,16 +1488,24 @@ function ColumnContainer({
         <Fragment key={task.id}>
           {isDest && idx === previewIdx && ghost}
           <DraggableCard task={task} columnId={column.id}>
-            {({ isDragging }) => (
-              <KanbanCard
-                task={task}
-                isDragging={isDragging}
-                isSelected={task.id === selectedTaskId}
-                showProject={isAllProjects}
-                visibleFields={cardDisplay}
-                onClick={() => onEditTask(task)}
-              />
-            )}
+            {({ isDragging }) => {
+              const isSelected = task.id === selectedTaskId;
+              return (
+                <KanbanCard
+                  task={task}
+                  isDragging={isDragging}
+                  isSelected={isSelected}
+                  showProject={isAllProjects}
+                  visibleFields={cardDisplay}
+                  onClick={() => onEditTask(task)}
+                  // Only the selected card's Popovers become controlled —
+                  // every other card gets `openEditor={undefined}`, which
+                  // KanbanCard treats as "stay uncontrolled".
+                  openEditor={isSelected ? openEditor : undefined}
+                  onOpenEditorChange={isSelected ? onOpenEditorChange : undefined}
+                />
+              );
+            }}
           </DraggableCard>
         </Fragment>
       ))}

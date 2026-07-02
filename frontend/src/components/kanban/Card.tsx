@@ -58,6 +58,10 @@ const PRIORITY_BADGE: Record<
   },
 };
 
+/** Which inline chip popover is forced open by the keyboard (`p`/`a`/`l` on
+ *  the board — see board/page.tsx). */
+export type EditorKind = "priority" | "assignee" | "labels";
+
 type Props = {
   task: Task;
   onClick?: () => void;
@@ -66,6 +70,16 @@ type Props = {
   isSelected?: boolean;
   showProject?: boolean;
   visibleFields?: CardField[] | null;
+  /** When passed (even as `null`), this card's chip popovers become
+   *  controlled: `openEditor` names the one that should be forced open, and
+   *  `onOpenEditorChange` is called whenever base-ui's own dismiss logic
+   *  (Escape, outside click) wants to close it. The board only passes this
+   *  pair for the currently-selected card — every other card keeps its
+   *  Popovers fully uncontrolled (prop omitted entirely, not just `undefined`
+   *  passed positionally, so the base-ui primitive stays in its normal
+   *  uncontrolled mode). */
+  openEditor?: EditorKind | null;
+  onOpenEditorChange?: (editor: EditorKind | null) => void;
 };
 
 function isVisible(
@@ -84,7 +98,21 @@ export function KanbanCard({
   isSelected,
   showProject,
   visibleFields,
+  openEditor,
+  onOpenEditorChange,
 }: Props) {
+  // Presence (not value) of `openEditor` marks this card as the keyboard-
+  // controlled one. Spread an empty object for every other card so its
+  // Popovers stay uncontrolled (no `open`/`onOpenChange` prop at all).
+  const isEditorControlled = openEditor !== undefined;
+  const controlledPopoverProps = (kind: EditorKind) =>
+    isEditorControlled
+      ? {
+          open: openEditor === kind,
+          onOpenChange: (next: boolean) =>
+            onOpenEditorChange?.(next ? kind : null),
+        }
+      : {};
   const showKey = isVisible("key", visibleFields);
   const showTitle = isVisible("title", visibleFields);
   const showPriority = isVisible("priority", visibleFields);
@@ -207,9 +235,12 @@ export function KanbanCard({
         </div>
       )}
 
-      {/* Labels — click opens the same label picker as the task panel. */}
-      {showLabels && task.labels.length > 0 && (
-        <Popover>
+      {/* Labels — click opens the same label picker as the task panel. Also
+          rendered (with an empty chip row) when the keyboard forces this
+          popover open on a label-less card, so `l` has a trigger to anchor
+          to even when there's nothing to show yet. */}
+      {showLabels && (task.labels.length > 0 || openEditor === "labels") && (
+        <Popover {...controlledPopoverProps("labels")}>
           <PopoverTrigger
             render={
               <button
@@ -275,7 +306,7 @@ export function KanbanCard({
             </Tooltip>
           )}
           {showPriority && (
-            <Popover>
+            <Popover {...controlledPopoverProps("priority")}>
               <PopoverTrigger
                 render={
                   <button
@@ -329,6 +360,7 @@ export function KanbanCard({
               task={task}
               allUsers={allUsers}
               onToggle={handleAssigneeToggle}
+              popoverProps={controlledPopoverProps("assignee")}
             />
           )}
           {task.current_column_since && (
@@ -400,10 +432,15 @@ function AssigneeStack({
   task,
   allUsers,
   onToggle,
+  popoverProps,
 }: {
   task: Task;
   allUsers: User[];
   onToggle: (id: number) => void;
+  /** Controlled `open`/`onOpenChange` pair from the parent card's
+   *  `controlledPopoverProps("assignee")` — empty object when this card
+   *  isn't the keyboard-selected one, so the Popover stays uncontrolled. */
+  popoverProps?: { open?: boolean; onOpenChange?: (open: boolean) => void };
 }) {
   const VISIBLE = 3;
   const users = task.assignees;
@@ -412,7 +449,7 @@ function AssigneeStack({
   const singleName = users.length === 1 ? users[0].username : null;
 
   return (
-    <Popover>
+    <Popover {...popoverProps}>
       <PopoverTrigger
         render={
           <button
