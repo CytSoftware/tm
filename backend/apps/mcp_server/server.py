@@ -31,8 +31,24 @@ def _get_mcp_user():
 # We already authenticate via Bearer token (CYT_MCP_TOKEN) in our own
 # ASGI middleware, so the SDK's Host/Origin validation is redundant and
 # causes 421/403 rejections for legitimate remote clients.
+_SERVER_INSTRUCTIONS = """Cyt Task Manager — tasks, CRM, pipelines, the collaborative wiki, the Drive \
+(Backblaze B2), and the LLM wiki.
+
+LLM WIKI (the knowledge_* tools) is a STRUCTURED, shared knowledge base — not a \
+flat page dump. Before writing to it, call `knowledge_schema` and follow it:
+- File every page under a directory (the slug is a path), never at the root: \
+`entities/people/<name>`, `entities/companies/<name>`, `entities/products/<name>`, \
+`concepts/<name>`, `projects/<name>`, `decisions/<name>`, `sources/<name>`. \
+E.g. a person goes to `entities/people/john-smith`, not `john-smith`.
+- Include YAML frontmatter (title, type, created, updated, tags) and cross-link \
+other pages with `[[path/to/page]]` wikilinks.
+- `knowledge_read` an existing page and UPDATE it in place rather than duplicating.
+- The `index` catalog and `log` are auto-maintained by the server — never write them.
+Never file secrets/credentials/tokens or personal (non-business) content in the wiki."""
+
 mcp = FastMCP(
     "cyt-task-tracker",
+    instructions=_SERVER_INSTRUCTIONS,
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=False,
     ),
