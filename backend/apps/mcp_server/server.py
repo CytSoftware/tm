@@ -158,6 +158,7 @@ async def update_task(
         priority=priority,
         labels=labels,
         story_points=story_points,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -180,7 +181,7 @@ async def move_task(
 @mcp.tool()
 async def delete_task(key: str) -> dict[str, Any]:
     """Delete a task by its human key."""
-    return await _async(tools.delete_task)(key)
+    return await _async(tools.delete_task)(key, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()

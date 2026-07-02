@@ -32,6 +32,7 @@ from apps.tasks.models import (
     TransitionSource,
     View,
 )
+from apps.tasks.notifications import notify_task_event
 from apps.tasks.query import (
     base_task_queryset,
     filter_and_sort_tasks,
@@ -470,6 +471,7 @@ def create_task(
     broadcast_task_event(
         proj.id, "task.created", {"key": task.key, "id": task.id}
     )
+    notify_task_event(task, mcp_user, "assigned")
     return _task_dict(task)
 
 
@@ -482,9 +484,16 @@ def update_task(
     priority: str | None = None,
     labels: list[str | int] | None = None,
     story_points: int | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
     task = base_task_queryset().get(key=key)
     dirty = False
+
+    old_assignee_ids = set(task.assignees.values_list("id", flat=True))
+    old_label_ids = set(task.labels.values_list("id", flat=True))
+    old_values = {
+        f: getattr(task, f) for f in ("title", "description", "priority", "story_points")
+    }
 
     if title is not None:
         task.title = title
@@ -509,6 +518,33 @@ def update_task(
     broadcast_task_event(
         task.project_id, "task.updated", {"key": task.key, "id": task.id}
     )
+
+    new_assignee_ids = set(task.assignees.values_list("id", flat=True))
+    newly_added_ids = new_assignee_ids - old_assignee_ids
+    still_assigned_ids = new_assignee_ids & old_assignee_ids
+
+    if newly_added_ids:
+        notify_task_event(
+            task,
+            mcp_user,
+            "assigned",
+            recipients=User.objects.filter(id__in=newly_added_ids),
+        )
+
+    changed_fields = [f for f in old_values if old_values[f] != getattr(task, f)]
+    new_label_ids = set(task.labels.values_list("id", flat=True))
+    if new_label_ids != old_label_ids:
+        changed_fields.append("labels")
+
+    if still_assigned_ids and changed_fields:
+        notify_task_event(
+            task,
+            mcp_user,
+            "updated",
+            recipients=User.objects.filter(id__in=still_assigned_ids),
+            payload={"changed_fields": changed_fields},
+        )
+
     return _task_dict(task)
 
 
@@ -537,7 +573,8 @@ def move_task(
             ) from e
 
     task.save(update_fields=["column", "position", "updated_at"])
-    if (old_column.id if old_column else None) != col.id:
+    column_changed = (old_column.id if old_column else None) != col.id
+    if column_changed:
         record_transition(
             task,
             from_column=old_column,
@@ -550,14 +587,26 @@ def move_task(
         "task.moved",
         {"key": task.key, "id": task.id, "column_id": col.id},
     )
+    if column_changed:
+        verb = "completed" if col.is_done else "moved"
+        notify_task_event(
+            task,
+            mcp_user,
+            verb,
+            payload={
+                "from_column": old_column.name if old_column else None,
+                "to_column": col.name,
+            },
+        )
     return _task_dict(task)
 
 
 @transaction.atomic
-def delete_task(key: str) -> dict[str, Any]:
+def delete_task(key: str, mcp_user=None) -> dict[str, Any]:
     task = base_task_queryset().get(key=key)
     project_id = task.project_id
     task_key = task.key
+    notify_task_event(task, mcp_user, "deleted")
     task.delete()
     broadcast_task_event(project_id, "task.deleted", {"key": task_key})
     return {"ok": True, "key": task_key}

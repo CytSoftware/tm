@@ -8,6 +8,7 @@ from .models import (
     Column,
     FocusItem,
     Label,
+    Notification,
     Project,
     RecurringTaskTemplate,
     Task,
@@ -95,6 +96,15 @@ class FocusItemAdmin(admin.ModelAdmin):
     list_filter = ("period",)
     search_fields = ("user__username", "task__key", "task__title")
     autocomplete_fields = ("user", "task")
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ("recipient", "verb", "task_key", "actor", "read_at", "created_at")
+    list_filter = ("verb",)
+    search_fields = ("recipient__username", "task_key", "task_title")
+    autocomplete_fields = ("recipient", "actor", "task", "project")
+    readonly_fields = ("created_at",)
 
 
 # ---------------------------------------------------------------------------

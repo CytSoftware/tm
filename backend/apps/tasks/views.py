@@ -18,6 +18,7 @@ from .broadcast import _broadcast_local, broadcast_task_event
 from .models import (
     Column,
     Label,
+    Notification,
     Project,
     RecurringTaskTemplate,
     StaleThresholdConfig,
@@ -25,6 +26,7 @@ from .models import (
     TransitionSource,
     View,
 )
+from .notifications import notify_task_event
 from .query import base_task_queryset, filter_and_sort_tasks
 from .transitions import (
     invalidate_stale_thresholds,
@@ -35,6 +37,7 @@ from .serializers import (
     CsrfResponseSerializer,
     LabelSerializer,
     LoginRequestSerializer,
+    NotificationSerializer,
     ProjectSerializer,
     RecurringPreviewSerializer,
     RecurringTaskTemplateReadSerializer,
@@ -468,6 +471,20 @@ def internal_broadcast(request):
         _wiki_local(event_type, payload)
         return Response({"ok": True})
 
+    if scope == "group":
+        # Generic per-group push (e.g. notifications' user_<id> groups) —
+        # see apps.tasks.broadcast.broadcast_to_group.
+        from .broadcast import _broadcast_group_local
+
+        group_name = data.get("group")
+        if not isinstance(group_name, str) or not isinstance(event_type, str):
+            return Response(
+                {"detail": "Invalid payload."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        _broadcast_group_local(group_name, event_type, payload)
+        return Response({"ok": True})
+
     project_id = data.get("project_id")
     if not isinstance(project_id, int) or not isinstance(event_type, str):
         return Response(
@@ -816,6 +833,13 @@ class LabelViewSet(viewsets.ModelViewSet):
 
 _SORT_DIRS = {"asc", "desc"}
 
+# Scalar task fields whose change on an "update" write triggers an "updated"
+# notification to still-assigned users (newly-added assignees get "assigned"
+# instead — see TaskViewSet.perform_update). Column changes are intentionally
+# excluded here: those go through the dedicated `move` action and emit
+# "moved"/"completed" instead.
+_NOTIFY_TRACKED_SCALAR_FIELDS = ("title", "description", "priority", "story_points", "due_at")
+
 
 def _extract_ad_hoc_filters(params) -> dict:
     """Translate query-string params into the dict shape ``apply_task_filters``
@@ -938,12 +962,26 @@ class TaskViewSet(viewsets.ModelViewSet):
         broadcast_task_event(
             task.project_id, "task.created", {"key": task.key, "id": task.id}
         )
+        # Recipients default to task.assignees.all() minus the acting user.
+        notify_task_event(task, self.request.user, "assigned")
 
     def perform_update(self, serializer):
-        # Capture old column before the update so we can record the
-        # transition if the PATCH changed it.
+        # Capture old column + assignees + tracked scalar fields before the
+        # update so we can record the transition and diff for notifications.
         instance = serializer.instance
         old_column = instance.column if instance else None
+        old_assignee_ids = (
+            set(instance.assignees.values_list("id", flat=True)) if instance else set()
+        )
+        old_label_ids = (
+            set(instance.labels.values_list("id", flat=True)) if instance else set()
+        )
+        old_values = (
+            {f: getattr(instance, f) for f in _NOTIFY_TRACKED_SCALAR_FIELDS}
+            if instance
+            else {}
+        )
+
         task = serializer.save()
         if task.column_id != (old_column.id if old_column else None):
             record_transition(
@@ -957,9 +995,41 @@ class TaskViewSet(viewsets.ModelViewSet):
             task.project_id, "task.updated", {"key": task.key, "id": task.id}
         )
 
+        actor = self.request.user
+        new_assignee_ids = set(task.assignees.values_list("id", flat=True))
+        newly_added_ids = new_assignee_ids - old_assignee_ids
+        still_assigned_ids = new_assignee_ids & old_assignee_ids
+
+        if newly_added_ids:
+            notify_task_event(
+                task,
+                actor,
+                "assigned",
+                recipients=User.objects.filter(id__in=newly_added_ids),
+            )
+
+        changed_fields = [
+            f for f in _NOTIFY_TRACKED_SCALAR_FIELDS if old_values.get(f) != getattr(task, f)
+        ]
+        new_label_ids = set(task.labels.values_list("id", flat=True))
+        if new_label_ids != old_label_ids:
+            changed_fields.append("labels")
+
+        if still_assigned_ids and changed_fields:
+            notify_task_event(
+                task,
+                actor,
+                "updated",
+                recipients=User.objects.filter(id__in=still_assigned_ids),
+                payload={"changed_fields": changed_fields},
+            )
+
     def perform_destroy(self, instance):
         project_id = instance.project_id
         key = instance.key
+        # Notify before deleting — Notification.task is SET_NULL, so the row
+        # survives the cascade; task_key/task_title are already denormalized.
+        notify_task_event(instance, self.request.user, "deleted")
         instance.delete()
         broadcast_task_event(project_id, "task.deleted", {"key": key})
 
@@ -1030,6 +1100,17 @@ class TaskViewSet(viewsets.ModelViewSet):
             "task.moved",
             {"key": task.key, "id": task.id, "column_id": column.id},
         )
+        if (old_column.id if old_column else None) != column.id:
+            verb = "completed" if column.is_done else "moved"
+            notify_task_event(
+                task,
+                request.user,
+                verb,
+                payload={
+                    "from_column": old_column.name if old_column else None,
+                    "to_column": column.name,
+                },
+            )
         # Re-fetch through ``get_queryset`` so the ``current_column_since``
         # annotation is populated for the response.
         fresh = self.get_queryset().get(pk=task.pk)
@@ -1214,3 +1295,61 @@ class RecurringTaskViewSet(viewsets.ModelViewSet):
                 "occurrences": [dt.isoformat() for dt in occurrences],
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    """Current user's notifications. Strictly scoped to ``request.user`` —
+    both ``get_queryset`` (list/retrieve/the ``read`` action's ``get_object``)
+    and the bulk actions below only ever touch the caller's own rows."""
+
+    serializer_class = NotificationSerializer
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Notification.objects.none()
+        qs = self.request.user.notifications.select_related("actor", "project")
+        unread = self.request.query_params.get("unread")
+        if unread in ("1", "true", "True"):
+            qs = qs.filter(read_at__isnull=True)
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            data = self.get_paginated_response(serializer.data).data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            data = {"results": serializer.data}
+        data["unread_count"] = request.user.notifications.filter(
+            read_at__isnull=True
+        ).count()
+        return Response(data)
+
+    @action(detail=True, methods=["post"])
+    def read(self, request, pk=None):
+        """Mark a single notification read. 404s for another user's rows
+        because ``get_object`` resolves against ``get_queryset`` above."""
+        notification = self.get_object()
+        if notification.read_at is None:
+            notification.read_at = timezone.now()
+            notification.save(update_fields=["read_at"])
+        return Response(NotificationSerializer(notification).data)
+
+    @action(detail=False, methods=["post"], url_path="read_all")
+    def read_all(self, request):
+        updated = request.user.notifications.filter(read_at__isnull=True).update(
+            read_at=timezone.now()
+        )
+        return Response({"updated": updated})
+
+    @action(detail=False, methods=["get"], url_path="unread_count")
+    def unread_count(self, request):
+        count = request.user.notifications.filter(read_at__isnull=True).count()
+        return Response({"unread_count": count})

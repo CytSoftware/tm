@@ -1,0 +1,134 @@
+"""Fire-and-forget notification emission for task events.
+
+Mirrors the shape of :mod:`apps.tasks.broadcast`: a single entry point,
+:func:`notify_task_event`, that every write path (DRF viewset, MCP tools,
+recurring generator) calls after a mutation. It:
+
+1. Resolves the recipient set (default: the task's assignees, minus the
+   acting user — never notify someone about their own action).
+2. Bulk-creates ``Notification`` rows.
+3. Pushes each notification to the recipient's personal Channels group
+   (``user_<id>``) so an open browser tab updates live.
+4. For ``verb == "assigned"``, fires an email via useSend (best-effort).
+
+Like ``broadcast_task_event``, this must never raise into the caller — every
+public entry point is wrapped in try/except.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Iterable
+
+from django.utils import timezone
+
+from .broadcast import broadcast_to_group
+from .models import Notification, Task
+
+logger = logging.getLogger(__name__)
+
+# Only these verbs trigger the assignment email — the rest are WS/DB only.
+_EMAIL_VERBS = {"assigned"}
+
+
+def user_group_name(user_id: int) -> str:
+    return f"user_{user_id}"
+
+
+def notify_task_event(
+    task: Task,
+    actor,
+    verb: str,
+    recipients: Iterable[Any] | None = None,
+    payload: dict | None = None,
+) -> None:
+    """Notify recipients about a task event. Never raises.
+
+    ``task`` must still be a live, in-memory instance (this may be called
+    just *before* deleting it — ``Notification.task`` is ``SET_NULL`` so the
+    row survives the cascade). ``actor`` is the user who caused the event, or
+    ``None`` for system-generated events (e.g. the recurring generator).
+    ``recipients`` defaults to the task's current assignees. The acting user
+    is always excluded from the recipient set.
+    """
+    try:
+        _notify_task_event(task, actor, verb, recipients, payload)
+    except Exception:  # pragma: no cover - defensive, mirrors broadcast_task_event
+        logger.exception(
+            "notify_task_event failed (verb=%s task=%s)",
+            verb,
+            getattr(task, "key", None),
+        )
+
+
+def _notify_task_event(
+    task: Task,
+    actor,
+    verb: str,
+    recipients: Iterable[Any] | None,
+    payload: dict | None,
+) -> None:
+    if recipients is None:
+        recipient_users = list(task.assignees.all())
+    else:
+        recipient_users = list(recipients)
+
+    actor_id = getattr(actor, "id", None)
+    seen: set[int] = set()
+    unique_recipients = []
+    for u in recipient_users:
+        if u is None or u.id == actor_id or u.id in seen:
+            continue
+        seen.add(u.id)
+        unique_recipients.append(u)
+
+    if not unique_recipients:
+        return
+
+    payload = payload or {}
+    to_create = [
+        Notification(
+            recipient=u,
+            actor=actor,
+            task=task,
+            project=task.project,
+            verb=verb,
+            task_key=task.key,
+            task_title=task.title,
+            payload=payload,
+        )
+        for u in unique_recipients
+    ]
+    created = Notification.objects.bulk_create(to_create)
+
+    project_dict = (
+        {"id": task.project_id, "name": task.project.name} if task.project_id else None
+    )
+    actor_dict = (
+        {"id": actor.id, "username": actor.username} if actor is not None else None
+    )
+
+    for n, recipient in zip(created, unique_recipients):
+        ws_payload = {
+            "type": "notification",
+            "id": n.id,
+            "verb": n.verb,
+            "task_key": n.task_key,
+            "task_title": n.task_title,
+            "project": project_dict,
+            "actor": actor_dict,
+            "payload": n.payload,
+            "read_at": None,
+            "created_at": (n.created_at or timezone.now()).isoformat(),
+        }
+        broadcast_to_group(user_group_name(n.recipient_id), "notify.event", ws_payload)
+
+        if verb in _EMAIL_VERBS and recipient.email:
+            from .emails import send_assignment_email
+
+            send_assignment_email(
+                to_email=recipient.email,
+                task_key=n.task_key,
+                task_title=n.task_title,
+                project_name=task.project.name if task.project_id else None,
+            )

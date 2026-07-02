@@ -2,11 +2,15 @@
 
 from django.urls import re_path
 
-from .consumers import TaskConsumer
+from .consumers import NotificationConsumer, TaskConsumer
 
 websocket_urlpatterns = [
     re_path(
         r"^ws/projects/(?P<project_id>\d+)/$",
         TaskConsumer.as_asgi(),
+    ),
+    re_path(
+        r"^ws/notifications/$",
+        NotificationConsumer.as_asgi(),
     ),
 ]

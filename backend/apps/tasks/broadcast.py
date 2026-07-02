@@ -108,3 +108,78 @@ def _broadcast_via_http(
         logger.warning("broadcast bridge POST to %s failed: %s", url, e)
     except Exception:  # pragma: no cover - defensive
         logger.exception("broadcast bridge POST raised")
+
+
+# ---------------------------------------------------------------------------
+# Generic group push (per-user notification groups, etc.)
+# ---------------------------------------------------------------------------
+#
+# broadcast_task_event above is scoped to project_<id> groups with a fixed
+# event envelope. notify_task_event (apps.tasks.notifications) needs to push
+# to an arbitrary group name (user_<id>) with an arbitrary Channels message
+# ``type``. This is the same cross-process bridge pattern, generalized.
+
+
+def broadcast_to_group(group_name: str, message_type: str, payload: dict[str, Any]) -> None:
+    """Push ``payload`` to an arbitrary Channels group, cross-process safe.
+
+    ``message_type`` becomes the group_send ``type`` (dots become underscores
+    when Channels resolves the consumer handler method name — e.g.
+    ``"notify.event"`` → ``notify_event``).
+    """
+    bridge_url = os.environ.get("CYT_BROADCAST_URL")
+    if bridge_url:
+        _broadcast_group_via_http(bridge_url, group_name, message_type, payload)
+        return
+    _broadcast_group_local(group_name, message_type, payload)
+
+
+def _broadcast_group_local(
+    group_name: str, message_type: str, payload: dict[str, Any]
+) -> None:
+    channel_layer = get_channel_layer()
+    if channel_layer is None:  # pragma: no cover - defensive
+        return
+    async_to_sync(channel_layer.group_send)(
+        group_name,
+        {"type": message_type, "payload": payload},
+    )
+
+
+def _broadcast_group_via_http(
+    url: str, group_name: str, message_type: str, payload: dict[str, Any]
+) -> None:
+    """Sibling of ``_broadcast_via_http`` for the generic-group case.
+
+    Routed through the same ``/api/internal/broadcast/`` endpoint with
+    ``scope: "group"`` so it shares the loopback + shared-secret guard.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    secret = os.environ.get("CYT_BROADCAST_SECRET", "")
+    body = json.dumps(
+        {
+            "scope": "group",
+            "group": group_name,
+            "type": message_type,
+            "payload": payload,
+        }
+    ).encode()
+
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Cyt-Broadcast-Secret": secret,
+        },
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=2).read()
+    except urllib.error.URLError as e:
+        logger.warning("broadcast bridge POST to %s failed: %s", url, e)
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("broadcast bridge POST raised")

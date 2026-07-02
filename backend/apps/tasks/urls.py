@@ -14,6 +14,7 @@ from .views import (
     LoginView,
     LogoutView,
     MeView,
+    NotificationViewSet,
     ProjectViewSet,
     RecurringTaskViewSet,
     StalenessSettingsView,
@@ -33,6 +34,7 @@ router.register(r"tasks", TaskViewSet, basename="task")
 router.register(r"views", ViewViewSet, basename="view")
 router.register(r"recurring-tasks", RecurringTaskViewSet, basename="recurring-task")
 router.register(r"users", UserViewSet, basename="user")
+router.register(r"notifications", NotificationViewSet, basename="notification")
 
 urlpatterns = [
     path("auth/csrf/", csrf_view, name="csrf"),

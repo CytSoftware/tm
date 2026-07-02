@@ -78,3 +78,10 @@ export const driveListKey = (prefix = "") => ["drive", "list", prefix] as const;
 export const llmWikiListKey = () => ["llm-wiki", "list"] as const;
 export const llmWikiPageKey = (slug: string) =>
   ["llm-wiki", "page", slug] as const;
+
+// Notifications — per-user inbox. The list query's response also carries
+// `unread_count`, so `notificationsUnreadKey` is only used by the
+// standalone `/api/notifications/unread_count/` poll (WS fallback).
+export const notificationsKey = () => ["notifications", "list"] as const;
+export const notificationsUnreadKey = () =>
+  ["notifications", "unread-count"] as const;

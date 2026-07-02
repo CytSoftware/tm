@@ -13,6 +13,7 @@ from rest_framework import serializers
 from .models import (
     Column,
     Label,
+    Notification,
     Project,
     RecurringTaskTemplate,
     StateTransition,
@@ -641,6 +642,36 @@ class RecurringTaskTemplateWriteSerializer(serializers.ModelSerializer):
 
 class RecurringPreviewSerializer(serializers.Serializer):
     count = serializers.IntegerField(required=False, default=5, min_value=1, max_value=50)
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    actor = UserSerializer(read_only=True)
+    project = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Notification
+        fields = (
+            "id",
+            "verb",
+            "task_key",
+            "task_title",
+            "project",
+            "actor",
+            "payload",
+            "read_at",
+            "created_at",
+        )
+        read_only_fields = fields
+
+    def get_project(self, obj: Notification) -> dict | None:
+        if obj.project_id is None:
+            return None
+        return {"id": obj.project_id, "name": obj.project.name}
 
 
 # ---------------------------------------------------------------------------

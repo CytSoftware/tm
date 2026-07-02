@@ -138,6 +138,9 @@ Backend (see `core/settings.py`):
 - `FRONTEND_URL` — used to build `LOGIN_URL` for OAuth redirects, and the default for `WIKI_ENCODE_URL`.
 - `WIKI_ENCODE_URL` — frontend Markdown↔Yjs encoder route for wiki body writes (default `${FRONTEND_URL}/api/wiki/encode`). Must be reachable from the backend.
 - `WIKI_ENCODE_SECRET` — shared secret the backend sends and the frontend route checks (default: falls back to `CYT_BROADCAST_SECRET`).
+- `USESEND_API_KEY` — Bearer token for the [useSend](https://usesend.com) transactional email API. Empty = assignment emails disabled (skipped silently); everything else (in-app + WS notifications) still works.
+- `USESEND_BASE_URL` — useSend API base (default `https://app.usesend.com`; requests POST to `${USESEND_BASE_URL}/api/v1/emails`).
+- `USESEND_FROM_EMAIL` — the `from` address on assignment emails.
 - `DB_DIR` — override the SQLite directory (so the Docker volume at `/app/db.sqlite3` persists).
 - `MEDIA_DIR` — override `MEDIA_ROOT` (the on-disk upload directory). Defaults to `/app/media` inside the container — point a Dokploy volume at the chosen path to keep avatars across redeploys.
 - `DJANGO_SUPERUSER_USERNAME` / `DJANGO_SUPERUSER_EMAIL` — consumed by `entrypoint.sh` for idempotent superuser creation.
@@ -154,6 +157,7 @@ The two `NEXT_PUBLIC_*` vars are baked in at `next build` time — the Dockerfil
 
 - Shared `apps/tasks/query.py` is mandatory — don't reimplement task filters in a viewset or MCP tool.
 - `broadcast_task_event` is fire-and-forget and must not throw; any new write path needs a matching broadcast call to keep browsers in sync.
+- `apps.tasks.notifications.notify_task_event` is the same fire-and-forget contract, for per-user `Notification` rows + the `ws/notifications/` push (verbs: `assigned`, `updated`, `moved`, `completed`, `deleted`). Every task write path that calls `broadcast_task_event` should also call this — recipients default to the task's assignees minus the acting user. It reuses `apps.tasks.broadcast`'s cross-process bridge (`broadcast_to_group`, `scope: "group"` on `/api/internal/broadcast/`) so it works from the MCP stdio process too.
 - When adding a new MCP write tool, read the user from `mcp_authenticated_user.get(None)` via `_get_mcp_user()` in `server.py` and pass it through to the underlying helper so writes are attributed correctly.
 - `Task.save()` runs key generation inside a transaction only on first save; don't set `key` manually.
 - Never write the wiki body (`DocState`/`content`) by re-encoding the CRDT in Python — it diverges from the editor. Route body writes through `apps.wiki.content_ops.apply_content` (→ the frontend encoder). If you add a node type to the editor, mirror it in `frontend/src/components/wiki/wiki-schema.ts` or MCP-written content will lose it.

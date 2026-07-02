@@ -348,3 +348,13 @@ WIKI_ENCODE_URL = _os.environ.get(
     "WIKI_ENCODE_URL", f"{_frontend_url}/api/wiki/encode"
 )
 WIKI_ENCODE_SECRET = _os.environ.get("WIKI_ENCODE_SECRET", CYT_BROADCAST_SECRET)
+
+FRONTEND_URL = _frontend_url
+
+# ---------------------------------------------------------------------------
+# useSend (transactional email — assignment notifications)
+# ---------------------------------------------------------------------------
+# Empty USESEND_API_KEY disables sending entirely (apps.tasks.emails no-ops).
+USESEND_API_KEY = _os.environ.get("USESEND_API_KEY", "")
+USESEND_BASE_URL = _os.environ.get("USESEND_BASE_URL", "https://app.usesend.com")
+USESEND_FROM_EMAIL = _os.environ.get("USESEND_FROM_EMAIL", "")

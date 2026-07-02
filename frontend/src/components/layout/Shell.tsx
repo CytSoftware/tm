@@ -2,7 +2,7 @@
 
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Menu, Search as SearchIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -11,9 +11,11 @@ import { GlobalShortcuts } from "@/components/GlobalShortcuts";
 import { meKey } from "@/lib/query-keys";
 import { fetchMe } from "@/lib/auth";
 import { ensureCsrfCookie } from "@/lib/api";
+import { connectNotificationSocket } from "@/lib/ws";
 import { useSidebar } from "@/lib/sidebar-state";
 import { TaskDialogProvider } from "@/lib/task-dialog";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { prependNotification } from "@/hooks/use-notifications";
 import { Sidebar } from "./Sidebar";
 
 /**
@@ -36,6 +38,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const { toggle } = useSidebar();
+  const queryClient = useQueryClient();
 
   // Mobile overlay state (not persisted — always starts closed)
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -98,6 +101,21 @@ export function Shell({ children }: { children: ReactNode }) {
       router.replace("/login");
     }
   }, [needsLogin, pathname, router]);
+
+  // Global notification socket — one per authenticated session, mounted
+  // here (not per project view like connectProjectSocket). Keyed on user id
+  // rather than the `meQuery.data` object so a background refetch of `/me`
+  // doesn't tear down and reconnect the socket.
+  const userId = meQuery.data?.id ?? null;
+  useEffect(() => {
+    if (needsLogin || userId == null) return;
+    return connectNotificationSocket({
+      // `event` carries an extra `type` discriminant beyond `Notification`'s
+      // fields — fine to pass through structurally, no need to destructure
+      // it off first.
+      onNotification: (event) => prependNotification(queryClient, event),
+    });
+  }, [needsLogin, userId, queryClient]);
 
   if (pathname === "/login") return <>{children}</>;
 

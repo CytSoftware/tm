@@ -10,7 +10,7 @@
  */
 
 import type { QueryClient } from "@tanstack/react-query";
-import type { TaskEvent } from "./types";
+import type { NotificationEvent, TaskEvent } from "./types";
 import { taskListKey, projectKey } from "./query-keys";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
@@ -74,6 +74,75 @@ export function connectProjectSocket({
 
     socket.onclose = () => {
       if (disposed) return;
+      reconnectAttempts += 1;
+      const delay = Math.min(30_000, 500 * 2 ** reconnectAttempts);
+      reconnectTimer = setTimeout(connect, delay);
+    };
+
+    socket.onerror = () => {
+      socket?.close();
+    };
+  }
+
+  connect();
+
+  return () => {
+    disposed = true;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (socket && socket.readyState <= WebSocket.OPEN) {
+      socket.close();
+    }
+  };
+}
+
+/**
+ * Per-user notification socket. Global — mounted once in `<Shell>` for the
+ * whole session, not per project view like `connectProjectSocket` above.
+ * Session-cookie auth (same as every other socket here); the server closes
+ * with code 4401 if the connection is anonymous.
+ *
+ * Mirrors `connectProjectSocket`'s connect/backoff/dispose shape. The
+ * `onNotification` callback is where the caller does cache surgery — this
+ * module stays cache-agnostic on purpose so it doesn't need to know about
+ * `notificationsKey()` / `notificationsUnreadKey()`.
+ */
+type NotificationOptions = {
+  onNotification: (event: NotificationEvent & { type: "notification" }) => void;
+};
+
+export function connectNotificationSocket({
+  onNotification,
+}: NotificationOptions): () => void {
+  let socket: WebSocket | null = null;
+  let reconnectAttempts = 0;
+  let disposed = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function connect() {
+    if (disposed) return;
+    socket = new WebSocket(`${WS_URL}/ws/notifications/`);
+
+    socket.onopen = () => {
+      reconnectAttempts = 0;
+    };
+
+    socket.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data) as NotificationEvent;
+        if (data.type === "notification") {
+          onNotification(data);
+        }
+      } catch {
+        // ignore malformed payloads
+      }
+    };
+
+    socket.onclose = (evt) => {
+      if (disposed) return;
+      // 4401 = anonymous connection, rejected server-side. Don't hammer the
+      // server retrying a connection that will never authenticate — the
+      // caller re-mounts this once `/api/auth/me/` succeeds anyway.
+      if (evt.code === 4401) return;
       reconnectAttempts += 1;
       const delay = Math.min(30_000, 500 * 2 ** reconnectAttempts);
       reconnectTimer = setTimeout(connect, delay);

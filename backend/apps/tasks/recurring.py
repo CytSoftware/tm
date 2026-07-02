@@ -193,6 +193,7 @@ def generate_due_instances(now: datetime | None = None) -> list[Task]:
     """
     # Local imports to avoid pulling channels/transitions into non-web paths.
     from .broadcast import broadcast_task_event
+    from .notifications import notify_task_event
     from .transitions import record_transition
 
     now = now or timezone.now()
@@ -248,6 +249,9 @@ def generate_due_instances(now: datetime | None = None) -> list[Task]:
                 "task.created",
                 {"key": task.key, "id": task.id},
             )
+            # Actor is None — this is a system-generated event, not a user
+            # action, so there's no "self-action" to exclude.
+            notify_task_event(task, None, "assigned")
             created.append(task)
 
             # Advance to the next scheduled occurrence strictly after the one

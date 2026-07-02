@@ -616,3 +616,66 @@ export type WikiEvent =
   | { type: "wiki.updated"; key: string; id: number; parent_id: number | null }
   | { type: "wiki.moved"; key: string; id: number; parent_id: number | null }
   | { type: "wiki.deleted"; key: string };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Notifications — per-user inbox of task events (assigned/updated/moved/
+// completed/deleted). REST list is paginated; live updates arrive over
+// `ws/notifications/`. See `apps/tasks/notifications.py` on the backend.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type NotificationVerb =
+  | "assigned"
+  | "updated"
+  | "moved"
+  | "completed"
+  | "deleted";
+
+/** Minimal actor shape the notification serializer embeds — not the full
+ *  `User` (no email/avatar). `null` means a system-generated event (e.g. the
+ *  recurring-task generator). */
+export type NotificationActor = {
+  id: number;
+  username: string;
+};
+
+export type NotificationProject = {
+  id: number;
+  name: string;
+};
+
+/** Shape varies by verb: `updated` carries `changed_fields`, `moved` carries
+ *  `from_column`/`to_column`. Other verbs send `{}`. */
+export type NotificationPayload = {
+  changed_fields?: string[];
+  from_column?: string | null;
+  to_column?: string | null;
+};
+
+export type Notification = {
+  id: number;
+  verb: NotificationVerb;
+  task_key: string;
+  task_title: string;
+  project: NotificationProject | null;
+  actor: NotificationActor | null;
+  payload: NotificationPayload;
+  read_at: string | null;
+  created_at: string;
+};
+
+export type NotificationListResponse = {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: Notification[];
+  /** Piggybacked on every list response so the bell badge doesn't need a
+   *  separate round trip on first paint. */
+  unread_count: number;
+};
+
+/** WS message shape on `ws/notifications/`. The `notification` variant is
+ *  a `Notification` plus the discriminant `type` field, sent flat (not
+ *  nested) — see `NotificationConsumer.notify_event` on the backend. */
+export type NotificationEvent =
+  | { type: "connected" }
+  | ({ type: "notification" } & Notification);
