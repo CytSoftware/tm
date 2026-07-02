@@ -127,7 +127,7 @@ export function KanbanColumn({
   }
 
   return (
-    <div className="flex-1 min-w-[200px] h-full flex flex-col min-h-0">
+    <div className="flex-1 min-w-[300px] h-full flex flex-col min-h-0">
       <header className="shrink-0 flex items-center justify-between gap-2 px-1 py-1.5 mb-1">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <span
@@ -309,7 +309,7 @@ export function AddColumnCell({ onAdd, isPending }: AddColumnCellProps) {
 
   if (!isEditing) {
     return (
-      <div className="shrink-0 w-[220px] h-full flex items-start pt-1">
+      <div className="shrink-0 w-[240px] h-full flex items-start pt-1">
         <Button
           variant="ghost"
           size="sm"
@@ -325,7 +325,7 @@ export function AddColumnCell({ onAdd, isPending }: AddColumnCellProps) {
   }
 
   return (
-    <div className="shrink-0 w-[220px] h-full flex items-start pt-1">
+    <div className="shrink-0 w-[240px] h-full flex items-start pt-1">
       <div className="flex w-full items-center gap-1">
         <Input
           autoFocus

@@ -19,6 +19,15 @@ export const PRIORITY_LABELS: Record<Priority, string> = {
 
 export const PRIORITY_ORDER: Priority[] = ["P1", "P2", "P3", "P4"];
 
+/** Solid dot color per priority (Tailwind `bg-*` class) — used by compact UI
+ *  like the kanban card footer and its inline priority popover. */
+export const PRIORITY_DOT: Record<Priority, string> = {
+  P1: "bg-red-500",
+  P2: "bg-orange-500",
+  P3: "bg-blue-500",
+  P4: "bg-muted-foreground/40",
+};
+
 export type User = {
   id: number;
   username: string;

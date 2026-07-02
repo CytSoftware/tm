@@ -18,6 +18,8 @@ import type {
   Task,
   TaskListResponse,
   Priority,
+  Label as LabelType,
+  User,
 } from "@/lib/types";
 
 type TasksInfiniteArgs = {
@@ -138,7 +140,7 @@ type CreateTaskPayload = {
   title: string;
   description?: string;
   assignee_id?: number | null;
-  priority?: Priority;
+  priority?: Priority | null;
   label_ids?: number[];
   story_points?: number | null;
 };
@@ -159,17 +161,116 @@ export function useCreateTask() {
   });
 }
 
-type UpdateTaskPayload = Partial<CreateTaskPayload> & { key: string };
+type UpdateTaskPayload = Partial<CreateTaskPayload> & {
+  key: string;
+  /** The real API also accepts this plural id-array field for PATCH — it
+   *  isn't modeled on `CreateTaskPayload`, which only has the create-time
+   *  singular `assignee_id`. */
+  assignee_ids?: number[];
+  /** Client-only hints for the optimistic cache patch below: the resolved
+   *  User/Label objects for `assignee_ids`/`label_ids`, since the PATCH body
+   *  only carries ids but the UI needs full objects to render immediately.
+   *  Stripped from the request body before it's sent — same idiom as
+   *  `MovePayload.optimistic` on `useMoveTask`. Callers that don't pass
+   *  these (e.g. TaskPanel's full-form submit) just wait for the
+   *  onSettled refetch, same as before this change. */
+  optimisticAssignees?: User[];
+  optimisticLabels?: LabelType[];
+};
+
+/** Patch a task in place across every `tasks-infinite` cache entry that
+ *  contains it (matched by `key` — the mutation payload doesn't carry the
+ *  numeric id). Used by `useUpdateTask`'s optimistic update for the kanban
+ *  card's inline chip editors — a full `invalidateAll` would refetch every
+ *  visible column just to reflect a one-field change. */
+function patchTaskInInfiniteCaches(
+  qc: QueryClient,
+  key: string,
+  patch: (task: Task) => Task,
+) {
+  const caches = qc.getQueriesData<InfiniteData<TaskListResponse>>({
+    queryKey: ["tasks-infinite"],
+  }) as InfiniteSnapshot;
+  for (const [queryKey, data] of caches) {
+    if (!data) continue;
+    let anyChanged = false;
+    const newPages = data.pages.map((page) => {
+      let pageChanged = false;
+      const results = page.results.map((t) => {
+        if (t.key !== key) return t;
+        pageChanged = true;
+        anyChanged = true;
+        return patch(t);
+      });
+      return pageChanged ? { ...page, results } : page;
+    });
+    if (anyChanged) {
+      qc.setQueryData<InfiniteData<TaskListResponse>>(queryKey, {
+        ...data,
+        pages: newPages,
+      });
+    }
+  }
+}
 
 export function useUpdateTask() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ key, ...payload }: UpdateTaskPayload) =>
+    mutationFn: ({
+      key,
+      optimisticAssignees: _optimisticAssignees,
+      optimisticLabels: _optimisticLabels,
+      ...payload
+    }: UpdateTaskPayload) =>
       apiFetch<Task>(`/api/tasks/${key}/`, {
         method: "PATCH",
         body: payload,
       }),
-    onSuccess: () => invalidateAll(qc),
+    // Optimistic patch, mirroring useMoveTask's cache-manipulation idiom:
+    //
+    //   onMutate  → cancel in-flight fetches, then patch the cached task in
+    //               place wherever it appears (every column's infinite
+    //               query may hold a copy) using the optimistic hints.
+    //   onError   → restore the snapshots.
+    //   onSettled → invalidate everything so the server-authoritative state
+    //               (and any fields we didn't patch optimistically, e.g. a
+    //               full TaskPanel submit) lands regardless.
+    onMutate: ({
+      key,
+      priority,
+      assignee_ids,
+      optimisticAssignees,
+      label_ids,
+      optimisticLabels,
+    }) => {
+      qc.cancelQueries({ queryKey: ["tasks-infinite"] });
+      const snapshots = qc.getQueriesData<InfiniteData<TaskListResponse>>({
+        queryKey: ["tasks-infinite"],
+      }) as InfiniteSnapshot;
+
+      const patchesPriority = priority !== undefined;
+      const patchesAssignees =
+        assignee_ids !== undefined && optimisticAssignees !== undefined;
+      const patchesLabels =
+        label_ids !== undefined && optimisticLabels !== undefined;
+      if (patchesPriority || patchesAssignees || patchesLabels) {
+        patchTaskInInfiniteCaches(qc, key, (t) => ({
+          ...t,
+          ...(patchesPriority ? { priority: priority ?? null } : {}),
+          ...(patchesAssignees ? { assignees: optimisticAssignees! } : {}),
+          ...(patchesLabels ? { labels: optimisticLabels! } : {}),
+        }));
+      }
+
+      return { snapshots };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (!ctx) return;
+      for (const [queryKey, data] of ctx.snapshots) {
+        qc.setQueryData(queryKey, data);
+      }
+    },
+    onSettled: () => invalidateAll(qc),
   });
 }
 

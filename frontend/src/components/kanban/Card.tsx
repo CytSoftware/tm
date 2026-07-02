@@ -1,17 +1,31 @@
 "use client";
 
-import { CalendarDays, Repeat } from "lucide-react";
+import { CalendarDays, Repeat, UserPlus } from "lucide-react";
 
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { UserAvatar } from "@/components/UserAvatar";
 import { TimeInColumn } from "@/components/task/TimeInColumn";
+import {
+  AssigneeCheckboxList,
+  LabelCheckboxList,
+  PriorityMenu,
+} from "@/components/task/pickers";
 import { LinkedPRBadge } from "@/components/integrations/LinkedPRBadge";
+import { useUpdateTask } from "@/hooks/use-tasks";
+import { useUsersQuery } from "@/hooks/use-users";
+import { useLabelsQuery } from "@/hooks/use-labels";
 import { cn } from "@/lib/utils";
 import { withAlpha } from "@/lib/colors";
+import { PRIORITY_DOT } from "@/lib/types";
 import type { Task, Priority, CardField, User } from "@/lib/types";
 
 const PRIORITY_BADGE: Record<
@@ -42,15 +56,6 @@ const PRIORITY_BADGE: Record<
     border: "border-border",
     label: "P4",
   },
-};
-
-// Solid dot color per priority — used in the compact footer where a bordered
-// badge would be too heavy. Mirrors PRIORITY_BADGE's semantic palette.
-const PRIORITY_DOT: Record<Priority, string> = {
-  P1: "bg-red-500",
-  P2: "bg-orange-500",
-  P3: "bg-blue-500",
-  P4: "bg-muted-foreground/40",
 };
 
 type Props = {
@@ -94,12 +99,65 @@ export function KanbanCard({
 
   const pri = task.priority ? PRIORITY_BADGE[task.priority] : null;
 
+  // Inline chip editors (priority / assignees / labels) — reuse the same
+  // mutation + shared checkbox-list pickers as the task panel (see
+  // components/task/pickers.tsx), but PATCH immediately on each toggle
+  // instead of waiting for a form submit. `useUsersQuery`/`useLabelsQuery`
+  // share the same query keys the board page already fetches, so this is a
+  // cache hit, not an extra request, in the common case.
+  const updateTask = useUpdateTask();
+  const usersQuery = useUsersQuery();
+  const allUsers = usersQuery.data ?? [];
+  const labelsQuery = useLabelsQuery();
+  // Labels selectable for this task: global labels plus ones scoped to the
+  // task's own project — mirrors the scope rule the backend enforces in
+  // TaskUpdateSerializer. `task.project` is present even on the
+  // all-projects board, so this resolves correctly there too.
+  const availableLabels = (labelsQuery.data ?? []).filter(
+    (l) => l.project == null || l.project === task.project,
+  );
+
+  function handlePriorityChange(next: Priority | null) {
+    if (next === task.priority) return;
+    updateTask.mutate({ key: task.key, priority: next });
+  }
+
+  function handleAssigneeToggle(id: number) {
+    const current = task.assignees.map((u) => u.id);
+    const next = current.includes(id)
+      ? current.filter((x) => x !== id)
+      : [...current, id];
+    updateTask.mutate({
+      key: task.key,
+      assignee_ids: next,
+      optimisticAssignees: allUsers.filter((u) => next.includes(u.id)),
+    });
+  }
+
+  function handleLabelToggle(id: number) {
+    const current = task.labels.map((l) => l.id);
+    const next = current.includes(id)
+      ? current.filter((x) => x !== id)
+      : [...current, id];
+    updateTask.mutate({
+      key: task.key,
+      label_ids: next,
+      optimisticLabels: availableLabels.filter((l) => next.includes(l.id)),
+    });
+  }
+
+  // The footer row also hosts the hover-reveal placeholder chips (ghost
+  // priority dot / ghost assignee avatar) that make the empty priority and
+  // assignee fields reachable — see AssigneeStack and the priority Popover
+  // below. So the row has to stay mounted whenever either field is enabled
+  // for this view, even with no data to show, not just when it "has content"
+  // like the other optional rows.
   const hasFooter =
     showKey ||
     task.is_recurring_instance ||
-    (showPriority && pri != null) ||
+    showPriority ||
+    showAssignee ||
     (showPoints && task.story_points != null) ||
-    (showAssignee && task.assignees.length > 0) ||
     task.current_column_since != null;
 
   return (
@@ -149,22 +207,40 @@ export function KanbanCard({
         </div>
       )}
 
-      {/* Labels */}
+      {/* Labels — click opens the same label picker as the task panel. */}
       {showLabels && task.labels.length > 0 && (
-        <div className="px-3 pb-1.5 flex flex-wrap gap-1">
-          {task.labels.map((l) => (
-            <span
-              key={l.id}
-              className="text-[10px] font-medium px-1.5 py-[2px] rounded-md"
-              style={{
-                background: withAlpha(l.color, 0.12),
-                color: l.color,
-              }}
-            >
-              {l.name}
-            </span>
-          ))}
-        </div>
+        <Popover>
+          <PopoverTrigger
+            render={
+              <button
+                type="button"
+                onClick={(e) => e.stopPropagation()}
+                aria-label="Edit labels"
+                className="w-full px-3 pb-1.5 flex flex-wrap gap-1 text-left rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+              >
+                {task.labels.map((l) => (
+                  <span
+                    key={l.id}
+                    className="text-[10px] font-medium px-1.5 py-[2px] rounded-md"
+                    style={{
+                      background: withAlpha(l.color, 0.12),
+                      color: l.color,
+                    }}
+                  >
+                    {l.name}
+                  </span>
+                ))}
+              </button>
+            }
+          />
+          <PopoverContent className="w-56 p-1" align="start">
+            <LabelCheckboxList
+              available={availableLabels}
+              selected={task.labels.map((l) => l.id)}
+              onToggle={handleLabelToggle}
+            />
+          </PopoverContent>
+        </Popover>
       )}
 
       {/* Project pill — prominent colored badge. Hidden entirely for
@@ -181,7 +257,8 @@ export function KanbanCard({
 
       {/* Single metadata footer: key · priority · points · assignees · time.
           Each item collapses out individually; the row hides entirely when
-          empty. */}
+          empty (unless priority/assignee hover placeholders keep it around —
+          see `hasFooter` above). */}
       {hasFooter && (
         <div className="flex items-center gap-2 px-3 py-1.5 border-t border-border/50 text-[11px] text-muted-foreground">
           {showKey && (
@@ -197,28 +274,49 @@ export function KanbanCard({
               <TooltipContent>Recurring instance</TooltipContent>
             </Tooltip>
           )}
-          {showPriority && pri && task.priority && (
-            <Tooltip>
-              <TooltipTrigger
+          {showPriority && (
+            <Popover>
+              <PopoverTrigger
                 render={
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1 font-mono text-[10px] font-semibold tracking-wider shrink-0",
-                      pri.text,
-                    )}
+                  <button
+                    type="button"
+                    onClick={(e) => e.stopPropagation()}
+                    title={pri && task.priority ? `Priority ${pri.label}` : "Set priority"}
+                    className="shrink-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
                   >
-                    <span
-                      className={cn(
-                        "size-2 rounded-full",
-                        PRIORITY_DOT[task.priority],
-                      )}
-                    />
-                    {pri.label}
-                  </span>
+                    {pri && task.priority ? (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 font-mono text-[10px] font-semibold tracking-wider",
+                          pri.text,
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "size-2 rounded-full",
+                            PRIORITY_DOT[task.priority],
+                          )}
+                        />
+                        {pri.label}
+                      </span>
+                    ) : (
+                      // Hover-reveal placeholder — keeps "no priority" tasks
+                      // reachable without cluttering the default view.
+                      <span
+                        aria-hidden
+                        className="block size-2.5 rounded-full border border-dashed border-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity"
+                      />
+                    )}
+                  </button>
                 }
               />
-              <TooltipContent>Priority {pri.label}</TooltipContent>
-            </Tooltip>
+              <PopoverContent className="w-36 p-1" align="start">
+                <PriorityMenu
+                  value={task.priority}
+                  onSelect={handlePriorityChange}
+                />
+              </PopoverContent>
+            </Popover>
           )}
           {showPoints && task.story_points != null && (
             <span className="font-mono tabular-nums bg-muted/60 px-1.5 py-0.5 rounded text-[10px] text-muted-foreground shrink-0">
@@ -226,8 +324,12 @@ export function KanbanCard({
             </span>
           )}
           <div className="flex-1" />
-          {showAssignee && task.assignees.length > 0 && (
-            <AssigneeStack users={task.assignees} />
+          {showAssignee && (
+            <AssigneeStack
+              task={task}
+              allUsers={allUsers}
+              onToggle={handleAssigneeToggle}
+            />
           )}
           {task.current_column_since && (
             <span className="shrink-0 text-muted-foreground/70">
@@ -291,42 +393,78 @@ function ProjectPill({ task }: { task: Task }) {
   );
 }
 
-/** Stacked avatars with a `+N` overflow bubble. */
-function AssigneeStack({ users }: { users: User[] }) {
+/** Stacked avatars with a `+N` overflow bubble. Click opens the same
+ *  assignee picker as the task panel; an empty stack shows a hover-reveal
+ *  ghost avatar so the field stays reachable. */
+function AssigneeStack({
+  task,
+  allUsers,
+  onToggle,
+}: {
+  task: Task;
+  allUsers: User[];
+  onToggle: (id: number) => void;
+}) {
   const VISIBLE = 3;
+  const users = task.assignees;
   const shown = users.slice(0, VISIBLE);
   const extra = users.length - shown.length;
   const singleName = users.length === 1 ? users[0].username : null;
+
   return (
-    <div className="flex items-center gap-1.5 min-w-0">
-      <div className="flex items-center -space-x-1.5">
-        {shown.map((u) => (
-          <Tooltip key={u.id}>
-            <TooltipTrigger
-              render={
-                <div className="ring-2 ring-card rounded-full">
-                  <UserAvatar
-                    username={u.username}
-                    avatarUrl={u.avatar_url}
-                    size="size-5"
-                  />
-                </div>
-              }
-            />
-            <TooltipContent>{u.username}</TooltipContent>
-          </Tooltip>
-        ))}
-        {extra > 0 && (
-          <div className="size-5 ring-2 ring-card rounded-full bg-muted text-[9px] font-semibold text-muted-foreground grid place-items-center">
-            +{extra}
-          </div>
-        )}
-      </div>
-      {singleName && (
-        <span className="text-[11px] text-muted-foreground truncate">
-          {singleName}
-        </span>
-      )}
-    </div>
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            onClick={(e) => e.stopPropagation()}
+            aria-label="Edit assignees"
+            className="flex items-center gap-1.5 min-w-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+          >
+            {users.length === 0 ? (
+              <span className="size-5 rounded-full border border-dashed border-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity grid place-items-center">
+                <UserPlus className="size-2.5 text-muted-foreground/60" />
+              </span>
+            ) : (
+              <div className="flex items-center -space-x-1.5">
+                {shown.map((u) => (
+                  <Tooltip key={u.id}>
+                    <TooltipTrigger
+                      render={
+                        <div className="ring-2 ring-card rounded-full">
+                          <UserAvatar
+                            username={u.username}
+                            avatarUrl={u.avatar_url}
+                            size="size-5"
+                          />
+                        </div>
+                      }
+                    />
+                    <TooltipContent>{u.username}</TooltipContent>
+                  </Tooltip>
+                ))}
+                {extra > 0 && (
+                  <div className="size-5 ring-2 ring-card rounded-full bg-muted text-[9px] font-semibold text-muted-foreground grid place-items-center">
+                    +{extra}
+                  </div>
+                )}
+              </div>
+            )}
+            {singleName && (
+              <span className="text-[11px] text-muted-foreground truncate">
+                {singleName}
+              </span>
+            )}
+          </button>
+        }
+      />
+      <PopoverContent className="w-52 p-1" align="end">
+        <AssigneeCheckboxList
+          available={allUsers}
+          selected={users.map((u) => u.id)}
+          onToggle={onToggle}
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
