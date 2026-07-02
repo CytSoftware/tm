@@ -48,7 +48,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { AddColumnCell, KanbanColumn } from "@/components/kanban/Column";
+import { AddColumnCell, CollapsedColumn, KanbanColumn } from "@/components/kanban/Column";
 import { DeleteColumnDialog } from "@/components/kanban/DeleteColumnDialog";
 import { KanbanCard } from "@/components/kanban/Card";
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
@@ -81,6 +81,7 @@ import {
   useReorderColumns,
   useUpdateColumn,
 } from "@/hooks/use-columns";
+import { useBoardColumnPrefs } from "@/hooks/use-board-column-prefs";
 import { connectProjectSocket } from "@/lib/ws";
 import type {
   BoardFilters,
@@ -196,6 +197,7 @@ type DroppableColumnProps = {
   onToggleDone?: () => void;
   onMove?: (direction: "left" | "right") => void;
   onRequestDelete?: () => void;
+  onHide?: () => void;
 };
 
 function DroppableColumn({
@@ -217,6 +219,7 @@ function DroppableColumn({
   onToggleDone,
   onMove,
   onRequestDelete,
+  onHide,
 }: DroppableColumnProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -254,6 +257,7 @@ function DroppableColumn({
       onToggleDone={onToggleDone}
       onMove={onMove}
       onRequestDelete={onRequestDelete}
+      onHide={onHide}
     >
       {children}
     </KanbanColumn>
@@ -366,6 +370,10 @@ export default function BoardPage() {
   const updateColumn = useUpdateColumn();
   const deleteColumn = useDeleteColumn();
   const reorderColumns = useReorderColumns();
+  // Per-user, per-project collapsed/hidden columns. ``projectId`` is null on
+  // the all-projects board — the hook maps that to the "0" prefs key.
+  const { hiddenColumns, hideColumn, showColumn } =
+    useBoardColumnPrefs(projectId);
 
   // Anticipated drop position, updated as the user drags. Drives the
   // in-list ghost preview: the source task gets filtered out of its
@@ -872,6 +880,9 @@ export default function BoardPage() {
                 onEditTask={(task) => taskDialog.openTask(task)}
                 onDeclutter={() => setDeclutterOpen(true)}
                 onAssign={() => setAssignOpen(true)}
+                isHidden={hiddenColumns.has(col.id)}
+                onHide={() => hideColumn(col.id)}
+                onShow={() => showColumn(col.id)}
                 manageable={Boolean(project) && col.id > 0}
                 canMoveLeft={Boolean(project) && col.id > 0 && idx > 0}
                 canMoveRight={
@@ -1037,6 +1048,12 @@ type ColumnContainerProps = {
   onToggleDone?: () => void;
   onMove?: (direction: "left" | "right") => void;
   onRequestDelete?: () => void;
+  /** Collapsed state, lifted to the board so it can survive this column's
+   *  own unmount/remount (e.g. column reorder) and be shared with the
+   *  keyboard-nav / drag-monitor's ``tasksByColumn`` map. */
+  isHidden?: boolean;
+  onHide?: () => void;
+  onShow?: () => void;
 };
 
 /** Owns a single column's infinite task query and renders its cards.
@@ -1064,6 +1081,9 @@ function ColumnContainer({
   onToggleDone,
   onMove,
   onRequestDelete,
+  isHidden,
+  onHide,
+  onShow,
 }: ColumnContainerProps) {
   // Real columns have positive ids + a concrete `project` fk. All-projects
   // virtual columns have negative ids and only a column name.
@@ -1086,26 +1106,38 @@ function ColumnContainer({
   // 25 is enough to fill the initial viewport on most screens; the sentinel
   // fetches more on scroll. Halved from 50 to shave initial-load latency
   // when the user has many tasks — a 250-row first paint across five
-  // columns was the dominant cost on prod.
+  // columns was the dominant cost on prod. Collapsed columns only need the
+  // total count (surfaced via `page.count` regardless of `limit`), so drop
+  // to 1 row to keep the request cheap — the strip never renders cards.
   const query = useTasksInfinite({
     projectId,
     columnId: isVirtual ? null : column.id,
     columnName: isVirtual ? column.name : null,
     filters: effectiveFilters,
-    limit: 25,
+    limit: isHidden ? 1 : 25,
   });
 
   const tasks = useMemo(() => flattenInfinite(query.data), [query.data]);
   const totalCount = query.data?.pages[0]?.count;
 
+  // Collapsed columns report an empty task list to the board so keyboard
+  // navigation and the drag monitor skip straight past them — same as an
+  // empty column today (e.g. an emptied Backlog already exercises this
+  // path in the nav code above).
   useEffect(() => {
-    onTasksChange(column.id, tasks);
-  }, [column.id, tasks, onTasksChange]);
+    onTasksChange(column.id, isHidden ? [] : tasks);
+  }, [column.id, tasks, isHidden, onTasksChange]);
 
   const fetchNextPage = query.fetchNextPage;
   const handleLoadMore = useCallback(() => {
     fetchNextPage();
   }, [fetchNextPage]);
+
+  if (isHidden) {
+    return (
+      <CollapsedColumn column={column} count={totalCount} onExpand={() => onShow?.()} />
+    );
+  }
 
   const visibleTasks = dragPreview
     ? tasks.filter((t) => t.id !== dragPreview.sourceTaskId)
@@ -1145,6 +1177,7 @@ function ColumnContainer({
       onToggleDone={onToggleDone}
       onMove={onMove}
       onRequestDelete={onRequestDelete}
+      onHide={onHide}
     >
       {visibleTasks.map((task, idx) => (
         <Fragment key={task.id}>

@@ -37,6 +37,12 @@ export type User = {
   avatar_url: string;
 };
 
+/** Per-project kanban column visibility, keyed by *string* project id (the
+ *  all-projects board uses ``"0"`` since it has no real project). Column ids
+ *  can be the negative virtual ids used by the all-projects board's
+ *  STANDARD_COLUMNS — the backend accepts any ints. */
+export type BoardColumnPrefs = Record<string, { hidden_columns: number[] }>;
+
 /** User-private preferences — only returned by ``/api/auth/me/``. Not
  *  exposed on the shared ``/api/users/`` listing. */
 export type MePreferences = {
@@ -45,6 +51,8 @@ export type MePreferences = {
    *  keys stay as ``ArrowLeft`` / ``ArrowRight`` / ``ArrowUp``). Each user
    *  can be bound to at most one key; each key to one user. */
   assign_hotkey_bindings: Record<string, number>;
+  /** Collapsed/hidden kanban columns per project — see ``BoardColumnPrefs``. */
+  board_column_prefs: BoardColumnPrefs;
 };
 
 export type Me = User & {

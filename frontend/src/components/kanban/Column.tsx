@@ -7,6 +7,7 @@ import {
   Check,
   CircleCheck,
   CircleDashed,
+  EyeOff,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -25,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Column, Task } from "@/lib/types";
 
@@ -51,6 +53,10 @@ type Props = {
   onToggleDone?: () => void;
   onMove?: (direction: "left" | "right") => void;
   onRequestDelete?: () => void;
+  /** Collapses the column into a thin strip. Offered on every column
+   *  (including the non-``manageable`` virtual all-projects ones) as long as
+   *  a handler is passed. */
+  onHide?: () => void;
 };
 
 export function KanbanColumn({
@@ -73,6 +79,7 @@ export function KanbanColumn({
   onToggleDone,
   onMove,
   onRequestDelete,
+  onHide,
 }: Props) {
   const displayCount = totalCount ?? tasks.length;
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -208,7 +215,7 @@ export function KanbanColumn({
               <Plus className="size-3.5" />
             </Button>
           )}
-          {manageable && (
+          {(manageable || onHide) && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -223,41 +230,55 @@ export function KanbanColumn({
                 }
               />
               <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuItem onClick={() => setIsRenaming(true)}>
-                  <Pencil className="size-3.5" />
-                  Rename
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onToggleDone?.()}>
-                  {column.is_done ? (
-                    <CircleDashed className="size-3.5" />
-                  ) : (
-                    <CircleCheck className="size-3.5" />
-                  )}
-                  {column.is_done ? "Unmark as done" : "Mark as done"}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => onMove?.("left")}
-                  disabled={!canMoveLeft}
-                >
-                  <ArrowLeft className="size-3.5" />
-                  Move left
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => onMove?.("right")}
-                  disabled={!canMoveRight}
-                >
-                  <ArrowRight className="size-3.5" />
-                  Move right
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => onRequestDelete?.()}
-                  className="text-destructive focus:text-destructive"
-                >
-                  <Trash2 className="size-3.5" />
-                  Delete column
-                </DropdownMenuItem>
+                {manageable && (
+                  <>
+                    <DropdownMenuItem onClick={() => setIsRenaming(true)}>
+                      <Pencil className="size-3.5" />
+                      Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onToggleDone?.()}>
+                      {column.is_done ? (
+                        <CircleDashed className="size-3.5" />
+                      ) : (
+                        <CircleCheck className="size-3.5" />
+                      )}
+                      {column.is_done ? "Unmark as done" : "Mark as done"}
+                    </DropdownMenuItem>
+                  </>
+                )}
+                {onHide && (
+                  <DropdownMenuItem onClick={() => onHide()}>
+                    <EyeOff className="size-3.5" />
+                    Hide column
+                  </DropdownMenuItem>
+                )}
+                {manageable && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => onMove?.("left")}
+                      disabled={!canMoveLeft}
+                    >
+                      <ArrowLeft className="size-3.5" />
+                      Move left
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => onMove?.("right")}
+                      disabled={!canMoveRight}
+                    >
+                      <ArrowRight className="size-3.5" />
+                      Move right
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => onRequestDelete?.()}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="size-3.5" />
+                      Delete column
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -281,6 +302,52 @@ export function KanbanColumn({
         )}
       </div>
     </div>
+  );
+}
+
+type CollapsedColumnProps = {
+  column: Column;
+  /** Task count for the column — undefined while the (``limit: 1``) count
+   *  query is still loading, in which case we just show a blank instead of
+   *  flashing a stale/zero value. */
+  count?: number;
+  onExpand: () => void;
+};
+
+/** Linear-style collapsed column: a thin full-height strip with the column
+ *  name rendered vertically + a task count. Clicking anywhere re-expands.
+ *  Not wired up as a drag-and-drop target — dropping a card directly onto a
+ *  collapsed column isn't supported (see board/page.tsx ColumnContainer). */
+export function CollapsedColumn({ column, count, onExpand }: CollapsedColumnProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={onExpand}
+            aria-label={`Show column ${column.name}`}
+            className="shrink-0 w-10 h-full flex flex-col items-center gap-2 pt-3 pb-2 rounded-md border border-border/60 bg-muted/50 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+          >
+            <span
+              className={cn(
+                "size-1.5 rounded-full shrink-0",
+                column.is_done ? "bg-emerald-500" : "bg-muted-foreground/40",
+              )}
+            />
+            <span className="text-[11px] tabular-nums shrink-0">
+              {count ?? " "}
+            </span>
+            <span className="flex-1 min-h-0 flex items-center justify-center overflow-hidden">
+              <span className="text-[12px] font-medium tracking-tight [writing-mode:vertical-rl] rotate-180 truncate">
+                {column.name}
+              </span>
+            </span>
+          </button>
+        }
+      />
+      <TooltipContent side="right">Show column</TooltipContent>
+    </Tooltip>
   );
 }
 
