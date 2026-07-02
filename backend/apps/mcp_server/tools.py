@@ -1774,6 +1774,56 @@ def knowledge_sources() -> list[dict[str, Any]]:
     return b2.manifest_sources()
 
 
+WIKI_SCHEMA = """Cyt Software LLM Wiki — conventions. READ THIS before writing pages.
+
+You maintain a SHARED markdown knowledge base. Pages are nested; the slug IS a
+directory path. Put every page in the right directory — never at the root.
+
+Directory taxonomy (slug prefix):
+- entities/people/<name>       individuals (clients, prospects, contacts)
+- entities/companies/<name>    companies (clients, prospects, vendors, competitors)
+- entities/products/<name>     third-party products/services we use or evaluate
+- concepts/<name>              ideas, methods, frameworks, market observations
+- projects/<name>              Cyt Software projects/products/initiatives
+- decisions/<name>             ADR-style decisions
+- sources/<name>               one summary page per ingested source document
+
+Slugs are kebab-case, one entity/concept per page (e.g. entities/people/john-smith).
+
+Frontmatter — REQUIRED on every page:
+---
+title: Page Title
+type: person|company|product|project|concept|decision|source
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+tags: [..]
+---
+Person pages also add: company, role, relationship, last_contact, next_followup.
+Company pages add: relationship, status. Project pages add: status, owner.
+Source pages add: source (the drive key), ingested.
+
+Cross-references: use [[entities/people/john-smith]] wikilinks for EVERY mention
+of another entity/concept — they render as clickable links.
+
+Auto-maintained BY THE SERVER (do NOT write or edit these yourself):
+- index   the catalog — regenerated on every write/delete
+- log     the activity log — appended on every write/delete
+Just write your content pages; the index and log update themselves.
+
+Before writing: knowledge_read the page if it may exist and UPDATE it in place
+(don't duplicate). Never file secrets/credentials/tokens, or personal content.
+"""
+
+
+def knowledge_schema() -> dict[str, Any]:
+    """Return the wiki conventions (directory layout, frontmatter, wikilinks)."""
+    return {"schema": WIKI_SCHEMA}
+
+
+def _agent_name(mcp_user) -> str:
+    return getattr(mcp_user, "username", None) or "mcp"
+
+
 def knowledge_write(slug: str, markdown: str, mcp_user=None) -> dict[str, Any]:
     import logging
 
@@ -1781,11 +1831,44 @@ def knowledge_write(slug: str, markdown: str, mcp_user=None) -> dict[str, Any]:
 
     if len((markdown or "").encode("utf-8")) > 5_000_000:
         raise ValueError("Markdown too large (max 5 MB per wiki page).")
+    if b2._wiki_norm(slug) in b2.RESERVED_SLUGS:
+        raise ValueError(
+            "'index' and 'log' are auto-maintained by the server. Write your "
+            "content pages (e.g. entities/people/<name>) — the index and log "
+            "update automatically. Call knowledge_schema for the conventions."
+        )
     result = b2.wiki_write(slug, markdown)
+    b2.append_log("write", f"wrote {result['slug']}", [result["slug"]], _agent_name(mcp_user))
+    try:
+        b2.rebuild_index()
+    except Exception:
+        logging.getLogger("apps.drive").warning("rebuild_index failed", exc_info=True)
     if mcp_user is not None:
         logging.getLogger("apps.mcp_server").info(
             "knowledge_write by %s -> %s (%d bytes)",
-            getattr(mcp_user, "username", mcp_user), result.get("slug"),
-            result.get("size", 0),
+            _agent_name(mcp_user), result.get("slug"), result.get("size", 0),
         )
     return result
+
+
+def knowledge_delete(slug: str, mcp_user=None) -> dict[str, Any]:
+    import logging
+
+    from apps.drive import b2
+
+    norm = b2._wiki_norm(slug)
+    if norm in b2.RESERVED_SLUGS:
+        raise ValueError("Cannot delete the auto-maintained 'index'/'log' pages.")
+    result = b2.wiki_delete(slug)
+    b2.append_log("delete", f"deleted {norm}", [norm], _agent_name(mcp_user))
+    try:
+        b2.rebuild_index()
+    except Exception:
+        logging.getLogger("apps.drive").warning("rebuild_index failed", exc_info=True)
+    return result
+
+
+def knowledge_reindex() -> dict[str, Any]:
+    from apps.drive import b2
+
+    return b2.rebuild_index()

@@ -975,16 +975,51 @@ async def knowledge_sources() -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def knowledge_write(slug: str, markdown: str) -> dict[str, Any]:
-    """Create or overwrite an LLM-wiki page with Markdown.
+async def knowledge_schema() -> dict[str, Any]:
+    """The LLM-wiki conventions — CALL THIS FIRST before writing pages.
 
-    ``slug`` is the page name (normalised to a safe slug; stored at
-    ``llm-wiki/<slug>.md``). Single writer, last-write-wins. This is how an
-    agent maintains the knowledge base; humans see it read-only.
+    Explains the directory taxonomy (entities/people, entities/companies,
+    concepts, projects, decisions, sources), required YAML frontmatter,
+    [[wikilink]] cross-references, and what the server auto-maintains.
+    """
+    return await _async(tools.knowledge_schema)()
+
+
+@mcp.tool()
+async def knowledge_write(slug: str, markdown: str) -> dict[str, Any]:
+    """Create or update an LLM-wiki page (Markdown). FOLLOW THE STRUCTURE.
+
+    Call ``knowledge_schema`` for the full rules. Key points:
+    - The slug MUST be a directory path, not a bare name — e.g.
+      ``entities/people/john-smith``, ``entities/companies/acme``,
+      ``concepts/<name>``, ``projects/<name>``, ``sources/<name>``.
+      Never write a page at the root.
+    - Include YAML frontmatter (title, type, created, updated, tags).
+    - Cross-reference other pages with ``[[path/to/page]]`` wikilinks.
+    - If the page may already exist, ``knowledge_read`` it and update in place
+      rather than duplicating.
+    The ``index`` catalog and ``log`` are auto-maintained by the server on every
+    write — do not create or edit them yourself.
     """
     return await _async(tools.knowledge_write)(
         slug=slug, markdown=markdown, mcp_user=_get_mcp_user(),
     )
+
+
+@mcp.tool()
+async def knowledge_delete(slug: str) -> dict[str, Any]:
+    """Delete an LLM-wiki page by slug (e.g. ``entities/people/john-smith``).
+
+    Irreversible. The activity ``log`` records the deletion and the ``index`` is
+    regenerated automatically. The reserved ``index``/``log`` pages can't be deleted.
+    """
+    return await _async(tools.knowledge_delete)(slug=slug, mcp_user=_get_mcp_user())
+
+
+@mcp.tool()
+async def knowledge_reindex() -> dict[str, Any]:
+    """Rebuild the ``index`` catalog from the current pages (housekeeping/repair)."""
+    return await _async(tools.knowledge_reindex)()
 
 
 # ---------------------------------------------------------------------------

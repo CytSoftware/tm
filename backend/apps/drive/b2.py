@@ -482,3 +482,70 @@ def manifest_sources() -> list[dict[str, Any]]:
     """Flat list of ingested-source records (for tooling / the ingest agent)."""
     m = read_manifest()
     return [{"source": k, **rec} for k, rec in sorted((m.get("sources") or {}).items())]
+
+
+# ---------------------------------------------------------------------------
+# Wiki housekeeping — the catalog (index) and activity log are maintained by
+# the SERVER, not the agent, so they never drift. ``index`` is regenerated from
+# the page list on every write/delete; ``log`` is appended to. Both are normal
+# wiki pages (``llm-wiki/index.md`` / ``llm-wiki/log.md``), just server-owned.
+# ---------------------------------------------------------------------------
+
+RESERVED_SLUGS = {"index", "log"}
+
+
+def _read_wiki_raw(slug: str) -> str | None:
+    try:
+        r = client().get_object(Bucket=_bucket(), Key=wiki_key(slug))
+        return r["Body"].read().decode("utf-8", "replace")
+    except Exception as exc:
+        resp = getattr(exc, "response", None) or {}
+        if (resp.get("ResponseMetadata") or {}).get("HTTPStatusCode") == 404:
+            return None
+        raise _upstream(exc) from exc
+
+
+def _put_wiki_raw(slug: str, markdown: str) -> None:
+    client().put_object(Bucket=_bucket(), Key=wiki_key(slug),
+                        Body=markdown.encode("utf-8"),
+                        ContentType="text/markdown; charset=utf-8")
+
+
+def rebuild_index() -> dict[str, Any]:
+    """Regenerate ``index`` as a catalog of all pages, grouped by top folder."""
+    from collections import defaultdict
+
+    pages = [p for p in wiki_list() if p["slug"] not in RESERVED_SLUGS]
+    groups: dict[str, list[str]] = defaultdict(list)
+    for p in pages:
+        top = p["slug"].split("/")[0] if "/" in p["slug"] else "(root)"
+        groups[top].append(p["slug"])
+
+    lines = ["# Wiki Index", "",
+             "_Auto-maintained by the server — do not edit by hand._", "",
+             f"{len(pages)} pages.", ""]
+    for top in sorted(groups):
+        items = sorted(groups[top])
+        lines.append(f"## {top} ({len(items)})")
+        for slug in items:
+            lines.append(f"- [[{slug}|{slug.split('/')[-1]}]]")
+        lines.append("")
+    _put_wiki_raw("index", "\n".join(lines))
+    return {"ok": True, "pages": len(pages)}
+
+
+def append_log(entry_type: str, description: str,
+               pages: list[str] | None = None, agent: str = "mcp") -> None:
+    """Append one entry to the activity ``log`` page (best-effort, never raises)."""
+    from django.utils import timezone
+
+    try:
+        ts = timezone.now().strftime("%Y-%m-%d %H:%M")
+        entry = f"\n## [{ts}] {entry_type} | {description} | agent: {agent}\n"
+        if pages:
+            entry += "- Pages: " + ", ".join(f"[[{p}]]" for p in pages) + "\n"
+        cur = _read_wiki_raw("log") or "# Activity Log\n\n_Auto-maintained by the server._\n"
+        _put_wiki_raw("log", cur.rstrip("\n") + "\n" + entry)
+    except Exception:  # housekeeping must not fail the underlying write
+        import logging
+        logging.getLogger("apps.drive").warning("append_log failed", exc_info=True)
