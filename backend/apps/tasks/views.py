@@ -121,8 +121,90 @@ def _me_payload(user, request):
                 clean[k] = int(v)
             except (TypeError, ValueError):
                 continue
-    data["preferences"] = {"assign_hotkey_bindings": clean}
+    data["preferences"] = {
+        "assign_hotkey_bindings": clean,
+        "board_column_prefs": _clean_board_column_prefs(profile.board_column_prefs),
+    }
     return data
+
+
+def _clean_board_column_prefs(raw) -> dict[str, dict[str, list[int]]]:
+    """Defensive filter mirroring ``assign_hotkey_bindings`` above, so a
+    hand-edited column can't crash the frontend. Drops anything that
+    doesn't match ``{"<project_id>": {"hidden_columns": [<column_id>, ...]}}``.
+    """
+    clean: dict[str, dict[str, list[int]]] = {}
+    if not isinstance(raw, dict):
+        return clean
+    for project_id, value in raw.items():
+        if not isinstance(project_id, str) or not isinstance(value, dict):
+            continue
+        hidden = value.get("hidden_columns")
+        if not isinstance(hidden, list):
+            continue
+        ids: list[int] = []
+        for cid in hidden:
+            try:
+                ids.append(int(cid))
+            except (TypeError, ValueError):
+                continue
+        clean[project_id] = {"hidden_columns": ids}
+    return clean
+
+
+def _validate_board_column_prefs(raw) -> dict[str, dict[str, list[int]]]:
+    """Strict-validate a PATCH ``preferences.board_column_prefs`` payload.
+
+    Unlike ``_clean_board_column_prefs`` (which silently drops malformed
+    entries on read so a bad DB row can't crash the frontend), writes are
+    rejected outright with a 400 so the frontend finds out immediately if
+    it sends the wrong shape. Required shape:
+    ``{"<project_id>": {"hidden_columns": [<column_id>, ...]}}`` where
+    ``project_id`` is a string of digits and ``hidden_columns`` entries are
+    (or losslessly stringify to) ints.
+    """
+    if not isinstance(raw, dict):
+        raise ValidationError(
+            {"preferences.board_column_prefs": "Must be an object."}
+        )
+    validated: dict[str, dict[str, list[int]]] = {}
+    for project_id, value in raw.items():
+        if not isinstance(project_id, str) or not project_id.isdigit():
+            raise ValidationError(
+                {"preferences.board_column_prefs": "Keys must be string project ids."}
+            )
+        if not isinstance(value, dict) or set(value.keys()) - {"hidden_columns"}:
+            raise ValidationError(
+                {
+                    "preferences.board_column_prefs": (
+                        f"Value for project {project_id!r} must be an object "
+                        "with only a `hidden_columns` key."
+                    )
+                }
+            )
+        hidden = value.get("hidden_columns", [])
+        if not isinstance(hidden, list):
+            raise ValidationError(
+                {
+                    "preferences.board_column_prefs": (
+                        f"`hidden_columns` for project {project_id!r} must be a list."
+                    )
+                }
+            )
+        ids: list[int] = []
+        for cid in hidden:
+            if isinstance(cid, bool) or not isinstance(cid, int):
+                raise ValidationError(
+                    {
+                        "preferences.board_column_prefs": (
+                            f"`hidden_columns` for project {project_id!r} must "
+                            "contain only integers."
+                        )
+                    }
+                )
+            ids.append(cid)
+        validated[project_id] = {"hidden_columns": ids}
+    return validated
 
 
 class MeView(APIView):
@@ -153,6 +235,18 @@ class MeView(APIView):
                             "assign_hotkey_bindings": {
                                 "type": "object",
                                 "additionalProperties": {"type": "integer"},
+                            },
+                            "board_column_prefs": {
+                                "type": "object",
+                                "additionalProperties": {
+                                    "type": "object",
+                                    "properties": {
+                                        "hidden_columns": {
+                                            "type": "array",
+                                            "items": {"type": "integer"},
+                                        },
+                                    },
+                                },
                             },
                         },
                     },
@@ -226,6 +320,12 @@ class MeView(APIView):
                 k: uid for k, uid in staged.items() if uid in existing_ids
             }
             profile.save(update_fields=["assign_hotkey_bindings"])
+
+        if isinstance(prefs, dict) and "board_column_prefs" in prefs:
+            profile.board_column_prefs = _validate_board_column_prefs(
+                prefs.get("board_column_prefs")
+            )
+            profile.save(update_fields=["board_column_prefs"])
 
         return Response(_me_payload(request.user, request))
 

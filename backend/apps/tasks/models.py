@@ -430,6 +430,17 @@ class UserProfile(models.Model):
             "Stale IDs (deleted projects) are ignored at read time."
         ),
     )
+    board_column_prefs = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Per-user, per-project kanban column visibility. Shape: "
+            '``{"<project_id>": {"hidden_columns": [<column_id>, ...]}}`` — '
+            "project ids are stored as string keys (JSON object keys) and "
+            "column ids as ints. Purely personal display state; doesn't "
+            "affect teammates or the shared board layout."
+        ),
+    )
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.user.username} profile"
