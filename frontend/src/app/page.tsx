@@ -5,15 +5,17 @@
  *
  * One glance answers three questions: where are we in the current two-month
  * period, how are the bets doing (team-wide, every project), and what's on
- * my plate. The period masthead reuses the bets page's clock; the bets
- * column is a read-only scoreboard; the inbox is personal (assigned to me);
- * the activity feed shares the sidebar inbox's cache.
+ * my plate. The period masthead reuses the bets page's clock and navigates
+ * periods — browse back to see how past bets closed, or forward to place
+ * next period's bets. The bets column follows the selected period (new bets
+ * and check-in history in place); My Tasks and Activity stay pinned to now.
  *
  * Freshness: no project sockets here — the sections poll every 60s, the
  * global notification socket prepends activity live, and Shell invalidates
  * my-tasks when a notification lands.
  */
 
+import { useState } from "react";
 import { Home } from "lucide-react";
 
 import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
@@ -23,6 +25,8 @@ import { PeriodMasthead } from "@/components/bets/PeriodMasthead";
 import { currentPeriodStart } from "@/lib/periods";
 
 export default function DashboardPage() {
+  const [period, setPeriod] = useState<string>(() => currentPeriodStart());
+
   return (
     <div className="h-full flex flex-col min-h-0">
       <header className="shrink-0 h-12 flex items-center gap-3 px-4 border-b border-border/80 bg-background">
@@ -32,11 +36,11 @@ export default function DashboardPage() {
 
       <div className="flex-1 min-h-0 overflow-y-auto bg-muted/40 px-4 py-5">
         <div className="max-w-5xl mx-auto">
-          <PeriodMasthead period={currentPeriodStart()} showNav={false} />
+          <PeriodMasthead period={period} onChange={setPeriod} />
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
             <div className="lg:col-span-2 min-w-0">
-              <BetsOverview />
+              <BetsOverview period={period} />
             </div>
             <div className="min-w-0 space-y-5 order-first lg:order-none">
               <MyTasks />
