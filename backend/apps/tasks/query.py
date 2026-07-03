@@ -14,6 +14,7 @@ saved ``View`` stores in its JSON fields:
         "labels": [3],                 # label ids OR names
         "column": 7,                   # column id OR name
         "project": 1,                  # project id OR prefix
+        "bet": 4,                      # bet id OR name, or "none" for unlinked
         "search": "oauth",             # case-insensitive substring match on key+title
     }
 
@@ -43,7 +44,7 @@ from django.db.models import (
     When,
 )
 
-from .models import Label, Priority, Project, StateTransition, Task
+from .models import Bet, Label, Priority, Project, StateTransition, Task
 
 User = get_user_model()
 
@@ -96,6 +97,7 @@ def base_task_queryset() -> QuerySet[Task]:
             "reporter",
             "reporter__profile",
             "recurrence_template",
+            "bet",
         )
         .prefetch_related(
             "labels",
@@ -246,6 +248,23 @@ def apply_task_filters(
             qs = qs.filter(column_id=int(raw_column))
         elif isinstance(raw_column, str):
             qs = qs.filter(column__name__iexact=raw_column)
+
+    # Bet — id, name (scoped to the project filter when one is set; bet names
+    # can repeat across periods, so a name matches all of them), or the
+    # sentinel ``"none"`` for tasks not linked to any bet.
+    if (raw_bet := filters.get("bet")) not in (None, ""):
+        if raw_bet == "none":
+            qs = qs.filter(bet__isnull=True)
+        elif isinstance(raw_bet, int) or (
+            isinstance(raw_bet, str) and raw_bet.isdigit()
+        ):
+            qs = qs.filter(bet_id=int(raw_bet))
+        elif isinstance(raw_bet, str):
+            bet_qs = Bet.objects.filter(name__iexact=raw_bet)
+            if project is not None:
+                bet_qs = bet_qs.filter(project=project)
+            ids = list(bet_qs.values_list("id", flat=True))
+            qs = qs.filter(bet_id__in=ids) if ids else qs.none()
 
     # Free-text search (key + title + description). Whitespace-separated
     # words are ANDed: every token must appear somewhere across those fields.

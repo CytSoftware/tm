@@ -9,10 +9,13 @@ from rest_framework.routers import DefaultRouter
 
 from .focus import FocusItemView, FocusListView
 from .views import (
+    BetViewSet,
+    CheckinViewSet,
     ColumnViewSet,
     LabelViewSet,
     LoginView,
     LogoutView,
+    MetricViewSet,
     MeView,
     NotificationViewSet,
     ProjectViewSet,
@@ -30,6 +33,9 @@ router = DefaultRouter()
 router.register(r"projects", ProjectViewSet, basename="project")
 router.register(r"columns", ColumnViewSet, basename="column")
 router.register(r"labels", LabelViewSet, basename="label")
+router.register(r"bets", BetViewSet, basename="bet")
+router.register(r"metrics", MetricViewSet, basename="metric")
+router.register(r"checkins", CheckinViewSet, basename="checkin")
 router.register(r"tasks", TaskViewSet, basename="task")
 router.register(r"views", ViewViewSet, basename="view")
 router.register(r"recurring-tasks", RecurringTaskViewSet, basename="recurring-task")

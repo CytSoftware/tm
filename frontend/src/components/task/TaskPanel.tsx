@@ -24,9 +24,11 @@ import {
   type RecurrenceState,
 } from "./RecurrencePicker";
 import { TimeInColumn, formatDuration } from "./TimeInColumn";
+import { useBetsQuery } from "@/hooks/use-bets";
 import { useCreateTask, useUpdateTask, useDeleteTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import { apiFetch } from "@/lib/api";
+import { currentPeriodStart } from "@/lib/periods";
 import { projectsKey, taskListKey } from "@/lib/query-keys";
 import type {
   Project,
@@ -107,6 +109,8 @@ export function TaskPanel(props: Props) {
   const [labelIds, setLabelIds] = useState<number[]>(
     seed?.labels.map((l) => l.id) ?? [],
   );
+  // Bet link (Cyt OS) — tasks only; recurring templates don't carry bets.
+  const [betId, setBetId] = useState<number | null>(task?.bet?.id ?? null);
   // Only meaningful in `edit-recurring` mode. Controls pause/resume.
   const [active, setActive] = useState<boolean>(template?.active ?? true);
 
@@ -149,6 +153,11 @@ export function TaskPanel(props: Props) {
         return label && !label.project; // keep only global labels
       }),
     );
+    // Bets are strictly project-scoped — a project switch always unlinks
+    // (switching back to the original project restores the task's own bet).
+    setBetId(
+      selectedProject?.id === initialProjectId ? (task?.bet?.id ?? null) : null,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
 
@@ -176,6 +185,29 @@ export function TaskPanel(props: Props) {
           ),
   });
   const availableLabels = labelsQuery.data ?? [];
+
+  // Current-period bets for the selected project. The task's own bet stays
+  // selectable even when it belongs to an older period.
+  const betsQuery = useBetsQuery(
+    selectedProject?.id ?? null,
+    currentPeriodStart(),
+    { enabled: mode !== "edit-recurring" },
+  );
+  const betOptions = useMemo(() => {
+    const bets = (betsQuery.data ?? []).map((b) => ({
+      id: b.id,
+      name: b.name,
+      color: b.color,
+    }));
+    if (task?.bet && !bets.some((b) => b.id === task.bet!.id)) {
+      bets.push({
+        id: task.bet.id,
+        name: task.bet.name,
+        color: task.bet.color,
+      });
+    }
+    return bets;
+  }, [betsQuery.data, task?.bet]);
 
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
@@ -350,6 +382,7 @@ export function TaskPanel(props: Props) {
       due_at: dueAt ? new Date(dueAt).toISOString() : null,
       assignee_ids: assigneeIds,
       label_ids: labelIds,
+      bet_id: selectedProject ? betId : null,
     };
 
     if (mode === "create") {
@@ -557,6 +590,41 @@ export function TaskPanel(props: Props) {
                   onChange={(e) => setDueAt(e.target.value)}
                   className="h-7 text-[12px] border-0 bg-transparent px-1.5 hover:bg-accent/60 rounded w-full"
                 />
+              </PropRow>
+            )}
+
+            {mode !== "edit-recurring" && selectedProject && (
+              <PropRow label="Bet">
+                <Select
+                  value={betId != null ? String(betId) : ""}
+                  onValueChange={(v) => setBetId(v === "" ? null : Number(v))}
+                  items={
+                    {
+                      "": "No bet",
+                      ...Object.fromEntries(
+                        betOptions.map((b) => [String(b.id), b.name]),
+                      ),
+                    } as Record<string, React.ReactNode>
+                  }
+                >
+                  <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
+                    <SelectValue placeholder="No bet" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">No bet</SelectItem>
+                    {betOptions.map((b) => (
+                      <SelectItem key={b.id} value={String(b.id)}>
+                        <span className="inline-flex items-center gap-2">
+                          <span
+                            className="size-2 rounded-full"
+                            style={{ background: b.color }}
+                          />
+                          {b.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </PropRow>
             )}
 

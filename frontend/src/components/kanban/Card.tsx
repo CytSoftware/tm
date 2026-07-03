@@ -1,6 +1,7 @@
 "use client";
 
-import { CalendarDays, Repeat, UserPlus } from "lucide-react";
+import { useState } from "react";
+import { CalendarDays, Check, Repeat, Target, UserPlus } from "lucide-react";
 
 import {
   Tooltip,
@@ -20,13 +21,15 @@ import {
   PriorityMenu,
 } from "@/components/task/pickers";
 import { LinkedPRBadge } from "@/components/integrations/LinkedPRBadge";
+import { useBetsQuery } from "@/hooks/use-bets";
 import { useUpdateTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import { useLabelsQuery } from "@/hooks/use-labels";
 import { cn } from "@/lib/utils";
 import { withAlpha } from "@/lib/colors";
+import { currentPeriodStart } from "@/lib/periods";
 import { PRIORITY_DOT } from "@/lib/types";
-import type { Task, Priority, CardField, User } from "@/lib/types";
+import type { Bet, BetRef, Task, Priority, CardField, User } from "@/lib/types";
 
 const PRIORITY_BADGE: Record<
   Priority,
@@ -118,6 +121,7 @@ export function KanbanCard({
   const showPriority = isVisible("priority", visibleFields);
   const showAssignee = isVisible("assignee", visibleFields);
   const showLabels = isVisible("labels", visibleFields);
+  const showBet = isVisible("bet", visibleFields);
   const showPoints = isVisible("points", visibleFields);
   const showDueDate = isVisible("due_date", visibleFields);
   const showProjectPill =
@@ -171,6 +175,15 @@ export function KanbanCard({
       key: task.key,
       label_ids: next,
       optimisticLabels: availableLabels.filter((l) => next.includes(l.id)),
+    });
+  }
+
+  function handleBetSelect(bet: BetRef | null) {
+    if ((bet?.id ?? null) === (task.bet?.id ?? null)) return;
+    updateTask.mutate({
+      key: task.key,
+      bet_id: bet?.id ?? null,
+      optimisticBet: bet,
     });
   }
 
@@ -272,6 +285,20 @@ export function KanbanCard({
             />
           </PopoverContent>
         </Popover>
+      )}
+
+      {/* Bet chip — which bet this task serves (Cyt OS). Click opens a
+          picker over the project's current-period bets. Rendered only when
+          the task is linked; unlinked tasks pick up a bet via the task
+          panel or the bets page. */}
+      {showBet && task.bet && task.project != null && (
+        <div className="px-3 pb-1.5">
+          <BetChip
+            bet={task.bet}
+            projectId={task.project}
+            onSelect={handleBetSelect}
+          />
+        </div>
       )}
 
       {/* Project pill — prominent colored badge. Hidden entirely for
@@ -395,6 +422,116 @@ function DueBadge({ due }: { due: string }) {
           day: "numeric",
         })}
       </span>
+    </div>
+  );
+}
+
+/** Bet chip — Target icon + bet name in the bet's color. Click opens a
+ *  picker over the project's current-period bets (fetched lazily on open).
+ *  The task's own bet is always listed even when it belongs to an older
+ *  period, so it stays visible and un-linkable. */
+function BetChip({
+  bet,
+  projectId,
+  onSelect,
+}: {
+  bet: BetRef;
+  projectId: number;
+  onSelect: (bet: BetRef | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            onClick={(e) => e.stopPropagation()}
+            aria-label="Edit bet"
+            title={`Bet: ${bet.name}`}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-[2px] text-[10px] font-medium max-w-full min-w-0 outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+            style={{
+              background: withAlpha(bet.color, 0.12),
+              color: bet.color,
+            }}
+          >
+            <Target className="size-2.5 shrink-0" />
+            <span className="truncate">{bet.name}</span>
+          </button>
+        }
+      />
+      <PopoverContent className="w-60 p-1" align="start">
+        {open && (
+          <BetMenu current={bet} projectId={projectId} onSelect={onSelect} />
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function BetMenu({
+  current,
+  projectId,
+  onSelect,
+}: {
+  current: BetRef | null;
+  projectId: number;
+  onSelect: (bet: BetRef | null) => void;
+}) {
+  const betsQuery = useBetsQuery(projectId, currentPeriodStart());
+  const bets = betsQuery.data ?? [];
+  // Keep the task's own bet selectable even if it's from another period.
+  const options: (Bet | BetRef)[] =
+    current && !bets.some((b) => b.id === current.id)
+      ? [...bets, current]
+      : bets;
+
+  return (
+    <div className="flex flex-col">
+      {betsQuery.isLoading && (
+        <p className="px-2 py-1.5 text-[12px] text-muted-foreground">
+          Loading…
+        </p>
+      )}
+      {options.map((b) => (
+        <button
+          key={b.id}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect({
+              id: b.id,
+              name: b.name,
+              color: b.color,
+              status: b.status,
+              period_start: b.period_start,
+            });
+          }}
+          className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:bg-accent"
+        >
+          <Target className="size-3 shrink-0" style={{ color: b.color }} />
+          <span className="truncate flex-1">{b.name}</span>
+          {current?.id === b.id && <Check className="size-3 shrink-0" />}
+        </button>
+      ))}
+      {!betsQuery.isLoading && options.length === 0 && (
+        <p className="px-2 py-1.5 text-[12px] text-muted-foreground">
+          No bets this period.
+        </p>
+      )}
+      {current && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(null);
+          }}
+          className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-muted-foreground hover:bg-accent"
+        >
+          Remove bet
+        </button>
+      )}
     </div>
   );
 }

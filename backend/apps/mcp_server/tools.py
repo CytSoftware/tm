@@ -23,8 +23,12 @@ from django.utils import timezone
 
 from apps.tasks.broadcast import broadcast_task_event
 from apps.tasks.models import (
+    Bet,
+    BetStatus,
+    Checkin,
     Column,
     Label,
+    Metric,
     Priority,
     Project,
     RecurringTaskTemplate,
@@ -33,6 +37,12 @@ from apps.tasks.models import (
     View,
 )
 from apps.tasks.notifications import notify_task_event
+from apps.tasks.periods import (
+    current_period_start,
+    period_end,
+    period_label,
+    period_start_for,
+)
 from apps.tasks.query import (
     base_task_queryset,
     filter_and_sort_tasks,
@@ -195,6 +205,8 @@ def _task_dict(t: Task, *, include_description: bool = True) -> dict[str, Any]:
         "story_points": t.story_points,
         "assignees": [u.username for u in t.assignees.all()],
         "labels": [label.name for label in t.labels.all()],
+        "bet": t.bet.name if t.bet_id else None,
+        "bet_id": t.bet_id,
         "position": t.position,
         "due_at": t.due_at.isoformat() if t.due_at else None,
         "created_at": t.created_at.isoformat(),
@@ -405,6 +417,7 @@ def list_tasks(
     priority: list[str] | None = None,
     labels: list[str] | None = None,
     column: str | None = None,
+    bet: str | int | None = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     filters: dict[str, Any] = {}
@@ -418,6 +431,8 @@ def list_tasks(
         filters["labels"] = labels
     if column:
         filters["column"] = column
+    if bet is not None:
+        filters["bet"] = bet
     qs = filter_and_sort_tasks(filters=filters)
     return [_task_dict(t, include_description=False) for t in qs[:limit]]
 
@@ -437,6 +452,7 @@ def create_task(
     labels: list[str | int] | None = None,
     story_points: int | None = None,
     column: str | int | None = None,
+    bet: str | int | None = None,
     mcp_user=None,
 ) -> dict[str, Any]:
     proj = _resolve_project(project)
@@ -452,6 +468,7 @@ def create_task(
         priority=_normalize_priority(priority),
         story_points=story_points,
         reporter=reporter,
+        bet=_resolve_bet(bet, project=proj) if bet is not None else None,
         position=_next_bottom_position(col),
     )
     task.save()
@@ -484,6 +501,7 @@ def update_task(
     priority: str | None = None,
     labels: list[str | int] | None = None,
     story_points: int | None = None,
+    bet: str | int | None = None,
     mcp_user=None,
 ) -> dict[str, Any]:
     task = base_task_queryset().get(key=key)
@@ -506,6 +524,15 @@ def update_task(
         dirty = True
     if story_points is not None:
         task.story_points = story_points
+        dirty = True
+    if bet is not None:
+        # ``"none"`` unlinks; anything else resolves within the task's project.
+        if bet == "none":
+            task.bet = None
+        else:
+            if task.project_id is None:
+                raise ValueError("Projectless tasks cannot link to a bet.")
+            task.bet = _resolve_bet(bet, project=task.project)
         dirty = True
 
     if dirty:
@@ -721,6 +748,325 @@ def create_label(
         defaults={"color": color},
     )
     return _label_dict(label)
+
+
+# ---------------------------------------------------------------------------
+# Bets (Cyt OS)
+# ---------------------------------------------------------------------------
+# Bets are project-specific and live on a fixed two-month period grid
+# (anchored 2026-07-01 — see apps.tasks.periods). Tasks link to the bet they
+# serve; progress is tracked per bet through metrics with an append-only
+# check-in log (optional numeric value and/or free-text note per check-in).
+
+
+def _resolve_bet(ref: str | int, *, project: Project | None = None) -> Bet:
+    """Accept a bet id, or a name (scoped to ``project`` when given). Names
+    can repeat across periods — the most recent period wins."""
+    qs = Bet.objects.all()
+    if project is not None:
+        qs = qs.filter(project=project)
+    if isinstance(ref, int):
+        return qs.get(pk=ref)
+    if isinstance(ref, str):
+        if ref.isdigit():
+            return qs.get(pk=int(ref))
+        match = qs.filter(name__iexact=ref).order_by("-period_start").first()
+        if match is None:
+            scope = f" in project {project.prefix}" if project else ""
+            raise Bet.DoesNotExist(f"No bet named {ref!r}{scope}.")
+        return match
+    raise ValueError(f"Invalid bet reference: {ref!r}")
+
+
+def _parse_period(period: str | None) -> Any:
+    """``None``/``"current"`` → current period start; ISO date → snapped to
+    its containing period; ``"all"`` → None (no period filter)."""
+    from datetime import date
+
+    if period is None or period == "current":
+        return current_period_start()
+    if period == "all":
+        return None
+    try:
+        return period_start_for(date.fromisoformat(period))
+    except ValueError as e:
+        raise ValueError(
+            f'period must be "current", "all", or an ISO date — got {period!r}'
+        ) from e
+
+
+def _checkin_dict(c: Checkin) -> dict[str, Any]:
+    return {
+        "id": c.id,
+        "metric_id": c.metric_id,
+        "value": c.value,
+        "note": c.note,
+        "created_by": c.created_by.username if c.created_by_id else None,
+        "created_at": c.created_at.isoformat(),
+        "updated_at": c.updated_at.isoformat(),
+    }
+
+
+def _metric_dict(m: Metric, *, include_checkins: bool = True) -> dict[str, Any]:
+    checkins = list(m.checkins.all())  # newest first (model ordering)
+    latest = checkins[0] if checkins else None
+    data = {
+        "id": m.id,
+        "bet_id": m.bet_id,
+        "name": m.name,
+        "target": m.target,
+        "unit": m.unit,
+        "latest_value": latest.value if latest else None,
+        "latest_checkin_at": latest.created_at.isoformat() if latest else None,
+    }
+    if include_checkins:
+        data["checkins"] = [_checkin_dict(c) for c in checkins]
+    return data
+
+
+def _bet_dict(b: Bet, *, include_metrics: bool = True) -> dict[str, Any]:
+    tasks = list(b.tasks.all())
+    data = {
+        "id": b.id,
+        "project": b.project.prefix,
+        "name": b.name,
+        "description": b.description,
+        "color": b.color,
+        "status": b.status,
+        "period_start": b.period_start.isoformat(),
+        "period_end": period_end(b.period_start).isoformat(),
+        "period_label": period_label(b.period_start),
+        "task_count": len(tasks),
+        "done_task_count": sum(
+            1 for t in tasks if t.column_id and t.column.is_done
+        ),
+        "tasks": [
+            {"key": t.key, "title": t.title, "column": t.column.name if t.column_id else None}
+            for t in tasks
+        ],
+        "created_at": b.created_at.isoformat(),
+        "updated_at": b.updated_at.isoformat(),
+    }
+    if include_metrics:
+        data["metrics"] = [_metric_dict(m) for m in b.metrics.all()]
+    return data
+
+
+def _bet_queryset():
+    return (
+        Bet.objects.all()
+        .select_related("project")
+        .prefetch_related("metrics__checkins", "tasks__column")
+    )
+
+
+def list_bets(
+    project: str | int | None = None,
+    period: str | None = "current",
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    qs = _bet_queryset()
+    if project is not None:
+        qs = qs.filter(project=_resolve_project(project))
+    period_start = _parse_period(period)
+    if period_start is not None:
+        qs = qs.filter(period_start=period_start)
+    if status is not None:
+        if status not in BetStatus.values:
+            raise ValueError(
+                f"Unknown status {status!r}. Use one of: {', '.join(BetStatus.values)}."
+            )
+        qs = qs.filter(status=status)
+    return [_bet_dict(b) for b in qs.order_by("-period_start", "name")]
+
+
+def get_bet(bet: str | int, project: str | int | None = None) -> dict[str, Any]:
+    proj = _resolve_project(project) if project is not None else None
+    resolved = _resolve_bet(bet, project=proj)
+    return _bet_dict(_bet_queryset().get(pk=resolved.pk))
+
+
+@transaction.atomic
+def create_bet(
+    project: str | int,
+    name: str,
+    description: str = "",
+    color: str = "#6366f1",
+    period: str | None = "current",
+    status: str = "active",
+) -> dict[str, Any]:
+    proj = _resolve_project(project)
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Bet name must not be empty.")
+    if status not in BetStatus.values:
+        raise ValueError(
+            f"Unknown status {status!r}. Use one of: {', '.join(BetStatus.values)}."
+        )
+    period_start = _parse_period(period)
+    if period_start is None:  # "all" makes no sense on create
+        raise ValueError('period must be "current" or an ISO date on create.')
+    bet = Bet.objects.create(
+        project=proj,
+        name=name,
+        description=description or "",
+        color=color,
+        status=status,
+        period_start=period_start,
+    )
+    broadcast_task_event(proj.id, "bet.created", {"bet_id": bet.id})
+    return _bet_dict(bet)
+
+
+@transaction.atomic
+def update_bet(
+    bet: str | int,
+    project: str | int | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    color: str | None = None,
+    status: str | None = None,
+    period: str | None = None,
+) -> dict[str, Any]:
+    proj = _resolve_project(project) if project is not None else None
+    b = _resolve_bet(bet, project=proj)
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise ValueError("Bet name must not be empty.")
+        b.name = name
+    if description is not None:
+        b.description = description
+    if color is not None:
+        b.color = color
+    if status is not None:
+        if status not in BetStatus.values:
+            raise ValueError(
+                f"Unknown status {status!r}. Use one of: {', '.join(BetStatus.values)}."
+            )
+        b.status = status
+    if period is not None:
+        period_start = _parse_period(period)
+        if period_start is None:
+            raise ValueError('period must be "current" or an ISO date.')
+        b.period_start = period_start
+    b.save()
+    broadcast_task_event(b.project_id, "bet.updated", {"bet_id": b.id})
+    return _bet_dict(_bet_queryset().get(pk=b.pk))
+
+
+@transaction.atomic
+def delete_bet(bet: str | int, project: str | int | None = None) -> dict[str, Any]:
+    proj = _resolve_project(project) if project is not None else None
+    b = _resolve_bet(bet, project=proj)
+    project_id, bet_id = b.project_id, b.id
+    b.delete()  # Task.bet is SET_NULL — linked tasks survive, unlinked
+    broadcast_task_event(project_id, "bet.deleted", {"bet_id": bet_id})
+    return {"id": bet_id, "deleted": True}
+
+
+@transaction.atomic
+def create_metric(
+    bet: str | int,
+    name: str,
+    target: float | None = None,
+    unit: str = "",
+    project: str | int | None = None,
+) -> dict[str, Any]:
+    proj = _resolve_project(project) if project is not None else None
+    b = _resolve_bet(bet, project=proj)
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Metric name must not be empty.")
+    metric = Metric.objects.create(bet=b, name=name, target=target, unit=unit or "")
+    broadcast_task_event(b.project_id, "bet.updated", {"bet_id": b.id})
+    return _metric_dict(metric)
+
+
+@transaction.atomic
+def update_metric(
+    metric_id: int,
+    name: str | None = None,
+    target: float | None = None,
+    unit: str | None = None,
+    clear_target: bool = False,
+) -> dict[str, Any]:
+    metric = Metric.objects.select_related("bet").get(pk=metric_id)
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise ValueError("Metric name must not be empty.")
+        metric.name = name
+    if clear_target:
+        metric.target = None
+    elif target is not None:
+        metric.target = target
+    if unit is not None:
+        metric.unit = unit
+    metric.save()
+    broadcast_task_event(
+        metric.bet.project_id, "bet.updated", {"bet_id": metric.bet_id}
+    )
+    return _metric_dict(metric)
+
+
+@transaction.atomic
+def delete_metric(metric_id: int) -> dict[str, Any]:
+    metric = Metric.objects.select_related("bet").get(pk=metric_id)
+    project_id, bet_id = metric.bet.project_id, metric.bet_id
+    metric.delete()
+    broadcast_task_event(project_id, "bet.updated", {"bet_id": bet_id})
+    return {"id": metric_id, "deleted": True}
+
+
+@transaction.atomic
+def add_checkin(
+    metric_id: int,
+    value: float | None = None,
+    note: str = "",
+    mcp_user=None,
+) -> dict[str, Any]:
+    metric = Metric.objects.select_related("bet").get(pk=metric_id)
+    if value is None and not (note or "").strip():
+        raise ValueError("A check-in needs a value, a note, or both.")
+    checkin = Checkin.objects.create(
+        metric=metric, value=value, note=note or "", created_by=mcp_user
+    )
+    broadcast_task_event(
+        metric.bet.project_id, "bet.updated", {"bet_id": metric.bet_id}
+    )
+    return _checkin_dict(checkin)
+
+
+@transaction.atomic
+def update_checkin(
+    checkin_id: int,
+    value: float | None = None,
+    note: str | None = None,
+    clear_value: bool = False,
+) -> dict[str, Any]:
+    checkin = Checkin.objects.select_related("metric__bet").get(pk=checkin_id)
+    if clear_value:
+        checkin.value = None
+    elif value is not None:
+        checkin.value = value
+    if note is not None:
+        checkin.note = note
+    if checkin.value is None and not (checkin.note or "").strip():
+        raise ValueError("A check-in needs a value, a note, or both.")
+    checkin.save()
+    bet = checkin.metric.bet
+    broadcast_task_event(bet.project_id, "bet.updated", {"bet_id": bet.id})
+    return _checkin_dict(checkin)
+
+
+@transaction.atomic
+def delete_checkin(checkin_id: int) -> dict[str, Any]:
+    checkin = Checkin.objects.select_related("metric__bet").get(pk=checkin_id)
+    bet = checkin.metric.bet
+    checkin.delete()
+    broadcast_task_event(bet.project_id, "bet.updated", {"bet_id": bet.id})
+    return {"id": checkin_id, "deleted": True}
 
 
 # ---------------------------------------------------------------------------

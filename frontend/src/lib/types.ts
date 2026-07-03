@@ -74,6 +74,83 @@ export type Label = {
   color: string;
 };
 
+// ─────────────────────────────────────────────────────────────────────────
+// Bets (Cyt OS) — project-specific bets on a fixed two-month period grid
+// (anchored 2026-07-01). Tasks link to the bet they serve; progress is
+// tracked per bet via metrics with an append-only check-in log.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type BetStatus = "active" | "won" | "lost";
+
+export const BET_STATUS_LABELS: Record<BetStatus, string> = {
+  active: "Active",
+  won: "Won",
+  lost: "Lost",
+};
+
+export type MetricCheckin = {
+  id: number;
+  metric: number;
+  /** Optional numeric reading — qualitative metrics log notes instead. */
+  value: number | null;
+  note: string;
+  created_by: User | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BetMetric = {
+  id: number;
+  bet: number;
+  name: string;
+  target: number | null;
+  unit: string;
+  /** Newest first (server ordering). The head is the current reading. */
+  checkins: MetricCheckin[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type Bet = {
+  id: number;
+  project: number;
+  name: string;
+  description: string;
+  color: string;
+  status: BetStatus;
+  /** First day of the bet's two-month period (ISO date). */
+  period_start: string;
+  /** Human label like "Jul–Aug 2026". */
+  period_label: string;
+  /** Exclusive period end (ISO date). */
+  period_end: string;
+  metrics: BetMetric[];
+  task_count: number;
+  done_task_count: number;
+  tasks: BetTaskRef[];
+  created_at: string;
+  updated_at: string;
+};
+
+/** Compact bet reference embedded on task reads (card chip data). */
+export type BetRef = {
+  id: number;
+  name: string;
+  color: string;
+  status: BetStatus;
+  period_start: string;
+};
+
+/** Compact task reference embedded on bet reads (bets page task list). */
+export type BetTaskRef = {
+  id: number;
+  key: string;
+  title: string;
+  column: string | null;
+  is_done: boolean;
+  priority: Priority | null;
+};
+
 export type Project = {
   id: number;
   name: string;
@@ -136,6 +213,8 @@ export type Task = {
   assignees: User[];
   reporter: User | null;
   labels: Label[];
+  /** The bet this task serves (Cyt OS), or null when unlinked. */
+  bet: BetRef | null;
   /** null = task has no priority set; sorts last in priority-desc order. */
   priority: Priority | null;
   story_points: number | null;
@@ -279,6 +358,7 @@ export type CardField =
   | "priority"
   | "assignee"
   | "labels"
+  | "bet"
   | "points"
   | "due_date"
   | "project"
@@ -290,6 +370,7 @@ export const ALL_CARD_FIELDS: CardField[] = [
   "priority",
   "assignee",
   "labels",
+  "bet",
   "points",
   "due_date",
   "project",
@@ -302,6 +383,7 @@ export const CARD_FIELD_LABELS: Record<CardField, string> = {
   priority: "Priority",
   assignee: "Assignee",
   labels: "Labels",
+  bet: "Bet",
   points: "Story points",
   due_date: "Due date",
   project: "Project prefix",
@@ -372,7 +454,10 @@ export type TaskEvent =
   | { type: "column.created"; column: Column }
   | { type: "column.updated"; column: Column }
   | { type: "column.deleted"; column_id: number }
-  | { type: "column.reordered"; columns: Column[] };
+  | { type: "column.reordered"; columns: Column[] }
+  | { type: "bet.created"; bet_id: number }
+  | { type: "bet.updated"; bet_id: number }
+  | { type: "bet.deleted"; bet_id: number };
 
 // ─────────────────────────────────────────────────────────────────────────
 // Pipelines — long-running tracked processes (separate from Tasks).

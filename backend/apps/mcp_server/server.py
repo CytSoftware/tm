@@ -78,6 +78,7 @@ async def list_tasks(
     priority: list[str] | None = None,
     labels: list[str] | None = None,
     column: str | None = None,
+    bet: str | int | None = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     """List tasks matching the given filters.
@@ -85,7 +86,8 @@ async def list_tasks(
     Arguments are all optional. ``project`` accepts a prefix like ``"CYT"`` or
     a numeric id. ``assignee`` accepts a username (matches tasks where that
     user is one of the assignees). ``priority`` is a list like ``["P1", "P2"]``
-    (P1 is highest). ``labels`` and ``column`` accept names.
+    (P1 is highest). ``labels`` and ``column`` accept names. ``bet`` accepts a
+    bet id or name, or ``"none"`` for tasks not linked to any bet.
     """
     return await _async(tools.list_tasks)(
         project=project,
@@ -93,6 +95,7 @@ async def list_tasks(
         priority=priority,
         labels=labels,
         column=column,
+        bet=bet,
         limit=limit,
     )
 
@@ -113,6 +116,7 @@ async def create_task(
     labels: list[str] | None = None,
     story_points: int | None = None,
     column: str | int | None = None,
+    bet: str | int | None = None,
 ) -> dict[str, Any]:
     """Create a new task in ``project``.
 
@@ -120,7 +124,8 @@ async def create_task(
     (typically "Todo"). Omitting ``priority`` leaves the task without one (it
     sorts last in priority-desc order). ``assignees`` is a list of usernames or
     ids — a task can have zero or many assignees. Priority values when set:
-    ``P1`` (highest), ``P2``, ``P3``, ``P4`` (lowest).
+    ``P1`` (highest), ``P2``, ``P3``, ``P4`` (lowest). ``bet`` links the task
+    to a bet in the same project (bet id or name).
     """
     return await _async(tools.create_task)(
         project=project,
@@ -131,6 +136,7 @@ async def create_task(
         labels=labels,
         story_points=story_points,
         column=column,
+        bet=bet,
         mcp_user=_get_mcp_user(),
     )
 
@@ -144,11 +150,14 @@ async def update_task(
     priority: str | None = None,
     labels: list[str] | None = None,
     story_points: int | None = None,
+    bet: str | int | None = None,
 ) -> dict[str, Any]:
     """Update any subset of a task's fields. Omitted fields are left unchanged.
 
     ``assignees`` replaces the full assignee list (pass an empty list to
     unassign everyone). Priority values: ``P1`` (highest) … ``P4`` (lowest).
+    ``bet`` links the task to a bet in its project (bet id or name); pass the
+    string ``"none"`` to unlink.
     """
     return await _async(tools.update_task)(
         key=key,
@@ -158,6 +167,7 @@ async def update_task(
         priority=priority,
         labels=labels,
         story_points=story_points,
+        bet=bet,
         mcp_user=_get_mcp_user(),
     )
 
@@ -274,6 +284,184 @@ async def create_label(
     name already exists in the chosen scope, it is returned as-is — the call
     is idempotent on (project, name)."""
     return await _async(tools.create_label)(name=name, color=color, project=project)
+
+
+# ---------------------------------------------------------------------------
+# Bets (Cyt OS)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_bets(
+    project: str | int | None = None,
+    period: str | None = "current",
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    """List bets with their metrics, check-ins, and linked tasks.
+
+    Bets are project-specific and belong to a fixed two-month period grid
+    anchored at 2026-07-01 (Jul–Aug, Sep–Oct, …). ``period`` accepts
+    ``"current"`` (default), ``"all"``, or any ISO date (snapped to its
+    containing period). ``status`` filters by ``active`` / ``won`` / ``lost``.
+    """
+    return await _async(tools.list_bets)(
+        project=project, period=period, status=status
+    )
+
+
+@mcp.tool()
+async def get_bet(
+    bet: str | int, project: str | int | None = None
+) -> dict[str, Any]:
+    """Return one bet (metrics + check-in log + linked tasks) by id or name.
+
+    Names can repeat across periods — the most recent period wins, so pass
+    the id when targeting an older period's bet.
+    """
+    return await _async(tools.get_bet)(bet=bet, project=project)
+
+
+@mcp.tool()
+async def create_bet(
+    project: str | int,
+    name: str,
+    description: str = "",
+    color: str = "#6366f1",
+    period: str | None = "current",
+    status: str = "active",
+) -> dict[str, Any]:
+    """Create a bet in ``project``.
+
+    ``description`` should carry the target and kill criteria. ``period`` is
+    ``"current"`` (default) or an ISO date — any date is snapped to the start
+    of its containing two-month period. Track progress by adding 1–2 metrics
+    with ``create_metric``, then logging weekly ``add_checkin`` entries.
+    """
+    return await _async(tools.create_bet)(
+        project=project,
+        name=name,
+        description=description,
+        color=color,
+        period=period,
+        status=status,
+    )
+
+
+@mcp.tool()
+async def update_bet(
+    bet: str | int,
+    project: str | int | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    color: str | None = None,
+    status: str | None = None,
+    period: str | None = None,
+) -> dict[str, Any]:
+    """Update a bet's fields (omitted fields are left unchanged).
+
+    ``status`` is how a bet is resolved at the end of its period: ``won`` or
+    ``lost`` (or back to ``active``). ``bet`` accepts an id or a name.
+    """
+    return await _async(tools.update_bet)(
+        bet=bet,
+        project=project,
+        name=name,
+        description=description,
+        color=color,
+        status=status,
+        period=period,
+    )
+
+
+@mcp.tool()
+async def delete_bet(
+    bet: str | int, project: str | int | None = None
+) -> dict[str, Any]:
+    """Delete a bet. Linked tasks survive — they're just unlinked."""
+    return await _async(tools.delete_bet)(bet=bet, project=project)
+
+
+@mcp.tool()
+async def create_metric(
+    bet: str | int,
+    name: str,
+    target: float | None = None,
+    unit: str = "",
+    project: str | int | None = None,
+) -> dict[str, Any]:
+    """Add a metric to a bet.
+
+    ``target``/``unit`` suit countable metrics (e.g. target=10, unit=
+    "signups"); omit both for qualitative metrics whose check-ins carry
+    notes instead of values.
+    """
+    return await _async(tools.create_metric)(
+        bet=bet, name=name, target=target, unit=unit, project=project
+    )
+
+
+@mcp.tool()
+async def update_metric(
+    metric_id: int,
+    name: str | None = None,
+    target: float | None = None,
+    unit: str | None = None,
+    clear_target: bool = False,
+) -> dict[str, Any]:
+    """Update a metric (omitted fields unchanged). ``clear_target=True``
+    removes the numeric target."""
+    return await _async(tools.update_metric)(
+        metric_id=metric_id,
+        name=name,
+        target=target,
+        unit=unit,
+        clear_target=clear_target,
+    )
+
+
+@mcp.tool()
+async def delete_metric(metric_id: int) -> dict[str, Any]:
+    """Delete a metric and its entire check-in log."""
+    return await _async(tools.delete_metric)(metric_id=metric_id)
+
+
+@mcp.tool()
+async def add_checkin(
+    metric_id: int,
+    value: float | None = None,
+    note: str = "",
+) -> dict[str, Any]:
+    """Append a progress check-in to a metric's log.
+
+    A check-in needs a numeric ``value``, a free-text ``note``, or both —
+    countable metrics log values ("7 of 10"), qualitative ones log notes.
+    The latest check-in is the metric's current reading; the sequence is its
+    trend (typically one entry per weekly founder sync).
+    """
+    return await _async(tools.add_checkin)(
+        metric_id=metric_id, value=value, note=note, mcp_user=_get_mcp_user()
+    )
+
+
+@mcp.tool()
+async def update_checkin(
+    checkin_id: int,
+    value: float | None = None,
+    note: str | None = None,
+    clear_value: bool = False,
+) -> dict[str, Any]:
+    """Edit a check-in log entry (omitted fields unchanged).
+    ``clear_value=True`` removes the numeric value (the note must then be
+    non-empty)."""
+    return await _async(tools.update_checkin)(
+        checkin_id=checkin_id, value=value, note=note, clear_value=clear_value
+    )
+
+
+@mcp.tool()
+async def delete_checkin(checkin_id: int) -> dict[str, Any]:
+    """Delete a check-in log entry."""
+    return await _async(tools.delete_checkin)(checkin_id=checkin_id)
 
 
 # ---------------------------------------------------------------------------

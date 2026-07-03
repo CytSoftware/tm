@@ -58,13 +58,14 @@ Because Daphne does not emit ASGI `lifespan` events, `asgi.py` synthesizes a sta
 
 ### Data model (`apps/tasks/models.py`)
 
-Six models: `Project`, `Column`, `Label`, `Task`, `View`, `RecurringTaskTemplate` (+ a `UserProfile` one-to-one for avatars).
+Core models: `Project`, `Column`, `Label`, `Task`, `View`, `RecurringTaskTemplate`, plus the Cyt OS bets trio `Bet` / `Metric` / `Checkin` (+ a `UserProfile` one-to-one for avatars).
 
 - `Task.key` is a human-readable identifier like `CYT-001`, atomically generated per-project by `apps/tasks/id_generation.py` on first save. It is `unique=True` across the whole tracker and used as the DRF lookup field (`/api/tasks/<key>/`).
 - `Task.position` is a float used for midpoint insertion within a column (LexoRank-lite). The `move` action on `TaskViewSet` and `_compute_position` in `views.py` implement drag-and-drop.
 - A `post_save` signal on `Project` seeds the default Kanban columns (Backlog / Todo / In Progress / In Review / Done). `Column.is_done=True` on Done is how analytics/recurring defaults find the "completed" column.
 - `View` is a saved Notion-style `filters` + `sort` preset (JSONFields). Views can be personal or `shared`.
 - `RecurringTaskTemplate` is a blueprint, not a Task. Completing a generated instance does not affect the template's schedule.
+- `Bet` is project-specific and belongs to a fixed **two-month period grid** anchored at 2026-07-01 (`apps/tasks/periods.py` — pure math, no stored periods; the frontend mirror is `frontend/src/lib/periods.ts`, keep them in sync). `Bet.save()` snaps any `period_start` onto the grid. `Task.bet` (SET_NULL) links a task to the bet it serves and must match the task's project (validated in `TaskWriteSerializer` + MCP; cleared on project move). A bet's `Metric`s track progress via append-only `Checkin` rows (optional numeric `value` and/or `note` — a check-in needs at least one). Bet/metric/check-in writes broadcast `bet.*` events into the project's Channels group.
 
 ### Shared filter/sort logic (`apps/tasks/query.py`)
 

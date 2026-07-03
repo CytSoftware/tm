@@ -11,8 +11,11 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from .models import (
+    Bet,
+    Checkin,
     Column,
     Label,
+    Metric,
     Notification,
     Project,
     RecurringTaskTemplate,
@@ -20,6 +23,8 @@ from .models import (
     Task,
     View,
 )
+from .periods import current_period_start as _current_period_start
+from .periods import period_start_for as _period_start_for
 from .transitions import compute_staleness
 
 User = get_user_model()
@@ -167,6 +172,142 @@ class ProjectSerializer(serializers.ModelSerializer):
 
 
 # ---------------------------------------------------------------------------
+# Bets (Cyt OS)
+# ---------------------------------------------------------------------------
+
+
+class CheckinSerializer(serializers.ModelSerializer):
+    created_by = UserSerializer(read_only=True)
+
+    class Meta:
+        model = Checkin
+        fields = (
+            "id",
+            "metric",
+            "value",
+            "note",
+            "created_by",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("created_by", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        # A check-in with neither a value nor a note records nothing.
+        value = attrs.get("value", self.instance.value if self.instance else None)
+        note = attrs.get("note", self.instance.note if self.instance else "")
+        if value is None and not (note or "").strip():
+            raise serializers.ValidationError(
+                "A check-in needs a value, a note, or both."
+            )
+        return attrs
+
+    def create(self, validated_data):
+        request = self.context.get("request")
+        validated_data.setdefault(
+            "created_by", request.user if request else None
+        )
+        return super().create(validated_data)
+
+
+class MetricSerializer(serializers.ModelSerializer):
+    # Check-ins are weekly-cadence rows — small enough to always embed so the
+    # bets page renders latest value + trend without follow-up requests.
+    checkins = CheckinSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Metric
+        fields = (
+            "id",
+            "bet",
+            "name",
+            "target",
+            "unit",
+            "checkins",
+            "created_at",
+            "updated_at",
+        )
+
+
+class BetSerializer(serializers.ModelSerializer):
+    metrics = MetricSerializer(many=True, read_only=True)
+    period_label = serializers.CharField(read_only=True)
+    period_end = serializers.DateField(read_only=True)
+    # Omitting period_start on create means "the current period". The default
+    # lives here (not only in Bet.save) because the unique-together validator
+    # DRF derives from the model constraint would otherwise force the field
+    # to be required — and the validator needs the real, snapped value.
+    period_start = serializers.DateField(
+        required=False,
+        default=serializers.CreateOnlyDefault(_current_period_start),
+    )
+    task_count = serializers.SerializerMethodField()
+    done_task_count = serializers.SerializerMethodField()
+    tasks = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Bet
+        fields = (
+            "id",
+            "project",
+            "name",
+            "description",
+            "color",
+            "status",
+            "period_start",
+            "period_label",
+            "period_end",
+            "metrics",
+            "task_count",
+            "done_task_count",
+            "tasks",
+            "created_at",
+            "updated_at",
+        )
+
+    def validate_period_start(self, value):
+        # Snap onto the two-month grid *before* the unique-together validator
+        # runs, so validation checks the same value that gets stored.
+        return _period_start_for(value)
+
+    def get_task_count(self, obj: Bet) -> int:
+        # Annotated by the viewset queryset; fall back to a query for
+        # instances serialized right after a write.
+        annotated = getattr(obj, "task_count", None)
+        return annotated if annotated is not None else obj.tasks.count()
+
+    def get_done_task_count(self, obj: Bet) -> int:
+        annotated = getattr(obj, "done_task_count", None)
+        if annotated is not None:
+            return annotated
+        return obj.tasks.filter(column__is_done=True).count()
+
+    def get_tasks(self, obj: Bet) -> list[dict]:
+        # Compact refs for the bets page's linked-task list (the viewset
+        # prefetches ``tasks__column`` so this stays N+1-free).
+        return [
+            {
+                "id": t.id,
+                "key": t.key,
+                "title": t.title,
+                "column": t.column.name if t.column_id else None,
+                "is_done": bool(t.column_id and t.column.is_done),
+                "priority": t.priority,
+            }
+            for t in obj.tasks.all()
+        ]
+
+
+class BetRefSerializer(serializers.ModelSerializer):
+    """Compact bet reference embedded on task reads (card chip data)."""
+
+    class Meta:
+        model = Bet
+        fields = ("id", "name", "color", "status", "period_start")
+        read_only_fields = fields
+
+
+# ---------------------------------------------------------------------------
 # Task — read vs write split
 # ---------------------------------------------------------------------------
 
@@ -187,6 +328,7 @@ class TaskReadSerializer(serializers.ModelSerializer):
         source="project.color", read_only=True, default=None
     )
     is_recurring_instance = serializers.SerializerMethodField()
+    bet = BetRefSerializer(read_only=True)
     # ``current_column_since`` comes from a queryset annotation added by
     # ``base_task_queryset``. May be null for tasks without a column or
     # legacy tasks whose transitions have been purged.
@@ -210,6 +352,7 @@ class TaskReadSerializer(serializers.ModelSerializer):
             "assignees",
             "reporter",
             "labels",
+            "bet",
             "priority",
             "story_points",
             "recurrence_template",
@@ -303,6 +446,13 @@ class TaskWriteSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False,
     )
+    bet_id = serializers.PrimaryKeyRelatedField(
+        queryset=Bet.objects.all(),
+        source="bet",
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = Task
@@ -316,6 +466,7 @@ class TaskWriteSerializer(serializers.ModelSerializer):
             "position",
             "assignee_ids",
             "label_ids",
+            "bet_id",
             "priority",
             "story_points",
             "due_at",
@@ -404,6 +555,19 @@ class TaskWriteSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError(
                         {"label_ids": "Labels must be global or belong to the task's project."}
                     )
+
+        # Bets are strictly project-scoped (unlike labels there's no global
+        # variant), so the linked bet must belong to the task's project.
+        bet = attrs.get("bet")
+        if bet is not None:
+            if project is None:
+                raise serializers.ValidationError(
+                    {"bet_id": "Projectless tasks cannot link to a bet."}
+                )
+            if bet.project_id != project.id:
+                raise serializers.ValidationError(
+                    {"bet_id": "Bet does not belong to the task's project."}
+                )
         return attrs
 
     def create(self, validated_data):
@@ -441,6 +605,10 @@ class TaskWriteSerializer(serializers.ModelSerializer):
                 instance.key = generate_task_key(instance.project)
             else:
                 instance.key = f"INBOX-{instance.id:03d}"
+            # The old bet belonged to the old project. validate() already
+            # guarantees any bet sent in this payload matches the new project.
+            if "bet" not in validated_data:
+                instance.bet = None
             instance.save()
             instance.labels.clear()  # labels belonged to the old project
         else:

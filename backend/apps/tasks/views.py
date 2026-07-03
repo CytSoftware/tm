@@ -16,8 +16,11 @@ from rest_framework.views import APIView
 
 from .broadcast import _broadcast_local, broadcast_task_event
 from .models import (
+    Bet,
+    Checkin,
     Column,
     Label,
+    Metric,
     Notification,
     Project,
     RecurringTaskTemplate,
@@ -27,16 +30,20 @@ from .models import (
     View,
 )
 from .notifications import notify_task_event
+from .periods import current_period_start, period_start_for
 from .query import base_task_queryset, filter_and_sort_tasks
 from .transitions import (
     invalidate_stale_thresholds,
     record_transition,
 )
 from .serializers import (
+    BetSerializer,
+    CheckinSerializer,
     ColumnSerializer,
     CsrfResponseSerializer,
     LabelSerializer,
     LoginRequestSerializer,
+    MetricSerializer,
     NotificationSerializer,
     ProjectSerializer,
     RecurringPreviewSerializer,
@@ -827,6 +834,131 @@ class LabelViewSet(viewsets.ModelViewSet):
 
 
 # ---------------------------------------------------------------------------
+# Bets (Cyt OS)
+# ---------------------------------------------------------------------------
+# Bet/Metric/Checkin writes broadcast a ``bet.*`` event into the project's
+# Channels group so open bets pages (and bet chips on boards) refetch live —
+# same mechanism as task events.
+
+
+def _broadcast_bet_event(project_id: int | None, event_type: str, bet_id: int):
+    if project_id is not None:
+        broadcast_task_event(project_id, event_type, {"bet_id": bet_id})
+
+
+class BetViewSet(viewsets.ModelViewSet):
+    serializer_class = BetSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["project", "status"]
+
+    def get_queryset(self):
+        qs = (
+            Bet.objects.all()
+            .select_related("project")
+            .prefetch_related(
+                "metrics__checkins__created_by__profile", "tasks__column"
+            )
+            .annotate(
+                task_count=models.Count("tasks", distinct=True),
+                done_task_count=models.Count(
+                    "tasks",
+                    filter=models.Q(tasks__column__is_done=True),
+                    distinct=True,
+                ),
+            )
+        )
+        # ``period`` narrows to one period of the fixed two-month grid:
+        # "current", or any ISO date (snapped to its containing period).
+        period = self.request.query_params.get("period")
+        if period == "current":
+            qs = qs.filter(period_start=current_period_start())
+        elif period:
+            try:
+                from datetime import date
+
+                snapped = period_start_for(date.fromisoformat(period))
+            except ValueError as exc:
+                raise ValidationError(
+                    {"period": 'Use "current" or an ISO date (YYYY-MM-DD).'}
+                ) from exc
+            qs = qs.filter(period_start=snapped)
+        return qs
+
+    def perform_create(self, serializer):
+        bet = serializer.save()
+        _broadcast_bet_event(bet.project_id, "bet.created", bet.id)
+
+    def perform_update(self, serializer):
+        instance: Bet = serializer.instance
+        new_project = serializer.validated_data.get("project")
+        if new_project is not None and new_project.id != instance.project_id:
+            raise ValidationError(
+                {"project": "Cannot move a bet between projects."}
+            )
+        bet = serializer.save()
+        _broadcast_bet_event(bet.project_id, "bet.updated", bet.id)
+
+    def perform_destroy(self, instance):
+        project_id, bet_id = instance.project_id, instance.id
+        instance.delete()  # Task.bet is SET_NULL — linked tasks survive
+        _broadcast_bet_event(project_id, "bet.deleted", bet_id)
+
+
+class MetricViewSet(viewsets.ModelViewSet):
+    queryset = Metric.objects.all().select_related("bet")
+    serializer_class = MetricSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["bet"]
+
+    def perform_create(self, serializer):
+        metric = serializer.save()
+        _broadcast_bet_event(metric.bet.project_id, "bet.updated", metric.bet_id)
+
+    def perform_update(self, serializer):
+        instance: Metric = serializer.instance
+        new_bet = serializer.validated_data.get("bet")
+        if new_bet is not None and new_bet.id != instance.bet_id:
+            raise ValidationError({"bet": "Cannot move a metric between bets."})
+        metric = serializer.save()
+        _broadcast_bet_event(metric.bet.project_id, "bet.updated", metric.bet_id)
+
+    def perform_destroy(self, instance):
+        project_id, bet_id = instance.bet.project_id, instance.bet_id
+        instance.delete()
+        _broadcast_bet_event(project_id, "bet.updated", bet_id)
+
+
+class CheckinViewSet(viewsets.ModelViewSet):
+    queryset = Checkin.objects.all().select_related(
+        "metric__bet", "created_by__profile"
+    )
+    serializer_class = CheckinSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["metric"]
+
+    def perform_create(self, serializer):
+        checkin = serializer.save()
+        bet = checkin.metric.bet
+        _broadcast_bet_event(bet.project_id, "bet.updated", bet.id)
+
+    def perform_update(self, serializer):
+        instance: Checkin = serializer.instance
+        new_metric = serializer.validated_data.get("metric")
+        if new_metric is not None and new_metric.id != instance.metric_id:
+            raise ValidationError(
+                {"metric": "Cannot move a check-in between metrics."}
+            )
+        checkin = serializer.save()
+        bet = checkin.metric.bet
+        _broadcast_bet_event(bet.project_id, "bet.updated", bet.id)
+
+    def perform_destroy(self, instance):
+        bet = instance.metric.bet
+        instance.delete()
+        _broadcast_bet_event(bet.project_id, "bet.updated", bet.id)
+
+
+# ---------------------------------------------------------------------------
 # Tasks — the hot path
 # ---------------------------------------------------------------------------
 
@@ -871,6 +1003,10 @@ def _extract_ad_hoc_filters(params) -> dict:
     labels = [l for l in params.getlist("label") if l]
     if labels:
         filters["labels"] = labels
+
+    # ``bet`` carries an id, a name, or the sentinel "none" (unlinked tasks).
+    if bet := params.get("bet"):
+        filters["bet"] = bet
 
     if search := params.get("search"):
         filters["search"] = search

@@ -14,6 +14,7 @@ import {
   viewsKey,
 } from "@/lib/query-keys";
 import type {
+  BetRef,
   BoardFilters,
   Task,
   TaskListResponse,
@@ -142,6 +143,7 @@ type CreateTaskPayload = {
   assignee_id?: number | null;
   priority?: Priority | null;
   label_ids?: number[];
+  bet_id?: number | null;
   story_points?: number | null;
 };
 
@@ -150,6 +152,8 @@ function invalidateAll(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ["tasks"] });
   qc.invalidateQueries({ queryKey: ["tasks-infinite"] });
   qc.invalidateQueries({ queryKey: ["projects"] });
+  // Task writes can change bet linkage / done counts on the bets page.
+  qc.invalidateQueries({ queryKey: ["bets"] });
 }
 
 export function useCreateTask() {
@@ -176,6 +180,9 @@ type UpdateTaskPayload = Partial<CreateTaskPayload> & {
    *  onSettled refetch, same as before this change. */
   optimisticAssignees?: User[];
   optimisticLabels?: LabelType[];
+  /** Resolved BetRef for `bet_id` (or explicit null when unlinking) — same
+   *  optimistic-hint idiom as `optimisticAssignees` above. */
+  optimisticBet?: BetRef | null;
 };
 
 /** Patch a task in place across every `tasks-infinite` cache entry that
@@ -220,6 +227,7 @@ export function useUpdateTask() {
       key,
       optimisticAssignees: _optimisticAssignees,
       optimisticLabels: _optimisticLabels,
+      optimisticBet: _optimisticBet,
       ...payload
     }: UpdateTaskPayload) =>
       apiFetch<Task>(`/api/tasks/${key}/`, {
@@ -242,6 +250,8 @@ export function useUpdateTask() {
       optimisticAssignees,
       label_ids,
       optimisticLabels,
+      bet_id,
+      optimisticBet,
     }) => {
       qc.cancelQueries({ queryKey: ["tasks-infinite"] });
       const snapshots = qc.getQueriesData<InfiniteData<TaskListResponse>>({
@@ -253,12 +263,14 @@ export function useUpdateTask() {
         assignee_ids !== undefined && optimisticAssignees !== undefined;
       const patchesLabels =
         label_ids !== undefined && optimisticLabels !== undefined;
-      if (patchesPriority || patchesAssignees || patchesLabels) {
+      const patchesBet = bet_id !== undefined && optimisticBet !== undefined;
+      if (patchesPriority || patchesAssignees || patchesLabels || patchesBet) {
         patchTaskInInfiniteCaches(qc, key, (t) => ({
           ...t,
           ...(patchesPriority ? { priority: priority ?? null } : {}),
           ...(patchesAssignees ? { assignees: optimisticAssignees! } : {}),
           ...(patchesLabels ? { labels: optimisticLabels! } : {}),
+          ...(patchesBet ? { bet: optimisticBet ?? null } : {}),
         }));
       }
 

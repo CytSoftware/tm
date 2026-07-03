@@ -32,6 +32,16 @@ export function connectProjectSocket({
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   function invalidate(event: TaskEvent) {
+    // Bet events only touch the bets cache — except deletion, which unlinks
+    // tasks (SET_NULL) and therefore changes visible card chips too.
+    if (event.type.startsWith("bet.")) {
+      queryClient.invalidateQueries({ queryKey: ["bets"] });
+      if (event.type === "bet.deleted") {
+        queryClient.invalidateQueries({ queryKey: ["tasks-infinite"] });
+      }
+      return;
+    }
+
     queryClient.invalidateQueries({ queryKey: taskListKey(projectId) });
     queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
 

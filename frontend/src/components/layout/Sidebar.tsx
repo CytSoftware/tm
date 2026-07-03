@@ -37,6 +37,7 @@ import {
   Settings,
   Sparkles,
   Star,
+  Target,
   Trash2,
   Users,
   Workflow,
@@ -279,6 +280,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           collapsed={isCollapsed}
           onNavigate={() => {
             router.push("/board");
+            onClose?.();
+          }}
+        />
+        <NavLink
+          icon={
+            <Target
+              className={
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground"
+              }
+            />
+          }
+          label="Bets"
+          active={pathname.startsWith("/bets")}
+          collapsed={isCollapsed}
+          onNavigate={() => {
+            router.push("/bets");
             onClose?.();
           }}
         />

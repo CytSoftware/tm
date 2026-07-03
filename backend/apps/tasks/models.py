@@ -1,6 +1,6 @@
 """Task tracker data model.
 
-Six models:
+Core models:
 
     Project                   — top-level container. Owns a task key prefix.
     Column                    — status columns on the Kanban board, per project.
@@ -8,6 +8,9 @@ Six models:
     Task                      — the work unit. Human key like "CYT-001".
     View                      — saved Notion-style filter+sort presets.
     RecurringTaskTemplate     — blueprints that generate Task instances on schedule.
+    Bet / Metric / Checkin    — Cyt OS bets: period-scoped, project-specific
+                                bets that tasks link to, each tracked by
+                                metrics with an append-only check-in log.
 
 Design notes:
 
@@ -219,6 +222,17 @@ class Task(TimestampedModel):
         null=True,
         blank=True,
         related_name="generated_tasks",
+    )
+    bet = models.ForeignKey(
+        "Bet",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="tasks",
+        help_text=(
+            "The bet this task serves (Cyt OS). Must belong to the task's "
+            "project; cleared when the task moves to another project."
+        ),
     )
     due_at = models.DateTimeField(null=True, blank=True)
 
@@ -731,3 +745,139 @@ class Notification(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.recipient_id} <- {self.verb} {self.task_key}"
+
+
+# ---------------------------------------------------------------------------
+# Bets (Cyt OS)
+# ---------------------------------------------------------------------------
+# A Bet is a project-specific commitment for one two-month period (the fixed
+# grid in ``periods.py`` — anchored July 1, 2026). Tasks link to the bet they
+# serve via ``Task.bet``. Progress is tracked per-bet through Metrics, each
+# with an append-only Checkin log (a check-in carries an optional numeric
+# value and/or a free-text note, so countable and non-countable metrics share
+# one shape).
+
+
+class BetStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    WON = "won", "Won"
+    LOST = "lost", "Lost"
+
+
+class Bet(TimestampedModel):
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name="bets"
+    )
+    name = models.CharField(max_length=200)
+    description = models.TextField(
+        blank=True,
+        default="",
+        help_text="Target, kill criteria, context — free text.",
+    )
+    color = models.CharField(
+        max_length=9,
+        default="#6366f1",
+        help_text="CSS hex color used for the bet chip on task cards.",
+    )
+    status = models.CharField(
+        max_length=8,
+        choices=BetStatus.choices,
+        default=BetStatus.ACTIVE,
+    )
+    period_start = models.DateField(
+        help_text=(
+            "First day of the two-month period this bet belongs to. Any "
+            "date is snapped to the start of its containing period on save."
+        ),
+    )
+
+    class Meta:
+        ordering = ["-period_start", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "period_start", "name"],
+                name="bet_unique_name_per_project_period",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["project", "period_start"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.project.prefix}: {self.name} ({self.period_start})"
+
+    def save(self, *args, **kwargs):
+        from .periods import current_period_start, period_start_for
+
+        # Snap onto the period grid instead of validating — callers can pass
+        # any date (or none, meaning "the current period") and always land on
+        # a real period boundary.
+        if self.period_start is None:
+            self.period_start = current_period_start()
+        else:
+            self.period_start = period_start_for(self.period_start)
+        return super().save(*args, **kwargs)
+
+    @property
+    def period_label(self) -> str:
+        from .periods import period_label
+
+        return period_label(self.period_start)
+
+    @property
+    def period_end(self):
+        from .periods import period_end
+
+        return period_end(self.period_start)
+
+
+class Metric(TimestampedModel):
+    """One trackable signal on a bet (a bet typically carries 1–2).
+
+    ``target``/``unit`` are optional — countable metrics use them ("10
+    signups"); qualitative metrics are just a name whose check-ins carry
+    notes instead of values.
+    """
+
+    bet = models.ForeignKey(Bet, on_delete=models.CASCADE, related_name="metrics")
+    name = models.CharField(max_length=200)
+    target = models.FloatField(null=True, blank=True)
+    unit = models.CharField(max_length=32, blank=True, default="")
+
+    class Meta:
+        ordering = ["bet_id", "id"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.bet_id}: {self.name}"
+
+
+class Checkin(TimestampedModel):
+    """Append-only progress log entry on a metric.
+
+    ``value`` and ``note`` are both optional (a check-in needs at least one
+    to be useful — enforced at the API/MCP layer, not the DB). History is the
+    point: the latest check-in is a metric's current reading, the sequence is
+    its trend.
+    """
+
+    metric = models.ForeignKey(
+        Metric, on_delete=models.CASCADE, related_name="checkins"
+    )
+    value = models.FloatField(null=True, blank=True)
+    note = models.TextField(blank=True, default="")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="metric_checkins",
+    )
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["metric", "created_at"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.metric_id} @ {self.created_at:%Y-%m-%d}: {self.value}"

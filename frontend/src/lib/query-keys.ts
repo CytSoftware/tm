@@ -36,6 +36,11 @@ export const recurringKey = (projectId: number) =>
 
 export const focusKey = () => ["focus"] as const;
 
+// Bets (Cyt OS) — everything under ["bets"] so bet.* WS events / mutations
+// can invalidate the whole namespace at once.
+export const betsKey = (projectId: number | null, period: string) =>
+  ["bets", projectId, period] as const;
+
 // Pipelines (separate from tasks — global, no per-project scoping in v1).
 export const pipelineStagesKey = () => ["pipeline-stages"] as const;
 export const pipelineListKey = (filtersKey: string) =>
