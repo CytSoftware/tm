@@ -1008,6 +1008,11 @@ def _extract_ad_hoc_filters(params) -> dict:
     if bet := params.get("bet"):
         filters["bet"] = bet
 
+    # ``done`` — "true"/"1"/"yes" keeps only tasks in an is_done column,
+    # anything else keeps open tasks.
+    if (done := params.get("done")) not in (None, ""):
+        filters["done"] = done
+
     if search := params.get("search"):
         filters["search"] = search
 

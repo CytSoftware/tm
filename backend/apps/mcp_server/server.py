@@ -79,6 +79,7 @@ async def list_tasks(
     labels: list[str] | None = None,
     column: str | None = None,
     bet: str | int | None = None,
+    done: bool | None = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     """List tasks matching the given filters.
@@ -87,7 +88,9 @@ async def list_tasks(
     a numeric id. ``assignee`` accepts a username (matches tasks where that
     user is one of the assignees). ``priority`` is a list like ``["P1", "P2"]``
     (P1 is highest). ``labels`` and ``column`` accept names. ``bet`` accepts a
-    bet id or name, or ``"none"`` for tasks not linked to any bet.
+    bet id or name, or ``"none"`` for tasks not linked to any bet. ``done``
+    filters by completion: ``true`` keeps only tasks in a done column,
+    ``false`` keeps open tasks.
     """
     return await _async(tools.list_tasks)(
         project=project,
@@ -96,6 +99,7 @@ async def list_tasks(
         labels=labels,
         column=column,
         bet=bet,
+        done=done,
         limit=limit,
     )
 
