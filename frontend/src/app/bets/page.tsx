@@ -17,17 +17,7 @@
  */
 
 import { useEffect, useState } from "react";
-import {
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Pencil,
-  Plus,
-  Target,
-  Trash2,
-  Undo2,
-  X,
-} from "lucide-react";
+import { Check, Pencil, Plus, Target, Trash2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ColorPicker } from "@/components/ui/ColorPicker";
@@ -60,17 +50,14 @@ import {
 } from "@/hooks/use-bets";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import { useActiveProject } from "@/lib/active-project";
-import { currentPeriodStart, periodLabel, shiftPeriod } from "@/lib/periods";
+import { currentPeriodStart, periodLabel } from "@/lib/periods";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/components/task/TimeInColumn";
+import { BetTasksSummary } from "@/components/bets/BetTasksSummary";
+import { MetricLine, paceOf, trimNumber } from "@/components/bets/MetricLine";
+import { PeriodMasthead } from "@/components/bets/PeriodMasthead";
 import type { Bet, BetMetric, BetStatus, MetricCheckin, Project } from "@/lib/types";
-import { BET_STATUS_LABELS } from "@/lib/types";
-
-const STATUS_TONE: Record<BetStatus, string> = {
-  active: "text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/30",
-  won: "text-green-600 dark:text-green-400 bg-green-500/10 border-green-500/30",
-  lost: "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30",
-};
+import { BET_STATUS_LABELS, BET_STATUS_TONE } from "@/lib/types";
 
 export default function BetsPage() {
   const { projectId, setProjectId, hydrated } = useActiveProject();
@@ -191,107 +178,6 @@ export default function BetsPage() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Period masthead — the clock every bet races against
-// ─────────────────────────────────────────────────────────────────────────
-
-/** Fraction of the period elapsed right now: 0 before it starts, 1 after
- *  it ends, in between otherwise. */
-function elapsedFraction(period: string, now: Date = new Date()): number {
-  const start = new Date(`${period}T00:00:00`).getTime();
-  const end = new Date(`${shiftPeriod(period, 1)}T00:00:00`).getTime();
-  return Math.max(0, Math.min(1, (now.getTime() - start) / (end - start)));
-}
-
-/** Countdown line for the period: how alive is this window? */
-function periodStatus(period: string): string {
-  const start = new Date(`${period}T00:00:00`);
-  const end = new Date(`${shiftPeriod(period, 1)}T00:00:00`);
-  const now = new Date();
-  const fmt = (d: Date) =>
-    d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  if (now < start) return `starts ${fmt(start)}`;
-  if (now >= end) return `ended ${fmt(new Date(end.getTime() - 86_400_000))}`;
-  const daysLeft = Math.ceil((end.getTime() - now.getTime()) / 86_400_000);
-  return `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`;
-}
-
-function PeriodMasthead({
-  period,
-  onChange,
-}: {
-  period: string;
-  onChange: (period: string) => void;
-}) {
-  const isCurrent = period === currentPeriodStart();
-  const elapsed = elapsedFraction(period);
-
-  return (
-    <div className="mb-5">
-      <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7 shrink-0"
-          onClick={() => onChange(shiftPeriod(period, -1))}
-          aria-label="Previous period"
-        >
-          <ChevronLeft className="size-4" />
-        </Button>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-3">
-            <span
-              className={cn(
-                "text-[17px] font-semibold tracking-tight",
-                !isCurrent && "text-amber-600 dark:text-amber-400",
-              )}
-            >
-              {periodLabel(period)}
-            </span>
-            {!isCurrent && (
-              <button
-                type="button"
-                onClick={() => onChange(currentPeriodStart())}
-                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <Undo2 className="size-3" />
-                back to now
-              </button>
-            )}
-            <span className="ml-auto text-[11px] text-muted-foreground tabular-nums">
-              {periodStatus(period)}
-            </span>
-          </div>
-          <div className="relative mt-2 h-[3px] rounded-full bg-border/70">
-            <div
-              className="absolute inset-y-0 left-0 rounded-full bg-foreground/45"
-              style={{ width: `${elapsed * 100}%` }}
-            />
-            {elapsed > 0 && elapsed < 1 && (
-              <span
-                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 size-2 rounded-full bg-foreground ring-2 ring-background"
-                style={{ left: `${elapsed * 100}%` }}
-                title="Today"
-              />
-            )}
-          </div>
-        </div>
-
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7 shrink-0"
-          onClick={() => onChange(shiftPeriod(period, 1))}
-          aria-label="Next period"
-        >
-          <ChevronRight className="size-4" />
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 function EmptyHint({ text }: { text: string }) {
   return (
     <div className="max-w-md mx-auto mt-14 grid place-items-center py-12 px-6 text-center text-[12px] text-muted-foreground rounded-lg border border-dashed border-border/60">
@@ -370,7 +256,7 @@ function BetCard({
           <SelectTrigger
             className={cn(
               "h-6 w-auto gap-1 rounded-md border px-2 text-[11px] font-medium shrink-0",
-              STATUS_TONE[bet.status],
+              BET_STATUS_TONE[bet.status],
             )}
           >
             <SelectValue />
@@ -400,6 +286,7 @@ function BetCard({
       )}
 
       <div className="mt-2 divide-y divide-border/40">
+        <BetTasksSummary bet={bet} expandable />
         {bet.metrics.map((m) => (
           <MetricLine
             key={m.id}
@@ -414,148 +301,6 @@ function BetCard({
         </div>
       </div>
     </section>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Metric line — title · reading · Log, with a contained bar underneath
-// ─────────────────────────────────────────────────────────────────────────
-
-/** Pace verdict: latest reading vs. where the target says you should be,
- *  given how much of the period has burned. Only meaningful mid-period on
- *  a metric with both a value and a target. */
-function paceOf(
-  value: number,
-  target: number,
-  period: string,
-): "ahead" | "behind" | null {
-  const f = elapsedFraction(period);
-  if (f <= 0 || f >= 1 || target <= 0) return null;
-  return value >= target * f ? "ahead" : "behind";
-}
-
-function MetricLine({
-  metric,
-  color,
-  period,
-  onOpen,
-}: {
-  metric: BetMetric;
-  color: string;
-  period: string;
-  onOpen: () => void;
-}) {
-  const latest = metric.checkins[0] ?? null;
-  const latestValue = latest?.value ?? null;
-  const pace =
-    latestValue != null && metric.target != null
-      ? paceOf(latestValue, metric.target, period)
-      : null;
-
-  return (
-    // One row per metric: fixed-width title column so every bar starts at
-    // the same x, bar inline beside the title, reading after it. Metrics
-    // without a target skip the bar — just the latest input and Log.
-    // Rows get real height and hairline separation so the list breathes.
-    <div className="py-3 flex items-center gap-4">
-      <button
-        type="button"
-        onClick={onOpen}
-        title={metric.name}
-        className="w-40 shrink-0 truncate text-left text-[12px] font-medium hover:text-foreground/80 outline-none focus-visible:ring-1 focus-visible:ring-ring/50 rounded-sm"
-      >
-        {metric.name}
-      </button>
-
-      {metric.target != null ? (
-        <>
-          {/* Constant bar length — every bar starts *and* ends at the same
-              x, regardless of how wide the name or the reading is. */}
-          <button
-            type="button"
-            onClick={onOpen}
-            aria-label={`Open ${metric.name} check-in history`}
-            className="w-full max-w-[300px] shrink h-1.5 rounded-full bg-muted overflow-hidden outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
-          >
-            {latestValue != null && (
-              <span
-                className="block h-full rounded-full transition-[width] duration-300"
-                style={{
-                  width: `${Math.max(0, Math.min(100, (latestValue / metric.target) * 100))}%`,
-                  background: color,
-                }}
-              />
-            )}
-          </button>
-          <span className="shrink-0 flex items-baseline gap-1.5 whitespace-nowrap">
-            {latestValue != null ? (
-              <>
-                <span className="font-mono text-[14px] font-semibold tabular-nums">
-                  {trimNumber(latestValue)}
-                </span>
-                <span className="text-[11px] text-muted-foreground tabular-nums">
-                  of {trimNumber(metric.target)}
-                  {metric.unit && ` ${metric.unit}`}
-                </span>
-              </>
-            ) : (
-              <span className="text-[11px] text-muted-foreground/60">
-                no check-ins yet
-              </span>
-            )}
-            {pace === "ahead" && (
-              <span
-                title="Ahead of pace for this period"
-                className="text-[10px] font-medium text-green-600 dark:text-green-400"
-              >
-                ▲
-              </span>
-            )}
-            {pace === "behind" && (
-              <span
-                title="Behind pace for this period"
-                className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
-              >
-                ▼
-              </span>
-            )}
-          </span>
-        </>
-      ) : (
-        // No target → no bar. The latest input starts where the bars do,
-        // keeping one left rhythm down the whole list.
-        <span className="min-w-0 truncate">
-          {latestValue != null ? (
-            <span className="font-mono text-[14px] font-semibold tabular-nums">
-              {trimNumber(latestValue)}
-              {metric.unit && (
-                <span className="ml-1 font-sans text-[11px] font-normal text-muted-foreground">
-                  {metric.unit}
-                </span>
-              )}
-            </span>
-          ) : latest ? (
-            <span className="text-[11px] text-muted-foreground italic">
-              “{latest.note}”
-            </span>
-          ) : (
-            <span className="text-[11px] text-muted-foreground/60">
-              no check-ins yet
-            </span>
-          )}
-        </span>
-      )}
-
-      <span className="flex-1" />
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-5 px-1.5 text-[10px] shrink-0"
-        onClick={onOpen}
-      >
-        Log
-      </Button>
-    </div>
   );
 }
 
@@ -1055,9 +800,4 @@ function BetFormDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-/** "10.0" → "10", "12.5" stays "12.5". */
-function trimNumber(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
 }

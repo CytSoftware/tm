@@ -88,6 +88,13 @@ export const BET_STATUS_LABELS: Record<BetStatus, string> = {
   lost: "Lost",
 };
 
+/** Chip tint per bet status — shared by the bets page and the dashboard. */
+export const BET_STATUS_TONE: Record<BetStatus, string> = {
+  active: "text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/30",
+  won: "text-green-600 dark:text-green-400 bg-green-500/10 border-green-500/30",
+  lost: "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30",
+};
+
 export type MetricCheckin = {
   id: number;
   metric: number;
@@ -114,6 +121,7 @@ export type BetMetric = {
 export type Bet = {
   id: number;
   project: number;
+  project_name: string;
   name: string;
   description: string;
   color: string;
