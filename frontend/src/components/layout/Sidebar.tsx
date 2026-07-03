@@ -30,6 +30,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   HardDrive,
+  Home,
   LayoutDashboard,
   LogOut,
   MoreHorizontal,
@@ -265,6 +266,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
       {/* Scrollable nav list */}
       <nav className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-1 py-2 space-y-1">
         <NotificationInbox collapsed={isCollapsed} onNavigate={onClose} />
+        <NavLink
+          icon={
+            <Home
+              className={
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground"
+              }
+            />
+          }
+          label="Home"
+          active={pathname === "/"}
+          collapsed={isCollapsed}
+          onNavigate={() => {
+            router.push("/");
+            onClose?.();
+          }}
+        />
         <NavLink
           icon={
             <LayoutDashboard

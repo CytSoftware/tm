@@ -8,7 +8,7 @@ import { Menu, Search as SearchIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { GlobalShortcuts } from "@/components/GlobalShortcuts";
-import { meKey } from "@/lib/query-keys";
+import { meKey, myTasksKey } from "@/lib/query-keys";
 import { fetchMe } from "@/lib/auth";
 import { ensureCsrfCookie } from "@/lib/api";
 import { connectNotificationSocket } from "@/lib/ws";
@@ -113,7 +113,13 @@ export function Shell({ children }: { children: ReactNode }) {
       // `event` carries an extra `type` discriminant beyond `Notification`'s
       // fields — fine to pass through structurally, no need to destructure
       // it off first.
-      onNotification: (event) => prependNotification(queryClient, event),
+      onNotification: (event) => {
+        prependNotification(queryClient, event);
+        // A notification addressed to me almost always means my task list
+        // changed (assigned/moved/completed/deleted) — refresh the
+        // dashboard inbox, which has no project socket of its own.
+        queryClient.invalidateQueries({ queryKey: myTasksKey() });
+      },
     });
   }, [needsLogin, userId, queryClient]);
 

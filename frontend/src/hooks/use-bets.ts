@@ -28,6 +28,20 @@ export function useBetsQuery(
   });
 }
 
+/** All bets across every project for one period (dashboard overview).
+ *  Polls every 60s — the dashboard sits outside any project socket. */
+export function useAllBetsQuery(period: string) {
+  return useQuery({
+    queryKey: betsKey(null, period),
+    queryFn: () =>
+      apiFetch<BetListResponse>("/api/bets/", {
+        query: { period },
+      }).then((r) => r.results),
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  });
+}
+
 /** Mutations invalidate the whole ["bets"] namespace, plus task caches when
  *  the change is visible on cards (bet renamed/recolored/deleted). */
 function useInvalidateBets(alsoTasks = false) {

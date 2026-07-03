@@ -3,6 +3,7 @@
 import {
   useInfiniteQuery,
   useMutation,
+  useQuery,
   useQueryClient,
   type InfiniteData,
   type QueryClient,
@@ -10,6 +11,7 @@ import {
 
 import { apiFetch } from "@/lib/api";
 import {
+  myTasksKey,
   taskInfiniteKey,
   viewsKey,
 } from "@/lib/query-keys";
@@ -122,6 +124,21 @@ export function useTasksInfinite(args: TasksInfiniteArgs) {
       return loaded;
     },
     enabled: enabled !== false,
+  });
+}
+
+/** My open tasks across all projects, due-date ascending (dashboard inbox).
+ *  Non-paginated: `done=false` bounds the set to one person's open workload.
+ *  Polls every 60s — the dashboard sits outside any project socket. */
+export function useMyTasksQuery() {
+  return useQuery({
+    queryKey: myTasksKey(),
+    queryFn: () =>
+      apiFetch<TaskListResponse>(
+        "/api/tasks/?assignee=me&done=false&sort_field=due_at&sort_dir=asc&limit=100",
+      ).then((r) => r.results),
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
   });
 }
 
