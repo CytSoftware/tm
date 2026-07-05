@@ -4,7 +4,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
   type MutableRefObject,
@@ -14,7 +13,6 @@ import {
   Plate,
   PlateContainer,
   PlateContent,
-  useEditorRef,
   usePlateEditor,
   usePluginOption,
 } from "platejs/react";
@@ -29,10 +27,11 @@ import {
   useWikiDocQuery,
   useWikiTreeQuery,
 } from "@/hooks/use-wiki";
-import type { WikiDoc, WikiValue } from "@/lib/types";
+import type { WikiDoc, WikiDocDetail, WikiValue } from "@/lib/types";
 
 import { ensureWebsocketProviderRegistered } from "./collab-provider";
 import { RemoteCursorOverlay } from "./cursor-overlay";
+import { EditorSkeleton } from "./EditorSkeleton";
 import { wikiBasePlugins, wikiComponents } from "./editor-kit";
 import { useMounted } from "./use-mounted";
 import { WikiNavProvider } from "./wiki-nav-context";
@@ -74,6 +73,26 @@ export function WikiEditor({
 }) {
   const mounted = useMounted();
   const detailQuery = useWikiDocQuery(doc.key);
+
+  // Paint the HTTP snapshot the moment it lands — don't wait on Yjs to sync
+  // before showing anything. The Yjs provider connects in the background and
+  // reconciles the editor once it syncs (see WikiEditorContent).
+  if (!mounted || !detailQuery.isSuccess) return <EditorSkeleton />;
+
+  return (
+    <WikiEditorContent doc={doc} detail={detailQuery.data} onNavigate={onNavigate} />
+  );
+}
+
+function WikiEditorContent({
+  doc,
+  detail,
+  onNavigate,
+}: {
+  doc: WikiDoc;
+  detail: WikiDocDetail;
+  onNavigate: (key: string) => void;
+}) {
   const treeQuery = useWikiTreeQuery();
   const pages = useMemo(
     () =>
@@ -89,20 +108,26 @@ export function WikiEditor({
     staleTime: Infinity,
   });
 
-  // Yjs applies the synced/seeded doc to the editor outside React's knowledge.
-  // PlateContent only repaints on a *parent* re-render (which is why editing
-  // the title made content appear). Bumping this forces that parent re-render.
-  const [, forcePaint] = useReducer((n: number) => n + 1, 0);
-
   const cursor = useMemo(() => {
     const me = meQuery.data;
     const name = me ? me.first_name || me.username : "Someone";
     return { name, color: colorFor(me ? String(me.id) : name) };
   }, [meQuery.data]);
 
+  const initialValue = useMemo<WikiValue>(
+    () =>
+      detail.content && detail.content.length > 0
+        ? (detail.content as WikiValue)
+        : EMPTY_VALUE,
+    // Only the value captured when this doc was first loaded matters — the
+    // editor owns its content from here on (Yjs reconciles it in the background).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [doc.key],
+  );
+
   const editor = usePlateEditor(
     {
-      skipInitialization: true,
+      value: initialValue as never,
       components: wikiComponents,
       plugins: [
         ...wikiBasePlugins,
@@ -123,31 +148,16 @@ export function WikiEditor({
     [doc.key],
   );
 
-  const detail = detailQuery.data;
-  const detailReady = detailQuery.isSuccess;
-
-  // Yjs lifecycle: seed the shared doc once it's mounted + the snapshot loaded.
-  // The seed is only applied if the server doc is empty (slate-yjs guards it);
-  // otherwise the synced CRDT wins.
+  // Connect Yjs in the background. The editor already shows the HTTP
+  // snapshot (see `initialValue` above); once the shared doc syncs,
+  // slate-yjs's own binding reconciles the editor content in place — no
+  // seed is applied if the shared doc already has content.
   useEffect(() => {
-    if (!mounted || !detailReady) return;
-    const initial =
-      detail?.content && detail.content.length > 0
-        ? (detail.content as WikiValue)
-        : EMPTY_VALUE;
     const yjs = editor.getApi(YjsPlugin).yjs;
     yjs.init({
       id: doc.key,
-      value: initial as never,
+      value: initialValue as never,
       autoSelect: "end",
-      // Force a paint once the doc is ready — Yjs mutates the editor outside
-      // React's knowledge, so without this the content stays blank until a
-      // parent re-render (e.g. editing the title) happens.
-      onReady: () =>
-        setTimeout(() => {
-          editor.api.onChange();
-          forcePaint();
-        }, 0),
     } as never);
     let torn = false;
     return () => {
@@ -162,10 +172,7 @@ export function WikiEditor({
         /* provider already disposed */
       }
     };
-    // detail content is captured at init; re-running on content change would
-    // duplicate the seed. Intentionally keyed on editor identity + readiness.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, mounted, detailReady, doc.key]);
+  }, [editor, doc.key, initialValue]);
 
   // Debounced snapshot autosave (denormalization; CRDT remains source of truth).
   const syncedRef = useRef(false);
@@ -181,8 +188,6 @@ export function WikiEditor({
     [doc.key],
   );
 
-  if (!mounted) return null;
-
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <WikiNavProvider pages={pages} onNavigate={onNavigate}>
@@ -190,7 +195,7 @@ export function WikiEditor({
           editor={editor}
           onChange={({ value }) => handleChange(value as WikiValue)}
         >
-          <SyncGate syncedRef={syncedRef} onSynced={forcePaint} />
+          <SyncTracker syncedRef={syncedRef} />
           <WikiToolbar />
           <div className="flex-1 min-h-0 overflow-y-auto">
             <PlateContainer className="relative mx-auto max-w-3xl px-12 py-8">
@@ -207,25 +212,13 @@ export function WikiEditor({
   );
 }
 
-function SyncGate({
-  syncedRef,
-  onSynced,
-}: {
-  syncedRef: MutableRefObject<boolean>;
-  onSynced: () => void;
-}) {
-  const editor = useEditorRef();
+/** Tracks Yjs sync state so autosave doesn't fire before the shared doc has
+ *  reconciled (avoids persisting a pre-sync snapshot as the source of truth). */
+function SyncTracker({ syncedRef }: { syncedRef: MutableRefObject<boolean> }) {
   const isSynced = usePluginOption(YjsPlugin, "_isSynced");
   useEffect(() => {
     syncedRef.current = !!isSynced;
-    if (isSynced) {
-      // The synced doc was applied to the editor outside React's knowledge;
-      // onChange alone doesn't repaint PlateContent here — force a parent
-      // re-render so the content paints without a manual edit.
-      editor.api.onChange();
-      onSynced();
-    }
-  }, [isSynced, syncedRef, editor, onSynced]);
+  }, [isSynced, syncedRef]);
   return null;
 }
 

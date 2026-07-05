@@ -2,13 +2,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import dynamic from "next/dynamic";
 import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { WikiTree } from "@/components/wiki/WikiTree";
-import { WikiEditor } from "@/components/wiki/WikiEditor";
+import { EditorSkeleton } from "@/components/wiki/EditorSkeleton";
 import { useCreateDoc, useDeleteDoc, useWikiTreeQuery } from "@/hooks/use-wiki";
 import { connectWikiTreeSocket } from "@/lib/wiki-ws";
+
+const WikiEditor = dynamic(
+  () => import("@/components/wiki/WikiEditor").then((mod) => mod.WikiEditor),
+  { ssr: false, loading: () => <EditorSkeleton /> },
+);
 
 export default function WikiPage() {
   const qc = useQueryClient();
