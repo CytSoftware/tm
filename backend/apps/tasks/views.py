@@ -453,19 +453,6 @@ def internal_broadcast(request):
     payload = data.get("payload") or {}
     scope = data.get("scope")
 
-    if scope == "pipelines":
-        # Pipeline broadcasts share this endpoint but route into a dedicated
-        # global Channels group via apps.pipelines.broadcast.
-        from apps.pipelines.broadcast import _broadcast_local as _pipeline_local
-
-        if not isinstance(event_type, str):
-            return Response(
-                {"detail": "Invalid payload."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        _pipeline_local(event_type, payload)
-        return Response({"ok": True})
-
     if scope == "wiki":
         # Wiki tree broadcasts route into the dedicated global ``wiki`` group.
         from apps.wiki.broadcast import _broadcast_local as _wiki_local
@@ -1010,6 +997,18 @@ def _extract_ad_hoc_filters(params) -> dict:
 
     if search := params.get("search"):
         filters["search"] = search
+
+    # ``include_archived`` is a board toggle: absent means "no opinion" (leave
+    # archived-project tasks in), an explicit truthy/falsy value opts into
+    # including/excluding them on the all-projects board.
+    raw_archived = params.get("include_archived")
+    if raw_archived is not None:
+        filters["include_archived"] = raw_archived.lower() not in (
+            "false",
+            "0",
+            "no",
+            "",
+        )
 
     return filters
 

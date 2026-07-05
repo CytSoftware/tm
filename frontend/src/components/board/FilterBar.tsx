@@ -58,6 +58,9 @@ type Props = {
   loadedView: SavedView | null;
   /** Called when the user wants to flush current filters back into the loaded view. */
   onSaveToView?: () => void;
+  /** Show the "archived projects" toggle — only relevant on the all-projects
+   *  board, and only when archived projects actually exist. */
+  showArchivedToggle?: boolean;
 };
 
 export function FilterBar({
@@ -69,6 +72,7 @@ export function FilterBar({
   availableColumns,
   loadedView,
   onSaveToView,
+  showArchivedToggle,
 }: Props) {
   const modified = loadedView ? !filtersMatchSavedView(filters, loadedView) : false;
   const hasActiveFilters = !isEmptyFilters(filters);
@@ -113,6 +117,7 @@ export function FilterBar({
         users={users}
         labels={labels}
         availableColumns={availableColumns}
+        showArchivedToggle={showArchivedToggle}
       />
 
       {/* Sort popover */}
@@ -204,6 +209,12 @@ export function FilterBar({
             onClear={() => update("columnName", null)}
           />
         )}
+        {filters.includeArchived && (
+          <Chip
+            label="Incl. archived"
+            onClear={() => update("includeArchived", false)}
+          />
+        )}
       </div>
 
       {/* Sort indicator (always visible when non-default) */}
@@ -287,6 +298,7 @@ function FilterPopover({
   users,
   labels,
   availableColumns,
+  showArchivedToggle,
 }: {
   filters: BoardFilters;
   onFiltersChange: (next: BoardFilters) => void;
@@ -294,6 +306,7 @@ function FilterPopover({
   users: User[];
   labels: LabelType[];
   availableColumns: string[];
+  showArchivedToggle?: boolean;
 }) {
   const activeCount = countActiveFilters(filters);
   function update<K extends keyof BoardFilters>(key: K, value: BoardFilters[K]) {
@@ -489,6 +502,27 @@ function FilterPopover({
               </div>
             </Section>
           )}
+
+          {showArchivedToggle && (
+            <Section label="Archived projects">
+              <button
+                type="button"
+                onClick={() =>
+                  update("includeArchived", !filters.includeArchived)
+                }
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] transition-colors",
+                  filters.includeArchived
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background text-muted-foreground border-border hover:border-foreground/30",
+                )}
+              >
+                {filters.includeArchived
+                  ? "Showing archived-project tasks"
+                  : "Show archived-project tasks"}
+              </button>
+            </Section>
+          )}
         </div>
       </PopoverContent>
     </Popover>
@@ -597,7 +631,8 @@ function countActiveFilters(f: BoardFilters): number {
     f.assigneeIds.length +
     (f.includeUnassigned ? 1 : 0) +
     f.labelIds.length +
-    (f.columnName ? 1 : 0)
+    (f.columnName ? 1 : 0) +
+    (f.includeArchived ? 1 : 0)
   );
 }
 
@@ -609,6 +644,7 @@ function isEmptyFilters(f: BoardFilters): boolean {
     !f.includeUnassigned &&
     f.labelIds.length === 0 &&
     !f.columnName &&
+    !f.includeArchived &&
     !f.search
   );
 }
@@ -666,6 +702,7 @@ export function boardFiltersFromSavedView(
     labelIds,
     columnName,
     search: v.search ?? "",
+    includeArchived: v.include_archived === true,
     sort:
       view.sort && view.sort.length > 0
         ? view.sort
@@ -687,6 +724,7 @@ export function savedViewPayloadFromFilters(filters: BoardFilters) {
   if (filters.labelIds.length > 0) payload.labels = filters.labelIds;
   if (filters.columnName) payload.column = filters.columnName;
   if (filters.search) payload.search = filters.search;
+  if (filters.includeArchived) payload.include_archived = true;
   return payload;
 }
 

@@ -164,8 +164,6 @@ urlpatterns = [
     path("oauth/register/", oauth_register),
     path("admin/", admin.site.urls),
     path("api/", include("apps.tasks.urls")),
-    path("api/", include("apps.pipelines.urls")),
-    path("api/", include("apps.crm.urls")),
     path("api/", include("apps.wiki.urls")),
     path("api/", include("apps.drive.urls")),          # /api/drive — B2 file browser
     path("api/", include("apps.knowledge.urls")),      # /api/knowledge — LLM wiki (read-only)

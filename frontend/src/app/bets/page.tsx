@@ -16,7 +16,7 @@
  * track, and the pace tag compares each metric's progress to it.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Check,
   ChevronLeft,
@@ -75,16 +75,60 @@ const STATUS_TONE: Record<BetStatus, string> = {
 export default function BetsPage() {
   const { projectId, setProjectId, hydrated } = useActiveProject();
   const projectsQuery = useProjectsQuery({ includeArchived: false });
-  const projects = projectsQuery.data?.results ?? [];
-  const project = projects.find((p) => p.id === projectId) ?? null;
+  const projects = useMemo(
+    () => projectsQuery.data?.results ?? [],
+    [projectsQuery.data],
+  );
+
+  // Which project(s) the page shows: a project id, or "all" for the
+  // cross-project view. `scopeOverride` is what the selector explicitly picks;
+  // until then the page follows the active project (falling back to "all"), so
+  // it opens where the rest of the app is without a setState-in-effect.
+  const [scopeOverride, setScopeOverride] = useState<number | "all" | null>(
+    null,
+  );
+  const scope: number | "all" | null =
+    scopeOverride ?? (hydrated ? projectId ?? "all" : null);
+
+  const isAll = scope === "all";
+  const project =
+    typeof scope === "number"
+      ? projects.find((p) => p.id === scope) ?? null
+      : null;
 
   const [period, setPeriod] = useState<string>(() => currentPeriodStart());
 
-  const betsQuery = useBetsQuery(project?.id ?? null, period);
-  const bets = betsQuery.data ?? [];
+  const betsQuery = useBetsQuery(scope, period);
+  const bets = useMemo(() => betsQuery.data ?? [], [betsQuery.data]);
+
+  // In the all-projects view, bucket bets under their project so the list
+  // reads as a scoreboard per project rather than one undifferentiated pile.
+  const groups = useMemo(() => {
+    if (!isAll) return [];
+    const byProject = new Map<number, Bet[]>();
+    for (const b of bets) {
+      const list = byProject.get(b.project) ?? [];
+      list.push(b);
+      byProject.set(b.project, list);
+    }
+    return [...byProject.entries()]
+      .map(([pid, list]) => ({
+        project: projects.find((p) => p.id === pid) ?? null,
+        bets: list,
+      }))
+      .sort((a, b) =>
+        (a.project?.name ?? "￿").localeCompare(b.project?.name ?? "￿"),
+      );
+  }, [isAll, bets, projects]);
 
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Bet | null>(null);
+
+  // New bets need a concrete project; editing uses the bet's own project so
+  // it works from the all-projects view too.
+  const dialogProject = editing
+    ? projects.find((p) => p.id === editing.project) ?? null
+    : project;
 
   // The slide-over tracks ids, not objects, so it always renders the fresh
   // copy after a mutation refetch (and closes itself if the metric is gone).
@@ -100,18 +144,33 @@ export default function BetsPage() {
         <Target className="size-4 text-muted-foreground" />
         <h1 className="text-[13px] font-semibold tracking-tight">Bets</h1>
         <Select
-          value={project ? String(project.id) : ""}
-          onValueChange={(v) => setProjectId(v === "" ? null : Number(v))}
+          value={isAll ? "all" : project ? String(project.id) : ""}
+          onValueChange={(v) => {
+            if (v === "all") {
+              setScopeOverride("all");
+            } else {
+              const id = Number(v);
+              setScopeOverride(id);
+              setProjectId(id);
+            }
+          }}
           items={
-            Object.fromEntries(
-              projects.map((p) => [String(p.id), p.name]),
-            ) as Record<string, React.ReactNode>
+            {
+              all: "All projects",
+              ...Object.fromEntries(projects.map((p) => [String(p.id), p.name])),
+            } as Record<string, React.ReactNode>
           }
         >
           <SelectTrigger className="h-7 w-44 text-[12px]">
             <SelectValue placeholder="Pick a project" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="all">
+              <span className="inline-flex items-center gap-2">
+                <span className="size-2 rounded-full bg-gradient-to-br from-foreground/40 to-foreground/10" />
+                All projects
+              </span>
+            </SelectItem>
             {projects.map((p) => (
               <SelectItem key={p.id} value={String(p.id)}>
                 <span className="inline-flex items-center gap-2">
@@ -130,6 +189,7 @@ export default function BetsPage() {
           size="sm"
           className="h-7 text-[12px]"
           disabled={!project}
+          title={project ? undefined : "Pick a single project to add a bet"}
           onClick={() => setCreating(true)}
         >
           <Plus className="size-3.5" />
@@ -141,16 +201,37 @@ export default function BetsPage() {
         <div className="max-w-3xl mx-auto">
           <PeriodMasthead period={period} onChange={setPeriod} />
 
-          {!hydrated || projectsQuery.isLoading ? null : !project ? (
-            <EmptyHint text="Pick a project to see its bets." />
-          ) : betsQuery.isLoading ? (
+          {!hydrated || projectsQuery.isLoading || scope === null ? null : betsQuery.isLoading ? (
             <div className="grid place-items-center py-16">
               <div className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
             </div>
           ) : bets.length === 0 ? (
             <EmptyHint
-              text={`No bets for ${periodLabel(period)} in ${project.name}. A bet is the period's wager — name it, give it a number, link the work.`}
+              text={
+                isAll
+                  ? `No bets for ${periodLabel(period)} across any project. Pick a project to open one.`
+                  : `No bets for ${periodLabel(period)} in ${project?.name ?? "this project"}. A bet is the period's wager — name it, give it a number, link the work.`
+              }
             />
+          ) : isAll ? (
+            <div className="space-y-8">
+              {groups.map((g) => (
+                <section key={g.project?.id ?? "unknown"} className="space-y-3">
+                  <ProjectGroupHeader project={g.project} count={g.bets.length} />
+                  <div className="space-y-4">
+                    {g.bets.map((bet) => (
+                      <BetCard
+                        key={bet.id}
+                        bet={bet}
+                        period={period}
+                        onEdit={() => setEditing(bet)}
+                        onOpenMetric={setOpenMetricId}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
           ) : (
             <div className="space-y-4">
               {bets.map((bet) => (
@@ -167,9 +248,9 @@ export default function BetsPage() {
         </div>
       </div>
 
-      {project && (creating || editing) && (
+      {dialogProject && (creating || editing) && (
         <BetFormDialog
-          project={project}
+          project={dialogProject}
           period={period}
           bet={editing}
           onClose={() => {
@@ -296,6 +377,31 @@ function EmptyHint({ text }: { text: string }) {
   return (
     <div className="max-w-md mx-auto mt-14 grid place-items-center py-12 px-6 text-center text-[12px] text-muted-foreground rounded-lg border border-dashed border-border/60">
       {text}
+    </div>
+  );
+}
+
+/** Section label above each project's bets in the all-projects view. */
+function ProjectGroupHeader({
+  project,
+  count,
+}: {
+  project: Project | null;
+  count: number;
+}) {
+  return (
+    <div className="flex items-center gap-2 px-1">
+      <span
+        className="size-2 rounded-full shrink-0"
+        style={{ background: project?.color ?? "var(--muted-foreground)" }}
+      />
+      <h2 className="text-[12px] font-semibold tracking-tight text-foreground/80">
+        {project?.name ?? "Unknown project"}
+      </h2>
+      <span className="text-[11px] text-muted-foreground tabular-nums">
+        {count} bet{count === 1 ? "" : "s"}
+      </span>
+      <div className="flex-1 h-px bg-border/60" />
     </div>
   );
 }

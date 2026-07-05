@@ -39,8 +39,6 @@ import {
   Star,
   Target,
   Trash2,
-  Users,
-  Workflow,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -298,42 +296,6 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           collapsed={isCollapsed}
           onNavigate={() => {
             router.push("/bets");
-            onClose?.();
-          }}
-        />
-        <NavLink
-          icon={
-            <Workflow
-              className={
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground"
-              }
-            />
-          }
-          label="Pipelines"
-          active={pathname.startsWith("/pipelines")}
-          collapsed={isCollapsed}
-          onNavigate={() => {
-            router.push("/pipelines");
-            onClose?.();
-          }}
-        />
-        <NavLink
-          icon={
-            <Users
-              className={
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground"
-              }
-            />
-          }
-          label="Contacts"
-          active={pathname.startsWith("/crm")}
-          collapsed={isCollapsed}
-          onNavigate={() => {
-            router.push("/crm");
             onClose?.();
           }}
         />

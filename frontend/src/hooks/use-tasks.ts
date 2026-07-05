@@ -67,6 +67,13 @@ function buildTaskQueryString(
 
   if (filters.search.trim()) params.set("search", filters.search.trim());
 
+  // All-projects board hides archived-project tasks unless explicitly shown.
+  // Only meaningful when unscoped, but harmless to always send (the server
+  // ignores it once a project filter narrows the query to one project).
+  if (projectId == null && filters.project == null) {
+    params.set("include_archived", filters.includeArchived ? "true" : "false");
+  }
+
   const primarySort = filters.sort[0];
   if (primarySort) {
     params.set("sort_field", primarySort.field);
@@ -96,6 +103,7 @@ export function filtersCacheKey(
     labelIds: filters.labelIds,
     columnName: filters.columnName,
     search: filters.search.trim(),
+    includeArchived: filters.includeArchived,
     sort: filters.sort,
   });
 }

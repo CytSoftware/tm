@@ -277,9 +277,9 @@ export default function BoardPage() {
   const queryClient = useQueryClient();
 
   const projectsQuery = useProjectsQuery();
-  const projects: Project[] = (projectsQuery.data?.results ?? []).filter(
-    (p) => !p.archived,
-  );
+  const allProjects: Project[] = projectsQuery.data?.results ?? [];
+  const projects: Project[] = allProjects.filter((p) => !p.archived);
+  const hasArchivedProjects = allProjects.some((p) => p.archived);
   const project = useMemo(
     () => projects.find((p) => p.id === projectId),
     [projects, projectId],
@@ -1064,6 +1064,7 @@ export default function BoardPage() {
         onSaveToView={
           activeView ? () => saveViewMutation.mutate() : undefined
         }
+        showArchivedToggle={isAllProjects && hasArchivedProjects}
       />
       <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden bg-muted/40">
         {projects.length === 0 ? (
@@ -1575,6 +1576,7 @@ function BoardHeader({
   availableColumnNames,
   activeView,
   onSaveToView,
+  showArchivedToggle,
 }: {
   projects: Project[];
   project: Project | undefined;
@@ -1593,6 +1595,7 @@ function BoardHeader({
   availableColumnNames: string[];
   activeView: SavedView | null;
   onSaveToView?: () => void;
+  showArchivedToggle: boolean;
 }) {
   const router = useRouter();
 
@@ -1724,6 +1727,7 @@ function BoardHeader({
         availableColumns={availableColumnNames}
         loadedView={activeView}
         onSaveToView={onSaveToView}
+        showArchivedToggle={showArchivedToggle}
       />
 
       <div className="h-5 w-px bg-border mx-0.5 shrink-0" />

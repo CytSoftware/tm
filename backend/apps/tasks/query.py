@@ -16,6 +16,9 @@ saved ``View`` stores in its JSON fields:
         "project": 1,                  # project id OR prefix
         "bet": 4,                      # bet id OR name, or "none" for unlinked
         "search": "oauth",             # case-insensitive substring match on key+title
+        "include_archived": False,     # when NO project filter is set: False
+                                       # hides archived-project tasks, True (or
+                                       # absent) includes them
     }
 
     sort = [
@@ -210,6 +213,21 @@ def apply_task_filters(
         qs = qs.filter(project=project)
     else:
         project = None
+
+    # Archived projects. When the query spans all projects (no ``project``
+    # filter), the board's all-projects view opts into hiding tasks that live
+    # in archived projects by passing ``include_archived=False``. A specific
+    # ``project`` filter already narrows to one project, so this only bites
+    # unscoped listings. The key being *absent* means "no opinion" and leaves
+    # archived tasks in — so MCP ``list_tasks`` and direct saved-view API
+    # callers keep their existing behaviour; only callers that explicitly send
+    # a falsy flag get the exclusion. Inbox tasks (no project) are always kept.
+    if (
+        project is None
+        and (include_archived := filters.get("include_archived")) is not None
+        and not include_archived
+    ):
+        qs = qs.filter(Q(project__isnull=True) | Q(project__archived=False))
 
     # Assignee — matches any task where one of the listed users is in the
     # task's assignees M2M.  The sentinel ``"none"`` matches unassigned tasks.

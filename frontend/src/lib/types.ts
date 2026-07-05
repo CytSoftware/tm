@@ -283,6 +283,9 @@ export type SavedViewFilters = {
   labels?: (string | number)[] | null;
   column?: string | number | null;
   search?: string | null;
+  /** All-projects board only: include tasks from archived projects. Absent /
+   *  false hides them; true shows them. */
+  include_archived?: boolean | null;
 };
 
 export type SavedViewSort = Array<{
@@ -333,6 +336,9 @@ export type BoardFilters = {
   labelIds: number[];
   columnName: string | null;
   search: string;
+  /** All-projects board: include tasks from archived projects. Defaults to
+   *  false so archived-project tasks stay hidden until explicitly shown. */
+  includeArchived: boolean;
   sort: SavedViewSort;
 };
 
@@ -344,6 +350,7 @@ export const EMPTY_BOARD_FILTERS: BoardFilters = {
   labelIds: [],
   columnName: null,
   search: "",
+  includeArchived: false,
   // Default to manual position order — the sort the kanban drag-and-drop
   // actually mutates. Users who want a different sort can flip it via the
   // SortPopover; doing so changes the query key and triggers a fresh fetch,
@@ -458,213 +465,6 @@ export type TaskEvent =
   | { type: "bet.created"; bet_id: number }
   | { type: "bet.updated"; bet_id: number }
   | { type: "bet.deleted"; bet_id: number };
-
-// ─────────────────────────────────────────────────────────────────────────
-// Pipelines — long-running tracked processes (separate from Tasks).
-// ─────────────────────────────────────────────────────────────────────────
-
-export type Stage = {
-  id: number;
-  name: string;
-  order: number;
-  color: string;
-  is_terminal: boolean;
-};
-
-export type PipelineEventEntry = {
-  id: number;
-  pipeline: number;
-  body: string;
-  author: User | null;
-  created_at: string;
-};
-
-export type Pipeline = {
-  id: number;
-  key: string;
-  title: string;
-  description: string;
-  counterparty: string;
-  stage: Stage;
-  position: number;
-  owner: User | null;
-  created_by: User | null;
-  event_count: number;
-  last_event_at: string | null;
-  last_event_body: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type PipelineDetail = Pipeline & {
-  events: PipelineEventEntry[];
-};
-
-export type PipelineListResponse = {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: Pipeline[];
-};
-
-export type PipelineEvent =
-  | { type: "connected" }
-  | { type: "pipeline.created"; key: string; id: number }
-  | { type: "pipeline.updated"; key: string; id: number }
-  | { type: "pipeline.moved"; key: string; id: number; stage_id: number }
-  | { type: "pipeline.deleted"; key: string }
-  | {
-      type: "pipeline.event_added";
-      key: string;
-      id: number;
-      event_id: number;
-    };
-
-// ─────────────────────────────────────────────────────────────────────────
-// CRM — flat contact table.
-// Schema is fixed (no per-contact custom fields); every column is a real
-// filter / sort target. Labels are an extendable M2M.
-// ─────────────────────────────────────────────────────────────────────────
-
-export type ContactLabel = {
-  id: number;
-  name: string;
-  color: string;
-  created_at: string;
-};
-
-/** Allowed keys on `Contact.socials`. Mirrors `ALLOWED_SOCIAL_KEYS` in
- *  `backend/apps/crm/models.py` — extending requires changes on both ends. */
-export const SOCIAL_KEYS = [
-  "linkedin",
-  "twitter",
-  "instagram",
-  "facebook",
-] as const;
-export type SocialKey = (typeof SOCIAL_KEYS)[number];
-export const SOCIAL_LABELS: Record<SocialKey, string> = {
-  linkedin: "LinkedIn",
-  twitter: "Twitter / X",
-  instagram: "Instagram",
-  facebook: "Facebook",
-};
-
-export type Contact = {
-  id: number;
-  key: string;
-  company: string;
-  first_name: string;
-  last_name: string;
-  /** Type of company — free-text (e.g. "Banking", "SaaS"). */
-  industry: string;
-  /** Person's role — free-text (e.g. "CEO", "Engineer"). */
-  job_title: string;
-  email: string;
-  phone: string;
-  address_line1: string;
-  address_line2: string;
-  city: string;
-  region: string;
-  postal_code: string;
-  /** ISO 3166-1 alpha-2 (e.g. "US", "FR"). Empty string when unknown. */
-  country: string;
-  websites: string[];
-  socials: Partial<Record<SocialKey, string>>;
-  labels: ContactLabel[];
-  notes: string;
-  created_by: User | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type ContactListResponse = {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: Contact[];
-};
-
-/** Sortable columns on the contacts table. Must match `SORTABLE_FIELDS`
- *  in `apps/crm/query.py`. */
-export type ContactSortField =
-  | "company"
-  | "first_name"
-  | "last_name"
-  | "email"
-  | "country"
-  | "city"
-  | "industry"
-  | "job_title"
-  | "key"
-  | "created_at"
-  | "updated_at";
-
-export const CONTACT_SORT_LABELS: Record<ContactSortField, string> = {
-  company: "Company",
-  first_name: "First name",
-  last_name: "Last name",
-  email: "Email",
-  country: "Country",
-  city: "City",
-  industry: "Industry",
-  job_title: "Job title",
-  key: "Contact #",
-  created_at: "Created",
-  updated_at: "Last updated",
-};
-
-export type ContactFilters = {
-  search: string;
-  country: string;
-  city: string;
-  /** Free-text substring match on Contact.industry. */
-  industry: string;
-  /** Free-text substring match on Contact.job_title. */
-  jobTitle: string;
-  labelIds: number[];
-  hasEmail: boolean | null;
-  hasPhone: boolean | null;
-  hasLinkedin: boolean | null;
-  hasWebsite: boolean | null;
-};
-
-export const EMPTY_CONTACT_FILTERS: ContactFilters = {
-  search: "",
-  country: "",
-  city: "",
-  industry: "",
-  jobTitle: "",
-  labelIds: [],
-  hasEmail: null,
-  hasPhone: null,
-  hasLinkedin: null,
-  hasWebsite: null,
-};
-
-/** Backend response from `/api/contacts/import-preview/`. */
-export type ContactImportPreview = {
-  token: string;
-  /** ``"csv"`` or ``"xlsx"``. Determined by magic bytes / extension on the
-   *  server. Old ``.xls`` is rejected up front. */
-  format: "csv" | "xlsx";
-  headers: string[];
-  sample_rows: string[][];
-  row_count: number;
-  /** For CSV: the detected delimiter (``,``/``;``/``\t``). For XLSX: the
-   *  literal string ``"xlsx"`` (no delimiter concept). */
-  delimiter: string;
-  /** Header → target field. Unknown headers are mapped to `"[ignore]"`. */
-  suggested_mapping: Record<string, string>;
-  /** Catalogue of valid mapping targets. Useful for the dropdown options. */
-  valid_targets: string[];
-};
-
-export type ContactImportResult = {
-  created: number;
-  updated: number;
-  skipped: number;
-  errors: { row: number; reason: string }[];
-};
 
 // ─────────────────────────────────────────────────────────────────────────
 // Wiki — hierarchical, workspace-global docs (Notion-style page tree).
