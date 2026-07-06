@@ -69,6 +69,13 @@ function buildTaskQueryString(
 
   if (filters.search.trim()) params.set("search", filters.search.trim());
 
+  // All-projects board hides archived-project tasks unless explicitly shown.
+  // Only meaningful when unscoped, but harmless to always send (the server
+  // ignores it once a project filter narrows the query to one project).
+  if (projectId == null && filters.project == null) {
+    params.set("include_archived", filters.includeArchived ? "true" : "false");
+  }
+
   const primarySort = filters.sort[0];
   if (primarySort) {
     params.set("sort_field", primarySort.field);
@@ -98,6 +105,7 @@ export function filtersCacheKey(
     labelIds: filters.labelIds,
     columnName: filters.columnName,
     search: filters.search.trim(),
+    includeArchived: filters.includeArchived,
     sort: filters.sort,
   });
 }
@@ -128,14 +136,15 @@ export function useTasksInfinite(args: TasksInfiniteArgs) {
 }
 
 /** My open tasks across all projects, due-date ascending (dashboard inbox).
- *  Non-paginated: `done=false` bounds the set to one person's open workload.
- *  Polls every 60s — the dashboard sits outside any project socket. */
+ *  Non-paginated: `done=false` bounds the set to one person's open workload;
+ *  archived-project tasks are excluded. Polls every 60s — the dashboard sits
+ *  outside any project socket. */
 export function useMyTasksQuery() {
   return useQuery({
     queryKey: myTasksKey(),
     queryFn: () =>
       apiFetch<TaskListResponse>(
-        "/api/tasks/?assignee=me&done=false&sort_field=due_at&sort_dir=asc&limit=100",
+        "/api/tasks/?assignee=me&done=false&include_archived=false&sort_field=due_at&sort_dir=asc&limit=100",
       ).then((r) => r.results),
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,

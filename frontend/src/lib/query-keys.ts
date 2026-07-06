@@ -41,38 +41,10 @@ export const recurringKey = (projectId: number) =>
 export const focusKey = () => ["focus"] as const;
 
 // Bets (Cyt OS) — everything under ["bets"] so bet.* WS events / mutations
-// can invalidate the whole namespace at once.
-export const betsKey = (projectId: number | null, period: string) =>
+// can invalidate the whole namespace at once. `projectId` is a project id,
+// `"all"` for the cross-project view, or `null` when the query is disabled.
+export const betsKey = (projectId: number | "all" | null, period: string) =>
   ["bets", projectId, period] as const;
-
-// Pipelines (separate from tasks — global, no per-project scoping in v1).
-export const pipelineStagesKey = () => ["pipeline-stages"] as const;
-export const pipelineListKey = (filtersKey: string) =>
-  ["pipelines", filtersKey] as const;
-export const pipelineKey = (key: string) => ["pipeline", key] as const;
-export const pipelineEventsKey = (key: string) =>
-  ["pipeline-events", key] as const;
-
-// CRM — flat contact table (no realtime in v1; no project scoping).
-export const contactLabelsKey = () => ["contact-labels"] as const;
-/** List key includes filters + sort + page so each unique view caches
- *  independently. ``filtersKey`` is the JSON-stringified state. */
-export const contactListKey = (
-  filtersKey: string,
-  sortField: string | null,
-  sortDir: string | null,
-  page: number,
-  pageSize: number,
-) =>
-  [
-    "contacts",
-    filtersKey,
-    sortField ?? "",
-    sortDir ?? "",
-    page,
-    pageSize,
-  ] as const;
-export const contactKey = (key: string) => ["contact", key] as const;
 
 // Wiki — hierarchical docs (workspace-global). Everything lives under the
 // ["wiki"] namespace so the tree socket can invalidate it all at once.

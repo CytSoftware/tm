@@ -8,10 +8,12 @@ import type { Bet, BetMetric, BetStatus, MetricCheckin } from "@/lib/types";
 
 type BetListResponse = { count: number; results: Bet[] };
 
-/** Bets for one project + one period of the two-month grid. `period` is an
- *  ISO period-start date (see lib/periods.ts) or `"all"`. */
+/** Bets for one project (or `"all"` projects) + one period of the two-month
+ *  grid. `period` is an ISO period-start date (see lib/periods.ts) or `"all"`.
+ *  Passing `projectId === "all"` omits the project filter so the endpoint
+ *  returns every project's bets; `null` disables the query. */
 export function useBetsQuery(
-  projectId: number | null,
+  projectId: number | "all" | null,
   period: string,
   opts?: { enabled?: boolean },
 ) {
@@ -20,7 +22,7 @@ export function useBetsQuery(
     queryFn: () =>
       apiFetch<BetListResponse>("/api/bets/", {
         query: {
-          project: projectId,
+          project: projectId === "all" ? undefined : projectId,
           period: period === "all" ? undefined : period,
         },
       }).then((r) => r.results),
@@ -29,10 +31,11 @@ export function useBetsQuery(
 }
 
 /** All bets across every project for one period (dashboard overview).
- *  Polls every 60s — the dashboard sits outside any project socket. */
+ *  Shares the `"all"` scope cache with the bets page's all-projects view;
+ *  polls every 60s — the dashboard sits outside any project socket. */
 export function useAllBetsQuery(period: string) {
   return useQuery({
-    queryKey: betsKey(null, period),
+    queryKey: betsKey("all", period),
     queryFn: () =>
       apiFetch<BetListResponse>("/api/bets/", {
         query: { period },

@@ -3,7 +3,7 @@
  *
  * One socket per mounted /wiki view. Carries only lightweight tree-shape
  * events (create / rename / move / delete) — body edits flow over the
- * per-document Yjs collab socket, not here. Mirrors lib/pipelines-ws.ts.
+ * per-document Yjs collab socket, not here.
  */
 
 import type { QueryClient } from "@tanstack/react-query";
