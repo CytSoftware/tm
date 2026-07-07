@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "apps.mcp_server",
     "apps.integrations",
     "apps.wiki",
+    "apps.webhooks",
 ]
 
 MIDDLEWARE = [
@@ -96,6 +97,9 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # Safety net: catches overdue recurring templates if the system timer is not configured.
     "apps.tasks.middleware.LazyRecurringMiddleware",
+    # Safety net: retries due webhook deliveries (in a daemon thread) if the
+    # deliver_webhooks timer is not configured.
+    "apps.webhooks.middleware.LazyWebhookRetryMiddleware",
 ]
 
 ROOT_URLCONF = "core.urls"
@@ -284,6 +288,23 @@ CACHES = {
         "LOCATION": "cyt-tm-local",
     }
 }
+
+# ---------------------------------------------------------------------------
+# Outbound webhooks
+# ---------------------------------------------------------------------------
+# Per-delivery HTTP POST timeout (seconds).
+WEBHOOK_DELIVERY_TIMEOUT_SECONDS = 10
+# Backoff schedule: seconds until the next retry after attempt N fails
+# (1m / 5m / 30m / 2h / 12h). Five entries → max 6 total attempts including
+# the first, after which a delivery is terminally "failed".
+WEBHOOK_RETRY_SCHEDULE_SECONDS = [60, 300, 1800, 7200, 43200]
+# An endpoint auto-disables (active=False) after this many terminal failures
+# in a row; any success resets the counter.
+WEBHOOK_DISABLE_AFTER_CONSECUTIVE_FAILURES = 20
+# Minimum interval between lazy middleware retry passes (seconds). The
+# primary trigger is a timer running `python manage.py deliver_webhooks`;
+# the middleware is only a safety net (and runs its pass in a daemon thread).
+WEBHOOK_LAZY_SCAN_INTERVAL_SECONDS = 300
 
 # ---------------------------------------------------------------------------
 # Cross-process broadcast bridge

@@ -29,6 +29,7 @@ from apps.tasks.models import (
     Column,
     Label,
     Metric,
+    NotificationVerb,
     Priority,
     Project,
     RecurringTaskTemplate,
@@ -720,6 +721,129 @@ def remove_focus(*, key: str, mcp_user) -> dict[str, Any]:
         raise ValueError("remove_focus requires an authenticated MCP user.")
     removed = _remove(user=mcp_user, task_key=key)
     return {"removed": removed, "key": key}
+
+
+# ---------------------------------------------------------------------------
+# Outbound webhooks
+# ---------------------------------------------------------------------------
+
+
+def _webhook_dict(ep, *, include_secret: bool = False) -> dict[str, Any]:
+    d = {
+        "id": ep.id,
+        "name": ep.name,
+        "url": ep.url,
+        "event_types": ep.event_types,
+        "project_id": ep.project_id,
+        "include_self": ep.include_self,
+        "active": ep.active,
+        "consecutive_failures": ep.consecutive_failures,
+        "disabled_at": ep.disabled_at.isoformat() if ep.disabled_at else None,
+        "created_at": ep.created_at.isoformat(),
+        "updated_at": ep.updated_at.isoformat(),
+    }
+    if include_secret:
+        d["secret"] = ep.secret
+    return d
+
+
+def _webhook_delivery_dict(d) -> dict[str, Any]:
+    return {
+        "id": str(d.id),
+        "endpoint_id": d.endpoint_id,
+        "event": d.event,
+        "task_key": d.task_key,
+        "status": d.status,
+        "attempts": d.attempts,
+        "next_attempt_at": d.next_attempt_at.isoformat() if d.next_attempt_at else None,
+        "last_attempt_at": d.last_attempt_at.isoformat() if d.last_attempt_at else None,
+        "response_status": d.response_status,
+        "error": d.error,
+        "created_at": d.created_at.isoformat(),
+    }
+
+
+def register_webhook(
+    *,
+    name: str,
+    url: str,
+    event_types: list[str] | None = None,
+    project: str | int | None = None,
+    include_self: bool = False,
+    mcp_user,
+) -> dict[str, Any]:
+    """Register an outbound webhook endpoint for the calling user.
+
+    Returns the endpoint dict **including the one-time signing secret**."""
+    import secrets as _secrets
+    from urllib.parse import urlsplit
+
+    from apps.webhooks.models import WebhookEndpoint
+
+    if mcp_user is None:
+        raise ValueError(
+            "register_webhook requires an authenticated MCP user — set "
+            "CYT_MCP_TOKEN as an OAuth bearer or run via stdio with a user."
+        )
+    if urlsplit(url).scheme.lower() not in ("http", "https"):
+        raise ValueError("url must use http or https.")
+    event_types = event_types or []
+    bad = set(event_types) - set(NotificationVerb.values)
+    if bad:
+        raise ValueError(
+            f"Unknown event type(s): {sorted(bad)}. "
+            f"Allowed: {sorted(NotificationVerb.values)} (empty = all)."
+        )
+    project_obj = _resolve_project(project) if project is not None else None
+    ep = WebhookEndpoint.objects.create(
+        user=mcp_user,
+        name=name,
+        url=url,
+        event_types=event_types,
+        project=project_obj,
+        include_self=include_self,
+        secret=_secrets.token_hex(32),
+    )
+    return _webhook_dict(ep, include_secret=True)
+
+
+def list_webhooks(*, mcp_user) -> list[dict[str, Any]]:
+    """List the calling user's webhook endpoints (secrets excluded)."""
+    from apps.webhooks.models import WebhookEndpoint
+
+    if mcp_user is None:
+        raise ValueError("list_webhooks requires an authenticated MCP user.")
+    qs = WebhookEndpoint.objects.filter(user=mcp_user)
+    return [_webhook_dict(ep) for ep in qs]
+
+
+def delete_webhook(*, webhook_id: int, mcp_user) -> dict[str, Any]:
+    """Delete one of the calling user's webhook endpoints."""
+    from apps.webhooks.models import WebhookEndpoint
+
+    if mcp_user is None:
+        raise ValueError("delete_webhook requires an authenticated MCP user.")
+    deleted, _ = WebhookEndpoint.objects.filter(
+        id=webhook_id, user=mcp_user
+    ).delete()
+    return {"deleted": bool(deleted), "id": webhook_id}
+
+
+def list_webhook_deliveries(
+    *, webhook_id: int | None = None, limit: int = 20, mcp_user
+) -> list[dict[str, Any]]:
+    """Recent webhook deliveries across the caller's endpoints, newest first."""
+    from apps.webhooks.models import WebhookDelivery
+
+    if mcp_user is None:
+        raise ValueError(
+            "list_webhook_deliveries requires an authenticated MCP user."
+        )
+    qs = WebhookDelivery.objects.filter(endpoint__user=mcp_user)
+    if webhook_id is not None:
+        qs = qs.filter(endpoint_id=webhook_id)
+    limit = max(1, min(int(limit), 100))
+    return [_webhook_delivery_dict(d) for d in qs[:limit]]
 
 
 # ---------------------------------------------------------------------------

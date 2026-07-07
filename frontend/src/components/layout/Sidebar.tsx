@@ -40,6 +40,7 @@ import {
   Star,
   Target,
   Trash2,
+  Webhook,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -957,6 +958,22 @@ function UserFooter({
           }
         />
         <TooltipContent>Staleness settings</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={() => router.push("/settings/webhooks")}
+              aria-label="Webhook settings"
+            >
+              <Webhook className="size-3.5" />
+            </Button>
+          }
+        />
+        <TooltipContent>Webhooks</TooltipContent>
       </Tooltip>
       <ModeToggle />
       <Button

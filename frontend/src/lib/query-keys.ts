@@ -66,3 +66,9 @@ export const llmWikiPageKey = (slug: string) =>
 export const notificationsKey = () => ["notifications", "list"] as const;
 export const notificationsUnreadKey = () =>
   ["notifications", "unread-count"] as const;
+
+// Outbound webhooks — per-user endpoints. Deliveries live under the same
+// ["webhooks"] namespace but are fetched lazily per endpoint on expand.
+export const webhooksKey = () => ["webhooks"] as const;
+export const webhookDeliveriesKey = (endpointId: number) =>
+  ["webhooks", endpointId, "deliveries"] as const;

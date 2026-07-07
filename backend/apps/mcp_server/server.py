@@ -639,6 +639,84 @@ async def remove_focus(key: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Outbound webhooks
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def register_webhook(
+    name: str,
+    url: str,
+    event_types: list[str] | None = None,
+    project: str | int | None = None,
+    include_self: bool = False,
+) -> dict[str, Any]:
+    """Register an outbound webhook endpoint for the calling user.
+
+    The endpoint fires whenever the calling user is an interested party in a
+    task event — same recipient logic as in-app notifications. ``event_types``
+    narrows to a subset of the five verbs (``assigned``, ``updated``,
+    ``moved``, ``completed``, ``deleted``); omit or pass ``[]`` for all.
+    ``project`` (prefix like "CYT" or id) scopes to one project; omit for all
+    projects. Set ``include_self=True`` to also fire for events the calling
+    user themself triggers (e.g. self-assignment) — off by default so an
+    agent isn't notified about its own writes.
+
+    Deliveries are HMAC-signed (Stripe-style): headers ``X-Cyt-Webhook-Id``,
+    ``X-Cyt-Timestamp``, ``X-Cyt-Event``, and ``X-Cyt-Signature`` =
+    ``"sha256=" + HMAC_SHA256(secret, "{timestamp}." + body)``.
+
+    Returns the endpoint **including its signing ``secret`` — this is the
+    ONLY time the secret is revealed**. Save it; it cannot be retrieved
+    again (re-register, or use the API's rotate_secret action, if lost).
+    Requires an authenticated MCP user."""
+    return await _async(tools.register_webhook)(
+        name=name,
+        url=url,
+        event_types=event_types,
+        project=project,
+        include_self=include_self,
+        mcp_user=_get_mcp_user(),
+    )
+
+
+@mcp.tool()
+async def list_webhooks() -> list[dict[str, Any]]:
+    """List the calling user's registered webhook endpoints.
+
+    Signing secrets are never included (reveal-once at registration).
+    ``active=False`` with a ``disabled_at`` timestamp means the endpoint was
+    auto-disabled after too many consecutive delivery failures."""
+    return await _async(tools.list_webhooks)(mcp_user=_get_mcp_user())
+
+
+@mcp.tool()
+async def delete_webhook(webhook_id: int) -> dict[str, Any]:
+    """Delete one of the calling user's webhook endpoints (and its delivery log).
+
+    Returns ``{"deleted": False}`` when no matching endpoint exists — already
+    deleted, or owned by a different user."""
+    return await _async(tools.delete_webhook)(
+        webhook_id=webhook_id, mcp_user=_get_mcp_user()
+    )
+
+
+@mcp.tool()
+async def list_webhook_deliveries(
+    webhook_id: int | None = None, limit: int = 20
+) -> list[dict[str, Any]]:
+    """List recent webhook delivery attempts for the calling user, newest first.
+
+    Optionally scope to one ``webhook_id``. Each entry reports the delivery
+    ``status`` (pending/success/failed), attempt count, next retry time, and
+    the HTTP response status / error from the most recent attempt — useful
+    for debugging a receiver that isn't getting events. ``limit`` caps at 100."""
+    return await _async(tools.list_webhook_deliveries)(
+        webhook_id=webhook_id, limit=limit, mcp_user=_get_mcp_user()
+    )
+
+
+# ---------------------------------------------------------------------------
 # Wiki (docs)
 # ---------------------------------------------------------------------------
 
