@@ -572,3 +572,53 @@ export type NotificationListResponse = {
 export type NotificationEvent =
   | { type: "connected" }
   | ({ type: "notification" } & Notification);
+
+// ─────────────────────────────────────────────────────────────────────────
+// Outbound webhooks — per-user endpoints that receive task events
+// (assigned/updated/moved/completed/deleted) as signed HTTP POSTs. See
+// `apps/webhooks` on the backend. `event_types: []` means "all events".
+// ─────────────────────────────────────────────────────────────────────────
+
+export type WebhookEndpoint = {
+  id: number;
+  name: string;
+  url: string;
+  /** Subset of `NotificationVerb` values; empty = fire for every event. */
+  event_types: NotificationVerb[];
+  /** Scope to one project, or null for all projects. */
+  project: number | null;
+  /** Also fire for the owner's own actions (personal-agent use case). */
+  include_self: boolean;
+  active: boolean;
+  consecutive_failures: number;
+  /** Set when the endpoint was auto-disabled after repeated failures. */
+  disabled_at: string | null;
+  created_at: string;
+};
+
+/** Shape of the POST /api/webhooks/ (create) response only — the plaintext
+ *  secret is reveal-once and never included on GET/list/PATCH responses. */
+export type WebhookEndpointCreated = WebhookEndpoint & { secret: string };
+
+export type WebhookDeliveryStatus = "pending" | "success" | "failed";
+
+export type WebhookDelivery = {
+  id: string;
+  /** e.g. "task.assigned" or "webhook.test". */
+  event: string;
+  task_key: string;
+  status: WebhookDeliveryStatus;
+  attempts: number;
+  next_attempt_at: string | null;
+  last_attempt_at: string | null;
+  response_status: number | null;
+  error: string;
+  created_at: string;
+};
+
+export type WebhookEndpointListResponse = {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: WebhookEndpoint[];
+};
