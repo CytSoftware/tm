@@ -418,6 +418,7 @@ def list_tasks(
     labels: list[str] | None = None,
     column: str | None = None,
     bet: str | int | None = None,
+    done: bool | None = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     filters: dict[str, Any] = {}
@@ -433,6 +434,8 @@ def list_tasks(
         filters["column"] = column
     if bet is not None:
         filters["bet"] = bet
+    if done is not None:
+        filters["done"] = done
     qs = filter_and_sort_tasks(filters=filters)
     return [_task_dict(t, include_description=False) for t in qs[:limit]]
 

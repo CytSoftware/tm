@@ -15,6 +15,7 @@ saved ``View`` stores in its JSON fields:
         "column": 7,                   # column id OR name
         "project": 1,                  # project id OR prefix
         "bet": 4,                      # bet id OR name, or "none" for unlinked
+        "done": False,                 # True = in an is_done column, False = not
         "search": "oauth",             # case-insensitive substring match on key+title
         "include_archived": False,     # when NO project filter is set: False
                                        # hides archived-project tasks, True (or
@@ -283,6 +284,17 @@ def apply_task_filters(
                 bet_qs = bet_qs.filter(project=project)
             ids = list(bet_qs.values_list("id", flat=True))
             qs = qs.filter(bet_id__in=ids) if ids else qs.none()
+
+    # Done — True keeps only tasks sitting in an ``is_done`` column; False
+    # keeps everything else (columnless tasks count as open, hence exclude).
+    if (raw_done := filters.get("done")) not in (None, ""):
+        truthy = raw_done in (True, 1) or (
+            isinstance(raw_done, str) and raw_done.lower() in ("1", "true", "yes")
+        )
+        if truthy:
+            qs = qs.filter(column__is_done=True)
+        else:
+            qs = qs.exclude(column__is_done=True)
 
     # Free-text search (key + title + description). Whitespace-separated
     # words are ANDed: every token must appear somewhere across those fields.

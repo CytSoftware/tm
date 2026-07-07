@@ -231,6 +231,7 @@ class MetricSerializer(serializers.ModelSerializer):
 
 class BetSerializer(serializers.ModelSerializer):
     metrics = MetricSerializer(many=True, read_only=True)
+    project_name = serializers.CharField(source="project.name", read_only=True)
     period_label = serializers.CharField(read_only=True)
     period_end = serializers.DateField(read_only=True)
     # Omitting period_start on create means "the current period". The default
@@ -250,6 +251,7 @@ class BetSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "project",
+            "project_name",
             "name",
             "description",
             "color",

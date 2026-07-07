@@ -16,28 +16,10 @@
  * track, and the pace tag compares each metric's progress to it.
  */
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Pencil,
-  Plus,
-  Target,
-  Trash2,
-  Undo2,
-  X,
-} from "lucide-react";
+import { useMemo, useState } from "react";
+import { Check, Pencil, Plus, Target, Trash2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { ColorPicker } from "@/components/ui/ColorPicker";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -46,31 +28,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import {
-  useAddCheckin,
   useBetsQuery,
-  useCreateBet,
   useCreateMetric,
   useDeleteBet,
-  useDeleteCheckin,
-  useDeleteMetric,
   useUpdateBet,
-  useUpdateCheckin,
 } from "@/hooks/use-bets";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import { useActiveProject } from "@/lib/active-project";
-import { currentPeriodStart, periodLabel, shiftPeriod } from "@/lib/periods";
+import { currentPeriodStart, periodLabel } from "@/lib/periods";
 import { cn } from "@/lib/utils";
-import { formatDuration } from "@/components/task/TimeInColumn";
-import type { Bet, BetMetric, BetStatus, MetricCheckin, Project } from "@/lib/types";
-import { BET_STATUS_LABELS } from "@/lib/types";
-
-const STATUS_TONE: Record<BetStatus, string> = {
-  active: "text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/30",
-  won: "text-green-600 dark:text-green-400 bg-green-500/10 border-green-500/30",
-  lost: "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30",
-};
+import { BetFormDialog } from "@/components/bets/BetFormDialog";
+import { BetTasksSummary } from "@/components/bets/BetTasksSummary";
+import { MetricLine } from "@/components/bets/MetricLine";
+import { MetricSlideOver } from "@/components/bets/MetricSlideOver";
+import { PeriodMasthead } from "@/components/bets/PeriodMasthead";
+import type { Bet, BetStatus, Project } from "@/lib/types";
+import { BET_STATUS_LABELS, BET_STATUS_TONE } from "@/lib/types";
 
 export default function BetsPage() {
   const { projectId, setProjectId, hydrated } = useActiveProject();
@@ -250,7 +224,7 @@ export default function BetsPage() {
 
       {dialogProject && (creating || editing) && (
         <BetFormDialog
-          project={dialogProject}
+          projects={[dialogProject]}
           period={period}
           bet={editing}
           onClose={() => {
@@ -268,107 +242,6 @@ export default function BetsPage() {
           onClose={() => setOpenMetricId(null)}
         />
       )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Period masthead — the clock every bet races against
-// ─────────────────────────────────────────────────────────────────────────
-
-/** Fraction of the period elapsed right now: 0 before it starts, 1 after
- *  it ends, in between otherwise. */
-function elapsedFraction(period: string, now: Date = new Date()): number {
-  const start = new Date(`${period}T00:00:00`).getTime();
-  const end = new Date(`${shiftPeriod(period, 1)}T00:00:00`).getTime();
-  return Math.max(0, Math.min(1, (now.getTime() - start) / (end - start)));
-}
-
-/** Countdown line for the period: how alive is this window? */
-function periodStatus(period: string): string {
-  const start = new Date(`${period}T00:00:00`);
-  const end = new Date(`${shiftPeriod(period, 1)}T00:00:00`);
-  const now = new Date();
-  const fmt = (d: Date) =>
-    d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  if (now < start) return `starts ${fmt(start)}`;
-  if (now >= end) return `ended ${fmt(new Date(end.getTime() - 86_400_000))}`;
-  const daysLeft = Math.ceil((end.getTime() - now.getTime()) / 86_400_000);
-  return `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`;
-}
-
-function PeriodMasthead({
-  period,
-  onChange,
-}: {
-  period: string;
-  onChange: (period: string) => void;
-}) {
-  const isCurrent = period === currentPeriodStart();
-  const elapsed = elapsedFraction(period);
-
-  return (
-    <div className="mb-5">
-      <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7 shrink-0"
-          onClick={() => onChange(shiftPeriod(period, -1))}
-          aria-label="Previous period"
-        >
-          <ChevronLeft className="size-4" />
-        </Button>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-3">
-            <span
-              className={cn(
-                "text-[17px] font-semibold tracking-tight",
-                !isCurrent && "text-amber-600 dark:text-amber-400",
-              )}
-            >
-              {periodLabel(period)}
-            </span>
-            {!isCurrent && (
-              <button
-                type="button"
-                onClick={() => onChange(currentPeriodStart())}
-                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <Undo2 className="size-3" />
-                back to now
-              </button>
-            )}
-            <span className="ml-auto text-[11px] text-muted-foreground tabular-nums">
-              {periodStatus(period)}
-            </span>
-          </div>
-          <div className="relative mt-2 h-[3px] rounded-full bg-border/70">
-            <div
-              className="absolute inset-y-0 left-0 rounded-full bg-foreground/45"
-              style={{ width: `${elapsed * 100}%` }}
-            />
-            {elapsed > 0 && elapsed < 1 && (
-              <span
-                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 size-2 rounded-full bg-foreground ring-2 ring-background"
-                style={{ left: `${elapsed * 100}%` }}
-                title="Today"
-              />
-            )}
-          </div>
-        </div>
-
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7 shrink-0"
-          onClick={() => onChange(shiftPeriod(period, 1))}
-          aria-label="Next period"
-        >
-          <ChevronRight className="size-4" />
-        </Button>
-      </div>
     </div>
   );
 }
@@ -476,7 +349,7 @@ function BetCard({
           <SelectTrigger
             className={cn(
               "h-6 w-auto gap-1 rounded-md border px-2 text-[11px] font-medium shrink-0",
-              STATUS_TONE[bet.status],
+              BET_STATUS_TONE[bet.status],
             )}
           >
             <SelectValue />
@@ -506,6 +379,7 @@ function BetCard({
       )}
 
       <div className="mt-2 divide-y divide-border/40">
+        <BetTasksSummary bet={bet} expandable />
         {bet.metrics.map((m) => (
           <MetricLine
             key={m.id}
@@ -520,459 +394,6 @@ function BetCard({
         </div>
       </div>
     </section>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Metric line — title · reading · Log, with a contained bar underneath
-// ─────────────────────────────────────────────────────────────────────────
-
-/** Pace verdict: latest reading vs. where the target says you should be,
- *  given how much of the period has burned. Only meaningful mid-period on
- *  a metric with both a value and a target. */
-function paceOf(
-  value: number,
-  target: number,
-  period: string,
-): "ahead" | "behind" | null {
-  const f = elapsedFraction(period);
-  if (f <= 0 || f >= 1 || target <= 0) return null;
-  return value >= target * f ? "ahead" : "behind";
-}
-
-function MetricLine({
-  metric,
-  color,
-  period,
-  onOpen,
-}: {
-  metric: BetMetric;
-  color: string;
-  period: string;
-  onOpen: () => void;
-}) {
-  const latest = metric.checkins[0] ?? null;
-  const latestValue = latest?.value ?? null;
-  const pace =
-    latestValue != null && metric.target != null
-      ? paceOf(latestValue, metric.target, period)
-      : null;
-
-  return (
-    // One row per metric: fixed-width title column so every bar starts at
-    // the same x, bar inline beside the title, reading after it. Metrics
-    // without a target skip the bar — just the latest input and Log.
-    // Rows get real height and hairline separation so the list breathes.
-    <div className="py-3 flex items-center gap-4">
-      <button
-        type="button"
-        onClick={onOpen}
-        title={metric.name}
-        className="w-40 shrink-0 truncate text-left text-[12px] font-medium hover:text-foreground/80 outline-none focus-visible:ring-1 focus-visible:ring-ring/50 rounded-sm"
-      >
-        {metric.name}
-      </button>
-
-      {metric.target != null ? (
-        <>
-          {/* Constant bar length — every bar starts *and* ends at the same
-              x, regardless of how wide the name or the reading is. */}
-          <button
-            type="button"
-            onClick={onOpen}
-            aria-label={`Open ${metric.name} check-in history`}
-            className="w-full max-w-[300px] shrink h-1.5 rounded-full bg-muted overflow-hidden outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
-          >
-            {latestValue != null && (
-              <span
-                className="block h-full rounded-full transition-[width] duration-300"
-                style={{
-                  width: `${Math.max(0, Math.min(100, (latestValue / metric.target) * 100))}%`,
-                  background: color,
-                }}
-              />
-            )}
-          </button>
-          <span className="shrink-0 flex items-baseline gap-1.5 whitespace-nowrap">
-            {latestValue != null ? (
-              <>
-                <span className="font-mono text-[14px] font-semibold tabular-nums">
-                  {trimNumber(latestValue)}
-                </span>
-                <span className="text-[11px] text-muted-foreground tabular-nums">
-                  of {trimNumber(metric.target)}
-                  {metric.unit && ` ${metric.unit}`}
-                </span>
-              </>
-            ) : (
-              <span className="text-[11px] text-muted-foreground/60">
-                no check-ins yet
-              </span>
-            )}
-            {pace === "ahead" && (
-              <span
-                title="Ahead of pace for this period"
-                className="text-[10px] font-medium text-green-600 dark:text-green-400"
-              >
-                ▲
-              </span>
-            )}
-            {pace === "behind" && (
-              <span
-                title="Behind pace for this period"
-                className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
-              >
-                ▼
-              </span>
-            )}
-          </span>
-        </>
-      ) : (
-        // No target → no bar. The latest input starts where the bars do,
-        // keeping one left rhythm down the whole list.
-        <span className="min-w-0 truncate">
-          {latestValue != null ? (
-            <span className="font-mono text-[14px] font-semibold tabular-nums">
-              {trimNumber(latestValue)}
-              {metric.unit && (
-                <span className="ml-1 font-sans text-[11px] font-normal text-muted-foreground">
-                  {metric.unit}
-                </span>
-              )}
-            </span>
-          ) : latest ? (
-            <span className="text-[11px] text-muted-foreground italic">
-              “{latest.note}”
-            </span>
-          ) : (
-            <span className="text-[11px] text-muted-foreground/60">
-              no check-ins yet
-            </span>
-          )}
-        </span>
-      )}
-
-      <span className="flex-1" />
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-5 px-1.5 text-[10px] shrink-0"
-        onClick={onOpen}
-      >
-        Log
-      </Button>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Metric slide-over — log a check-in, read & edit the history
-// ─────────────────────────────────────────────────────────────────────────
-
-function MetricSlideOver({
-  bet,
-  metric,
-  period,
-  onClose,
-}: {
-  bet: Bet;
-  metric: BetMetric;
-  period: string;
-  onClose: () => void;
-}) {
-  const deleteMetric = useDeleteMetric();
-  const latest = metric.checkins[0] ?? null;
-  const latestValue = latest?.value ?? null;
-  const pace =
-    latestValue != null && metric.target != null
-      ? paceOf(latestValue, metric.target, period)
-      : null;
-
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
-
-  return (
-    <>
-      <div
-        className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[2px]"
-        onClick={onClose}
-      />
-      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md flex flex-col bg-card border-l border-border shadow-2xl animate-in slide-in-from-right duration-200">
-        {/* Header */}
-        <div className="shrink-0 flex items-start gap-3 px-5 py-4 border-b border-border/60">
-          <div className="flex-1 min-w-0">
-            <h2 className="text-[15px] font-semibold tracking-tight truncate">
-              {metric.name}
-            </h2>
-            <p className="text-[11px] text-muted-foreground truncate">
-              <span
-                className="inline-block size-1.5 rounded-full mr-1.5 align-middle"
-                style={{ background: bet.color }}
-              />
-              {bet.name}
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
-
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-5">
-          {/* Current reading */}
-          <div>
-            <div className="flex items-baseline gap-2">
-              {latestValue != null ? (
-                <>
-                  <span className="font-mono text-[26px] font-semibold tabular-nums leading-none">
-                    {trimNumber(latestValue)}
-                  </span>
-                  <span className="text-[12px] text-muted-foreground tabular-nums">
-                    {metric.target != null && `of ${trimNumber(metric.target)}`}
-                    {metric.unit && ` ${metric.unit}`}
-                  </span>
-                </>
-              ) : latest ? (
-                <span className="text-[13px] text-muted-foreground italic">
-                  “{latest.note}”
-                </span>
-              ) : (
-                <span className="text-[12px] text-muted-foreground/60">
-                  No check-ins yet — log the first reading below.
-                </span>
-              )}
-              {pace === "ahead" && (
-                <span className="text-[10px] font-medium text-green-600 dark:text-green-400">
-                  ▲ ahead of pace
-                </span>
-              )}
-              {pace === "behind" && (
-                <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">
-                  ▼ behind pace
-                </span>
-              )}
-            </div>
-            {metric.target != null && (
-              <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-[width] duration-300"
-                  style={{
-                    width: `${latestValue != null ? Math.max(0, Math.min(100, (latestValue / metric.target) * 100)) : 0}%`,
-                    background: bet.color,
-                  }}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Log form */}
-          <CheckinForm metricId={metric.id} />
-
-          {/* History — every entry editable in place, deletable. */}
-          <div className="space-y-2">
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              History
-            </span>
-            {metric.checkins.length === 0 && (
-              <p className="text-[11px] text-muted-foreground">
-                Nothing logged yet.
-              </p>
-            )}
-            {metric.checkins.map((c) => (
-              <EditableCheckinRow key={c.id} checkin={c} />
-            ))}
-          </div>
-        </div>
-
-        {/* Housekeeping */}
-        <div className="shrink-0 px-5 py-3 border-t border-border/60">
-          <button
-            type="button"
-            onClick={() => {
-              if (confirm(`Delete metric "${metric.name}" and its log?`)) {
-                deleteMetric.mutate(metric.id, { onSuccess: onClose });
-              }
-            }}
-            className="text-[11px] text-muted-foreground/70 hover:text-destructive transition-colors"
-          >
-            Delete metric
-          </button>
-        </div>
-      </div>
-    </>
-  );
-}
-
-function CheckinForm({ metricId }: { metricId: number }) {
-  const addCheckin = useAddCheckin();
-  const [value, setValue] = useState("");
-  const [note, setNote] = useState("");
-  const canLog = value.trim() !== "" || note.trim() !== "";
-
-  function submit() {
-    if (!canLog || addCheckin.isPending) return;
-    addCheckin.mutate(
-      {
-        metric: metricId,
-        value: value.trim() === "" ? null : Number(value),
-        note: note.trim(),
-      },
-      {
-        onSuccess: () => {
-          setValue("");
-          setNote("");
-        },
-      },
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <Input
-        type="number"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
-        placeholder="#"
-        autoFocus
-        className="h-7 w-16 text-[12px] px-1.5"
-      />
-      <Input
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
-        placeholder="Note (optional for numbers)"
-        className="h-7 flex-1 text-[12px] px-1.5"
-      />
-      <Button
-        size="sm"
-        className="h-7 px-2.5 text-[12px]"
-        disabled={!canLog || addCheckin.isPending}
-        onClick={submit}
-      >
-        Log
-      </Button>
-    </div>
-  );
-}
-
-function EditableCheckinRow({ checkin }: { checkin: MetricCheckin }) {
-  const updateCheckin = useUpdateCheckin();
-  const deleteCheckin = useDeleteCheckin();
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(
-    checkin.value != null ? String(checkin.value) : "",
-  );
-  const [note, setNote] = useState(checkin.note);
-  const canSave = value.trim() !== "" || note.trim() !== "";
-
-  function save() {
-    if (!canSave || updateCheckin.isPending) return;
-    updateCheckin.mutate(
-      {
-        id: checkin.id,
-        value: value.trim() === "" ? null : Number(value),
-        note: note.trim(),
-      },
-      { onSuccess: () => setEditing(false) },
-    );
-  }
-
-  if (editing) {
-    return (
-      <div className="flex items-center gap-1.5">
-        <Input
-          type="number"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && save()}
-          placeholder="#"
-          autoFocus
-          className="h-6 w-16 text-[11px] px-1.5"
-        />
-        <Input
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && save()}
-          placeholder="Note"
-          className="h-6 flex-1 text-[11px] px-1.5"
-        />
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-6 px-1.5 text-[11px]"
-          disabled={!canSave || updateCheckin.isPending}
-          onClick={save}
-          aria-label="Save check-in"
-        >
-          <Check className="size-3" />
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-6 px-1.5 text-[11px]"
-          onClick={() => {
-            setValue(checkin.value != null ? String(checkin.value) : "");
-            setNote(checkin.note);
-            setEditing(false);
-          }}
-          aria-label="Cancel edit"
-        >
-          <X className="size-3" />
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="group flex items-start gap-2 text-[12px] leading-tight">
-      <span className="size-1 rounded-full bg-muted-foreground/40 mt-1.5 shrink-0" />
-      <div className="min-w-0 flex-1">
-        <span className="text-foreground">
-          {checkin.value != null && (
-            <span className="font-mono font-medium tabular-nums">
-              {trimNumber(checkin.value)}
-            </span>
-          )}
-          {checkin.value != null && checkin.note && (
-            <span className="text-muted-foreground"> · </span>
-          )}
-          {checkin.note}
-        </span>
-        <div className="text-[11px] text-muted-foreground/80">
-          {checkin.created_by?.username ?? "agent"} ·{" "}
-          {formatDuration(checkin.created_at)} ago
-        </div>
-      </div>
-      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          aria-label="Edit check-in"
-          className="text-muted-foreground/60 hover:text-foreground transition-colors p-0.5"
-        >
-          <Pencil className="size-3" />
-        </button>
-        <button
-          type="button"
-          onClick={() => deleteCheckin.mutate(checkin.id)}
-          aria-label="Delete check-in"
-          className="text-muted-foreground/60 hover:text-destructive transition-colors p-0.5"
-        >
-          <X className="size-3" />
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -1076,94 +497,4 @@ function AddMetricRow({
       </Button>
     </div>
   );
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Create / edit dialog
-// ─────────────────────────────────────────────────────────────────────────
-
-function BetFormDialog({
-  project,
-  period,
-  bet,
-  onClose,
-}: {
-  project: Project;
-  /** ISO period start the page is currently showing — new bets land there. */
-  period: string;
-  /** Existing bet when editing; null when creating. */
-  bet: Bet | null;
-  onClose: () => void;
-}) {
-  const createBet = useCreateBet();
-  const updateBet = useUpdateBet();
-  const [name, setName] = useState(bet?.name ?? "");
-  const [description, setDescription] = useState(bet?.description ?? "");
-  const [color, setColor] = useState(bet?.color ?? "#6366f1");
-  const saving = createBet.isPending || updateBet.isPending;
-
-  async function submit() {
-    if (!name.trim()) return;
-    if (bet) {
-      await updateBet.mutateAsync({
-        id: bet.id,
-        name: name.trim(),
-        description,
-        color,
-      });
-    } else {
-      await createBet.mutateAsync({
-        project: project.id,
-        name: name.trim(),
-        description,
-        color,
-        period_start: period,
-      });
-    }
-    onClose();
-  }
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="text-[14px]">
-            {bet
-              ? `Edit bet — ${bet.name}`
-              : `New bet · ${periodLabel(period)}`}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Bet name — the wager in one line"
-            autoFocus
-            className="text-[13px]"
-          />
-          <Textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Target and kill criteria — what does won look like, when do you fold?"
-            rows={4}
-            className="text-[12px]"
-          />
-          <ColorPicker value={color} onChange={setColor} />
-        </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={submit} disabled={saving || !name.trim()}>
-            {saving ? "Saving…" : bet ? "Save" : "Create bet"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/** "10.0" → "10", "12.5" stays "12.5". */
-function trimNumber(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
 }

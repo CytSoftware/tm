@@ -27,6 +27,10 @@ export const taskInfiniteKey = (args: {
 
 export const taskKey = (key: string) => ["task", key] as const;
 
+/** Cross-project "my open tasks" (dashboard inbox). Lives under the
+ *  ["tasks"] namespace so existing mutation/WS invalidations refresh it. */
+export const myTasksKey = () => ["tasks", "mine"] as const;
+
 export const viewsKey = () => ["views"] as const;
 
 export const usersKey = () => ["users"] as const;
