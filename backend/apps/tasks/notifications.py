@@ -10,6 +10,11 @@ recurring generator) calls after a mutation. It:
 3. Pushes each notification to the recipient's personal Channels group
    (``user_<id>``) so an open browser tab updates live.
 4. For ``verb == "assigned"``, fires an email via useSend (best-effort).
+5. Dispatches any matching outbound webhook endpoints for the interested
+   users (:func:`apps.webhooks.dispatch.dispatch_task_webhooks`). This runs
+   even when the recipient set ends up empty — an ``include_self`` endpoint
+   whose owner is the sole actor must still fire — which is why the dispatch
+   call sits *before* the empty-recipients early return.
 
 Like ``broadcast_task_event``, this must never raise into the caller — every
 public entry point is wrapped in try/except.
@@ -81,6 +86,28 @@ def _notify_task_event(
             continue
         seen.add(u.id)
         unique_recipients.append(u)
+
+    # Outbound webhooks piggyback on the resolved recipient set. This must
+    # run BEFORE the empty-recipients early return below: when the actor is
+    # the only interested user, unique_recipients is empty (self-actions are
+    # excluded from notifications) but their include_self endpoints still
+    # need to fire — e.g. "I assigned myself a task" reaching a PA agent.
+    try:
+        from apps.webhooks.dispatch import dispatch_task_webhooks
+
+        dispatch_task_webhooks(
+            task=task,
+            actor=actor,
+            verb=verb,
+            recipients=unique_recipients,
+            extra=payload or {},
+        )
+    except Exception:  # pragma: no cover - defensive, mirrors broadcast_task_event
+        logger.exception(
+            "webhook dispatch failed (verb=%s task=%s)",
+            verb,
+            getattr(task, "key", None),
+        )
 
     if not unique_recipients:
         return
