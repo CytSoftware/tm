@@ -24,6 +24,7 @@ from unittest import mock
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from apps.tasks.models import Project, Task
 from apps.tasks.notifications import notify_task_event
@@ -95,7 +96,13 @@ class WebhookTestBase(TestCase):
         )
 
     def dispatch(self, *, task=None, actor=None, verb="assigned", recipients=(), extra=None):
-        """Run dispatch with the daemon thread inlined and urlopen mocked."""
+        """Run dispatch with the daemon thread inlined and urlopen mocked.
+
+        Dispatch defers its first-attempt thread to ``transaction.on_commit``.
+        ``TestCase`` wraps each test in a transaction that never commits, so we
+        capture and execute the on-commit callbacks explicitly — this also
+        exercises the real commit-gated path.
+        """
         with (
             mock.patch("apps.webhooks.dispatch.threading", _inline_threading),
             mock.patch(
@@ -103,13 +110,14 @@ class WebhookTestBase(TestCase):
                 return_value=_fake_response(),
             ) as urlopen,
         ):
-            dispatch_task_webhooks(
-                task=task if task is not None else self.task,
-                actor=actor,
-                verb=verb,
-                recipients=list(recipients),
-                extra=extra or {},
-            )
+            with self.captureOnCommitCallbacks(execute=True):
+                dispatch_task_webhooks(
+                    task=task if task is not None else self.task,
+                    actor=actor,
+                    verb=verb,
+                    recipients=list(recipients),
+                    extra=extra or {},
+                )
         return urlopen
 
 
@@ -425,6 +433,76 @@ class ProcessDueDeliveriesTests(WebhookTestBase):
         self.assertEqual(attempted, 1)
 
 
+class OnCommitDeferralTests(WebhookTestBase):
+    """The first-attempt thread is deferred to ``transaction.on_commit``.
+
+    Task writes from the MCP tools and the recurring generator run inside an
+    open transaction; the delivery row is not visible on the daemon thread's
+    separate connection until commit, so the attempt must wait for it.
+    """
+
+    def test_first_attempt_deferred_until_commit(self):
+        _make_endpoint(self.dana)
+        with (
+            mock.patch("apps.webhooks.dispatch.threading", _inline_threading),
+            mock.patch(
+                "apps.webhooks.delivery.urllib.request.urlopen",
+                return_value=_fake_response(),
+            ),
+        ):
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                dispatch_task_webhooks(
+                    task=self.task,
+                    actor=self.chris,
+                    verb="assigned",
+                    recipients=[self.dana],
+                )
+                # Inside the (uncommitted) block: the row exists but the
+                # attempt has not run — the thread is queued on on_commit.
+                d = WebhookDelivery.objects.get()
+                self.assertEqual(d.status, WebhookDeliveryStatus.PENDING)
+                self.assertEqual(d.attempts, 0)
+        # After commit, the on-commit callback fired and delivered.
+        self.assertEqual(len(callbacks), 1)
+        d.refresh_from_db()
+        self.assertEqual(d.status, WebhookDeliveryStatus.SUCCESS)
+
+
+class ReEnableResetTests(WebhookTestBase):
+    """Re-enabling an auto-disabled endpoint clears its failure state."""
+
+    def _client(self, user):
+        client = APIClient()
+        client.force_authenticate(user=user)
+        return client
+
+    def test_reenable_clears_failure_state(self):
+        ep = _make_endpoint(self.chris)
+        WebhookEndpoint.objects.filter(pk=ep.pk).update(
+            active=False, consecutive_failures=25, disabled_at=timezone.now()
+        )
+        resp = self._client(self.chris).patch(
+            f"/api/webhooks/{ep.pk}/", {"active": True}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200)
+        ep.refresh_from_db()
+        self.assertTrue(ep.active)
+        self.assertEqual(ep.consecutive_failures, 0)
+        self.assertIsNone(ep.disabled_at)
+
+    def test_update_while_active_leaves_failures_untouched(self):
+        ep = _make_endpoint(self.chris, active=True)
+        WebhookEndpoint.objects.filter(pk=ep.pk).update(consecutive_failures=5)
+        resp = self._client(self.chris).patch(
+            f"/api/webhooks/{ep.pk}/", {"name": "renamed"}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200)
+        ep.refresh_from_db()
+        self.assertEqual(ep.name, "renamed")
+        # Not a re-enable transition — the failure counter is preserved.
+        self.assertEqual(ep.consecutive_failures, 5)
+
+
 class NotificationsHookTests(WebhookTestBase):
     """The dispatch call inside apps.tasks.notifications._notify_task_event."""
 
@@ -436,7 +514,10 @@ class NotificationsHookTests(WebhookTestBase):
                 return_value=_fake_response(),
             ),
         ):
-            notify_task_event(self.task, kwargs.pop("actor"), kwargs.pop("verb"), **kwargs)
+            with self.captureOnCommitCallbacks(execute=True):
+                notify_task_event(
+                    self.task, kwargs.pop("actor"), kwargs.pop("verb"), **kwargs
+                )
 
     def test_hook_fires_for_recipient(self):
         _make_endpoint(self.dana)

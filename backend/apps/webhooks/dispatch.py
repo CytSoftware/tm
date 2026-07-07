@@ -15,8 +15,9 @@ Flow:
    projects; inbox tasks — ``task.project_id is None`` — only match
    unscoped endpoints).
 3. Build the payload envelope *eagerly* (the task may be about to be
-   deleted), ``bulk_create`` pending :class:`WebhookDelivery` rows, and hand
-   the batch to ONE daemon thread that runs
+   deleted), ``bulk_create`` pending :class:`WebhookDelivery` rows, and — once
+   the surrounding transaction commits (``transaction.on_commit``) — hand the
+   batch to ONE daemon thread that runs
    :func:`apps.webhooks.delivery.attempt_delivery` per row.
 """
 
@@ -27,6 +28,7 @@ import threading
 import uuid
 from typing import Any, Iterable
 
+from django.db import transaction
 from django.utils import timezone
 
 from .delivery import attempt_delivery, build_envelope
@@ -129,7 +131,16 @@ def _dispatch_task_webhooks(
         for delivery_id in delivery_ids:
             attempt_delivery(delivery_id)
 
-    threading.Thread(target=_run, daemon=True).start()
+    # Defer the first-attempt thread until the surrounding transaction commits.
+    # Task writes from the MCP tools and the recurring generator run inside an
+    # open ``transaction.atomic`` block, so the just-``bulk_create``d rows are
+    # not yet visible on the daemon thread's separate DB connection — it would
+    # ``DoesNotExist`` and drop the immediate attempt, delaying delivery until
+    # the retry pass. ``on_commit`` runs the callback synchronously when there
+    # is no active transaction (the DRF write paths), so those stay immediate.
+    transaction.on_commit(
+        lambda: threading.Thread(target=_run, daemon=True).start()
+    )
 
 
 def enqueue_test_delivery(endpoint: WebhookEndpoint) -> WebhookDelivery:
