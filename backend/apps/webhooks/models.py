@@ -7,6 +7,11 @@ Two models:
                        (optionally) one project. ``include_self`` opts into
                        events the owner themself triggered (off by default so
                        an agent isn't notified about its own writes).
+                       ``scope`` further widens this: ``"mine"`` (default) is
+                       the exact behavior above; ``"all"`` makes it org-wide —
+                       every matching task event fires regardless of who
+                       acted or who is assigned, and ``include_self`` is
+                       ignored (see :mod:`apps.webhooks.dispatch`).
     WebhookDelivery  — one persisted delivery attempt log per (event,
                        endpoint). The UUID primary key doubles as the
                        receiver-side idempotency key (``X-Cyt-Webhook-Id``).
@@ -19,6 +24,10 @@ Design notes:
 * ``WebhookEndpoint.project`` is CASCADE (not SET_NULL): null means "all
   projects", so a project-scoped endpoint must die with its project rather
   than silently widening to everything.
+* ``WEBHOOK_EVENT_TYPES`` (the allowed ``event_types`` values) is the
+  in-app ``NotificationVerb`` set plus ``"created"`` — a webhook-only event
+  emitted on task creation. It never becomes a ``Notification`` row (see
+  :mod:`apps.tasks.notifications`).
 * ``WebhookDelivery.payload`` is the full envelope, built eagerly at dispatch
   time — the source task may be deleted immediately after (``task`` FK is
   SET_NULL; ``task_key`` is the denormalized survivor).
@@ -32,6 +41,19 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+
+from apps.tasks.models import NotificationVerb
+
+#: Every verb a webhook endpoint may subscribe to: the in-app notification
+#: verbs plus ``"created"`` — a webhook-only event (see WebhookScope /
+#: apps.tasks.notifications module docstring for why it never becomes a
+#: Notification row).
+WEBHOOK_EVENT_TYPES = list(NotificationVerb.values) + ["created"]
+
+
+class WebhookScope(models.TextChoices):
+    MINE = "mine", "Mine"
+    ALL = "all", "All"
 
 
 class WebhookEndpoint(models.Model):
@@ -54,8 +76,19 @@ class WebhookEndpoint(models.Model):
         default=list,
         blank=True,
         help_text=(
-            "Subset of NotificationVerb values this endpoint fires for "
+            "Subset of WEBHOOK_EVENT_TYPES this endpoint fires for "
             '(e.g. ["assigned", "moved"]). Empty list = all verbs.'
+        ),
+    )
+    scope = models.CharField(
+        max_length=8,
+        choices=WebhookScope.choices,
+        default=WebhookScope.MINE,
+        help_text=(
+            "'mine' (default): fires only when the owner is a recipient or "
+            "(with include_self) the actor — exact v1 behavior. 'all': "
+            "org-wide, fires for every matching task event regardless of who "
+            "acted or who is assigned; include_self is ignored."
         ),
     )
     project = models.ForeignKey(

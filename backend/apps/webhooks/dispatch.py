@@ -9,12 +9,20 @@ the caller.
 Flow:
 
 1. Interested user ids = the (deduped, actor-excluded) notification
-   recipients, plus the actor themself for ``include_self`` endpoints.
-2. Query active endpoints owned by those users; filter by verb ∈
-   ``event_types`` (empty list = all) and project scope (null = all
-   projects; inbox tasks — ``task.project_id is None`` — only match
-   unscoped endpoints).
-3. Build the payload envelope *eagerly* (the task may be about to be
+   recipients, plus the actor themself for ``include_self`` endpoints. This
+   set may be empty (system events, or a purely-unassigned task update) —
+   that's fine, ``scope="all"`` endpoints don't need it.
+2. Query active endpoints that are EITHER ``scope="all"`` (org-wide) OR
+   owned by one of the interested users. Filter by verb ∈ ``event_types``
+   (empty list = all) and project scope (null = all projects; inbox tasks —
+   ``task.project_id is None`` — only match unscoped endpoints) — both apply
+   to either scope.
+3. Per-endpoint ownership matching: ``scope="all"`` endpoints match
+   unconditionally past the verb/project filters (``include_self`` is
+   ignored — org-wide means org-wide). ``scope="mine"`` endpoints keep the
+   exact v1 rule: the owner must be a recipient, or the actor themself with
+   ``include_self=True``.
+4. Build the payload envelope *eagerly* (the task may be about to be
    deleted), ``bulk_create`` pending :class:`WebhookDelivery` rows, and — once
    the surrounding transaction commits (``transaction.on_commit``) — hand the
    batch to ONE daemon thread that runs
@@ -29,10 +37,16 @@ import uuid
 from typing import Any, Iterable
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from .delivery import attempt_delivery, build_envelope
-from .models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint
+from .models import (
+    WebhookDelivery,
+    WebhookDeliveryStatus,
+    WebhookEndpoint,
+    WebhookScope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,13 +86,17 @@ def _dispatch_task_webhooks(
     interested_ids = set(recipient_ids)
     if actor_id is not None:
         interested_ids.add(actor_id)
-    if not interested_ids:
-        return
 
+    # No early return on empty interested_ids: scope="all" endpoints must
+    # still match system events (actor=None) and unassigned-task activity
+    # (recipients=[]) — e.g. the recurring generator's "created" event.
     endpoints = list(
-        WebhookEndpoint.objects.filter(active=True, user_id__in=interested_ids)
+        WebhookEndpoint.objects.filter(active=True)
+        .filter(Q(scope=WebhookScope.ALL) | Q(user_id__in=interested_ids))
         .select_related("user")
     )
+    if not endpoints:
+        return
 
     task_project_id = getattr(task, "project_id", None)
     matched: list[WebhookEndpoint] = []
@@ -87,13 +105,17 @@ def _dispatch_task_webhooks(
             continue
         if ep.project_id is not None and ep.project_id != task_project_id:
             continue
-        # The actor is only an interested party for their own endpoints when
-        # those endpoints opted in via include_self. (An actor who is also a
-        # genuine recipient never reaches here — the notifications layer
-        # excludes them from `recipients` by design.)
-        if ep.user_id not in recipient_ids and not ep.include_self:
+        if ep.scope == WebhookScope.ALL:
+            # Org-wide: matches unconditionally past verb/project filters.
+            # include_self is meaningless here — everyone's actions qualify.
+            matched.append(ep)
             continue
-        matched.append(ep)
+        # scope="mine": the owner must be a recipient, or the actor
+        # themself with include_self=True. (An actor who is also a genuine
+        # recipient never reaches the include_self branch — the
+        # notifications layer excludes them from `recipients` by design.)
+        if ep.user_id in recipient_ids or (ep.include_self and ep.user_id == actor_id):
+            matched.append(ep)
 
     if not matched:
         return
@@ -107,6 +129,7 @@ def _dispatch_task_webhooks(
             event=verb,
             actor=actor,
             recipient=ep.user,
+            recipients=recipients,
             task=task,
             extra=extra,
             created_at=now,
@@ -157,6 +180,7 @@ def enqueue_test_delivery(endpoint: WebhookEndpoint) -> WebhookDelivery:
         event="webhook.test",
         actor=endpoint.user,
         recipient=endpoint.user,
+        recipients=[],
         task=None,
         extra={"message": "This is a test delivery from Cyt."},
         created_at=now,

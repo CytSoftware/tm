@@ -252,6 +252,9 @@ def generate_due_instances(now: datetime | None = None) -> list[Task]:
             # Actor is None — this is a system-generated event, not a user
             # action, so there's no "self-action" to exclude.
             notify_task_event(task, None, "assigned")
+            # "created" is webhook-only (recipients=[]) — lets scope="all"
+            # endpoints see recurring-generated tasks even when unassigned.
+            notify_task_event(task, None, "created", recipients=[])
             created.append(task)
 
             # Advance to the next scheduled occurrence strictly after the one

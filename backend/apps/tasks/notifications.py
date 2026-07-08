@@ -13,8 +13,18 @@ recurring generator) calls after a mutation. It:
 5. Dispatches any matching outbound webhook endpoints for the interested
    users (:func:`apps.webhooks.dispatch.dispatch_task_webhooks`). This runs
    even when the recipient set ends up empty — an ``include_self`` endpoint
-   whose owner is the sole actor must still fire — which is why the dispatch
-   call sits *before* the empty-recipients early return.
+   whose owner is the sole actor must still fire, and a ``scope="all"``
+   org-wide endpoint must see unassigned-task activity too — which is why
+   the dispatch call sits *before* the empty-recipients early return.
+
+Some verbs are **webhook-only** (currently just ``"created"``, emitted on
+task creation with ``recipients=[]``) — they exist in
+``apps.webhooks.models.WEBHOOK_EVENT_TYPES`` but not in ``NotificationVerb``,
+and must never produce a ``Notification`` row, WS push, or email. A guard
+right after the dispatch call enforces this explicitly (in practice the
+empty-recipients return already covers ``created``, since it's always fired
+with no recipients — the guard makes the contract robust against a future
+webhook-only verb that *does* carry recipients).
 
 Like ``broadcast_task_event``, this must never raise into the caller — every
 public entry point is wrapped in try/except.
@@ -28,7 +38,7 @@ from typing import Any, Iterable
 from django.utils import timezone
 
 from .broadcast import broadcast_to_group
-from .models import Notification, Task
+from .models import Notification, NotificationVerb, Task
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +118,15 @@ def _notify_task_event(
             verb,
             getattr(task, "key", None),
         )
+
+    # Webhook-only verbs (e.g. "created") never produce a Notification row,
+    # WS push, or email — that's the whole point of a webhook-only verb. In
+    # practice these are always fired with recipients=[], so the
+    # empty-recipients return below already covers it; this guard makes the
+    # contract explicit and robust against a future webhook-only verb that
+    # does carry recipients.
+    if verb not in NotificationVerb.values:
+        return
 
     if not unique_recipients:
         return

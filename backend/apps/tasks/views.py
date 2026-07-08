@@ -1104,6 +1104,11 @@ class TaskViewSet(viewsets.ModelViewSet):
         )
         # Recipients default to task.assignees.all() minus the acting user.
         notify_task_event(task, self.request.user, "assigned")
+        # "created" is webhook-only (recipients=[]) — see WEBHOOK_EVENT_TYPES
+        # / notify_task_event's guard. Fires alongside "assigned" above when
+        # the task is created with assignees — intentional, GitHub-style
+        # distinct events, not deduped.
+        notify_task_event(task, self.request.user, "created", recipients=[])
 
     def perform_update(self, serializer):
         # Capture old column + assignees + tracked scalar fields before the
@@ -1155,7 +1160,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         if new_label_ids != old_label_ids:
             changed_fields.append("labels")
 
-        if still_assigned_ids and changed_fields:
+        if changed_fields:
             notify_task_event(
                 task,
                 actor,

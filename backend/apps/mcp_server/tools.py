@@ -29,7 +29,6 @@ from apps.tasks.models import (
     Column,
     Label,
     Metric,
-    NotificationVerb,
     Priority,
     Project,
     RecurringTaskTemplate,
@@ -493,6 +492,9 @@ def create_task(
         proj.id, "task.created", {"key": task.key, "id": task.id}
     )
     notify_task_event(task, mcp_user, "assigned")
+    # "created" is webhook-only (recipients=[]) — fires alongside "assigned"
+    # above when the task is created with assignees; intentional, not deduped.
+    notify_task_event(task, mcp_user, "created", recipients=[])
     return _task_dict(task)
 
 
@@ -567,7 +569,7 @@ def update_task(
     if new_label_ids != old_label_ids:
         changed_fields.append("labels")
 
-    if still_assigned_ids and changed_fields:
+    if changed_fields:
         notify_task_event(
             task,
             mcp_user,
@@ -734,6 +736,7 @@ def _webhook_dict(ep, *, include_secret: bool = False) -> dict[str, Any]:
         "name": ep.name,
         "url": ep.url,
         "event_types": ep.event_types,
+        "scope": ep.scope,
         "project_id": ep.project_id,
         "include_self": ep.include_self,
         "active": ep.active,
@@ -770,6 +773,7 @@ def register_webhook(
     event_types: list[str] | None = None,
     project: str | int | None = None,
     include_self: bool = False,
+    scope: str = "mine",
     mcp_user,
 ) -> dict[str, Any]:
     """Register an outbound webhook endpoint for the calling user.
@@ -778,7 +782,7 @@ def register_webhook(
     import secrets as _secrets
     from urllib.parse import urlsplit
 
-    from apps.webhooks.models import WebhookEndpoint
+    from apps.webhooks.models import WEBHOOK_EVENT_TYPES, WebhookEndpoint, WebhookScope
 
     if mcp_user is None:
         raise ValueError(
@@ -788,11 +792,15 @@ def register_webhook(
     if urlsplit(url).scheme.lower() not in ("http", "https"):
         raise ValueError("url must use http or https.")
     event_types = event_types or []
-    bad = set(event_types) - set(NotificationVerb.values)
+    bad = set(event_types) - set(WEBHOOK_EVENT_TYPES)
     if bad:
         raise ValueError(
             f"Unknown event type(s): {sorted(bad)}. "
-            f"Allowed: {sorted(NotificationVerb.values)} (empty = all)."
+            f"Allowed: {sorted(WEBHOOK_EVENT_TYPES)} (empty = all)."
+        )
+    if scope not in (WebhookScope.MINE, WebhookScope.ALL):
+        raise ValueError(
+            f"Unknown scope {scope!r}. Use 'mine' or 'all'."
         )
     project_obj = _resolve_project(project) if project is not None else None
     ep = WebhookEndpoint.objects.create(
@@ -802,6 +810,7 @@ def register_webhook(
         event_types=event_types,
         project=project_obj,
         include_self=include_self,
+        scope=scope,
         secret=_secrets.token_hex(32),
     )
     return _webhook_dict(ep, include_secret=True)

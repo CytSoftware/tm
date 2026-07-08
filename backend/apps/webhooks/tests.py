@@ -26,7 +26,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.tasks.models import Project, Task
+from apps.tasks.models import Notification, Project, Task
 from apps.tasks.notifications import notify_task_event
 
 from .delivery import (
@@ -37,7 +37,8 @@ from .delivery import (
     sign_payload,
 )
 from .dispatch import dispatch_task_webhooks, enqueue_test_delivery
-from .models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint
+from .models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint, WebhookScope
+from .serializers import WebhookEndpointSerializer
 
 User = get_user_model()
 
@@ -209,6 +210,121 @@ class DispatchFilteringTests(WebhookTestBase):
         dispatch_task_webhooks(
             task=object(), actor=self.chris, verb="assigned", recipients=[self.dana]
         )
+
+    def test_envelope_contains_recipients_array(self):
+        _make_endpoint(self.dana)
+        self.dispatch(actor=self.chris, recipients=[self.dana])
+        d = WebhookDelivery.objects.get()
+        self.assertEqual(d.payload["recipients"], [{"id": self.dana.id, "username": "dana"}])
+
+    def test_envelope_recipients_empty_when_no_recipients(self):
+        _make_endpoint(self.chris, include_self=True)
+        self.dispatch(actor=self.chris, recipients=[])
+        d = WebhookDelivery.objects.get()
+        self.assertEqual(d.payload["recipients"], [])
+
+
+class ScopeAllTests(WebhookTestBase):
+    """scope="all" endpoints: org-wide, regardless of who acted/was assigned."""
+
+    def test_scope_all_fires_for_uninvolved_owner(self):
+        # Owner (chris) is neither actor nor recipient of this event.
+        ep = _make_endpoint(self.chris, scope=WebhookScope.ALL)
+        self.dispatch(actor=self.dana, recipients=[])
+        d = WebhookDelivery.objects.get()
+        self.assertEqual(d.endpoint_id, ep.id)
+        self.assertEqual(d.payload["recipient"]["id"], self.chris.id)
+        self.assertEqual(d.payload["actor"]["id"], self.dana.id)
+
+    def test_scope_all_matches_unassigned_task_update(self):
+        # No recipients, no include_self needed — org-wide catches it all.
+        ep = _make_endpoint(self.chris, scope=WebhookScope.ALL)
+        self.dispatch(actor=self.dana, verb="updated", recipients=[])
+        d = WebhookDelivery.objects.get()
+        self.assertEqual(d.endpoint_id, ep.id)
+
+    def test_scope_mine_does_not_fire_without_involvement(self):
+        # Same event, but a scope="mine" endpoint owned by an uninvolved user
+        # must NOT match.
+        _make_endpoint(self.chris, scope=WebhookScope.MINE)
+        self.dispatch(actor=self.dana, verb="updated", recipients=[])
+        self.assertEqual(WebhookDelivery.objects.count(), 0)
+
+    def test_scope_all_matches_system_actor_none(self):
+        # Recurring-generator-style event: actor=None, recipients=[].
+        ep = _make_endpoint(self.chris, scope=WebhookScope.ALL)
+        self.dispatch(actor=None, verb="created", recipients=[])
+        d = WebhookDelivery.objects.get()
+        self.assertEqual(d.endpoint_id, ep.id)
+        self.assertIsNone(d.payload["actor"])
+
+    def test_scope_all_ignores_include_self_flag(self):
+        # include_self is meaningless for scope="all" — the owner acting
+        # themself still matches (org-wide means org-wide).
+        ep = _make_endpoint(self.chris, scope=WebhookScope.ALL, include_self=False)
+        self.dispatch(actor=self.chris, recipients=[])
+        d = WebhookDelivery.objects.get()
+        self.assertEqual(d.endpoint_id, ep.id)
+
+    def test_scope_all_respects_verb_filter(self):
+        _make_endpoint(self.chris, scope=WebhookScope.ALL, event_types=["moved"])
+        self.dispatch(actor=self.dana, verb="assigned", recipients=[])
+        self.assertEqual(WebhookDelivery.objects.count(), 0)
+        self.dispatch(actor=self.dana, verb="moved", recipients=[])
+        self.assertEqual(WebhookDelivery.objects.count(), 1)
+
+    def test_scope_all_respects_project_filter(self):
+        _make_endpoint(self.chris, scope=WebhookScope.ALL, project=self.other_project)
+        self.dispatch(actor=self.dana, recipients=[])
+        self.assertEqual(WebhookDelivery.objects.count(), 0)
+
+        _make_endpoint(self.dana, scope=WebhookScope.ALL, project=self.project)
+        self.dispatch(actor=self.chris, recipients=[])
+        self.assertEqual(WebhookDelivery.objects.count(), 1)
+
+    def test_scope_mine_regression_unaffected_by_scope_all_endpoints(self):
+        # A pre-existing scope="mine" endpoint keeps its exact v1 matching
+        # behavior alongside a scope="all" endpoint on the same event.
+        mine_ep = _make_endpoint(self.dana, scope=WebhookScope.MINE)
+        all_ep = _make_endpoint(self.chris, scope=WebhookScope.ALL)
+        self.dispatch(actor=self.chris, recipients=[self.dana])
+        deliveries = {d.endpoint_id for d in WebhookDelivery.objects.all()}
+        self.assertEqual(deliveries, {mine_ep.id, all_ep.id})
+
+    def test_scope_all_default_is_mine(self):
+        self.assertEqual(WebhookEndpoint._meta.get_field("scope").default, WebhookScope.MINE)
+
+
+class WebhookOnlyCreatedVerbTests(WebhookTestBase):
+    """The "created" verb: webhook-only, never an in-app notification."""
+
+    def test_created_dispatches_with_empty_recipients(self):
+        ep = _make_endpoint(self.chris, scope=WebhookScope.ALL)
+        self.dispatch(actor=self.dana, verb="created", recipients=[])
+        d = WebhookDelivery.objects.get()
+        self.assertEqual(d.endpoint_id, ep.id)
+        self.assertEqual(d.event, "created")
+        self.assertEqual(d.payload["recipients"], [])
+
+    def test_created_via_notify_task_event_creates_no_notification_rows(self):
+        _make_endpoint(self.chris, scope=WebhookScope.ALL)
+        with (
+            mock.patch("apps.webhooks.dispatch.threading", _inline_threading),
+            mock.patch(
+                "apps.webhooks.delivery.urllib.request.urlopen",
+                return_value=_fake_response(),
+            ),
+        ):
+            with self.captureOnCommitCallbacks(execute=True):
+                notify_task_event(self.task, self.dana, "created", recipients=[])
+        self.assertEqual(WebhookDelivery.objects.count(), 1)
+        self.assertEqual(Notification.objects.count(), 0)
+
+    def test_created_via_notify_task_event_guard_even_with_recipients(self):
+        # Belt-and-suspenders: even if a future caller passes recipients for
+        # a webhook-only verb, no Notification rows are created.
+        notify_task_event(self.task, self.dana, "created", recipients=[self.chris])
+        self.assertEqual(Notification.objects.count(), 0)
 
 
 class SigningTests(WebhookTestBase):
@@ -560,3 +676,46 @@ class TestDeliveryHelperTests(WebhookTestBase):
         self.assertIsNone(d.task)
         self.assertIsNone(d.payload["task"])
         self.assertEqual(d.payload["recipient"]["id"], self.chris.id)
+        self.assertEqual(d.payload["recipients"], [])
+
+
+class WebhookEndpointSerializerTests(WebhookTestBase):
+    def _data(self, **overrides):
+        data = dict(
+            name="test",
+            url="https://example.com/hook",
+            event_types=[],
+            include_self=False,
+        )
+        data.update(overrides)
+        return data
+
+    def test_accepts_scope_mine(self):
+        s = WebhookEndpointSerializer(data=self._data(scope="mine"))
+        self.assertTrue(s.is_valid(), s.errors)
+        self.assertEqual(s.validated_data["scope"], "mine")
+
+    def test_accepts_scope_all(self):
+        s = WebhookEndpointSerializer(data=self._data(scope="all"))
+        self.assertTrue(s.is_valid(), s.errors)
+        self.assertEqual(s.validated_data["scope"], "all")
+
+    def test_scope_defaults_to_mine_when_omitted(self):
+        s = WebhookEndpointSerializer(data=self._data())
+        self.assertTrue(s.is_valid(), s.errors)
+        ep = s.save(user=self.chris, secret="a" * 64)
+        self.assertEqual(ep.scope, WebhookScope.MINE)
+
+    def test_rejects_bad_scope_value(self):
+        s = WebhookEndpointSerializer(data=self._data(scope="everyone"))
+        self.assertFalse(s.is_valid())
+        self.assertIn("scope", s.errors)
+
+    def test_accepts_created_in_event_types(self):
+        s = WebhookEndpointSerializer(data=self._data(event_types=["created", "moved"]))
+        self.assertTrue(s.is_valid(), s.errors)
+
+    def test_rejects_unknown_event_type(self):
+        s = WebhookEndpointSerializer(data=self._data(event_types=["bogus"]))
+        self.assertFalse(s.is_valid())
+        self.assertIn("event_types", s.errors)
