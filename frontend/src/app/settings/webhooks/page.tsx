@@ -3,10 +3,12 @@
 /**
  * Outbound webhooks settings page.
  *
- * Endpoints are per-user: each one receives signed HTTP POSTs for the task
- * events relevant to the owner (assigned/updated/moved/completed/deleted).
- * The signing secret is reveal-once — shown in a dialog right after create
- * or rotate and never again (it's excluded from list responses).
+ * Endpoints are owned by a user but can be scoped "mine" (task events
+ * relevant to the owner — assigned/updated/moved/completed/deleted) or
+ * "all" (org-wide: every matching task event workspace-wide, including
+ * "created"). The signing secret is reveal-once — shown in a dialog right
+ * after create or rotate and never again (it's excluded from list
+ * responses).
  */
 
 import { useState } from "react";
@@ -60,14 +62,16 @@ import {
   useWebhooksQuery,
 } from "@/hooks/use-webhooks";
 import type {
-  NotificationVerb,
   Project,
   WebhookDeliveryStatus,
   WebhookEndpoint,
   WebhookEndpointCreated,
+  WebhookEventType,
+  WebhookScope,
 } from "@/lib/types";
 
-const EVENT_TYPES: NotificationVerb[] = [
+const EVENT_TYPES: WebhookEventType[] = [
+  "created",
   "assigned",
   "updated",
   "moved",
@@ -75,7 +79,8 @@ const EVENT_TYPES: NotificationVerb[] = [
   "deleted",
 ];
 
-const VERB_LABELS: Record<NotificationVerb, string> = {
+const VERB_LABELS: Record<WebhookEventType, string> = {
+  created: "Created",
   assigned: "Assigned",
   updated: "Updated",
   moved: "Moved",
@@ -284,6 +289,9 @@ function WebhookRow({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
+          {endpoint.scope === "all" && (
+            <Badge variant="default">Org-wide</Badge>
+          )}
           {endpoint.event_types.length === 0 ? (
             <Badge variant="outline">All events</Badge>
           ) : (
@@ -296,7 +304,7 @@ function WebhookRow({
           <span className="text-[11px] text-muted-foreground">
             · {projectName}
           </span>
-          {endpoint.include_self && (
+          {endpoint.scope !== "all" && endpoint.include_self && (
             <span className="text-[11px] text-muted-foreground">
               · includes own actions
             </span>
@@ -455,17 +463,18 @@ function CreateWebhookDialog({
 }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
-  const [eventTypes, setEventTypes] = useState<NotificationVerb[]>([]);
+  const [eventTypes, setEventTypes] = useState<WebhookEventType[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
   // Default ON — the primary use case is a personal agent reacting to the
-  // owner's own task activity.
+  // owner's own task activity. Only meaningful for scope="mine".
   const [includeSelf, setIncludeSelf] = useState(true);
+  const [scope, setScope] = useState<WebhookScope>("mine");
 
   const mutation = useCreateWebhook();
 
   const activeProjects = projects.filter((p) => !p.archived);
 
-  function toggleEventType(verb: NotificationVerb) {
+  function toggleEventType(verb: WebhookEventType) {
     setEventTypes((prev) =>
       prev.includes(verb) ? prev.filter((v) => v !== verb) : [...prev, verb],
     );
@@ -480,6 +489,7 @@ function CreateWebhookDialog({
         event_types: eventTypes,
         project: projectId,
         include_self: includeSelf,
+        scope,
       },
       {
         onSuccess: (created) => {
@@ -574,6 +584,27 @@ function CreateWebhookDialog({
             </div>
             <div className="space-y-1.5">
               <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Scope
+              </Label>
+              <Select
+                value={scope}
+                onValueChange={(v) => setScope(v as WebhookScope)}
+                items={{
+                  mine: "Only my events",
+                  all: "All workspace events",
+                }}
+              >
+                <SelectTrigger className="h-9 w-full text-[13px]">
+                  <SelectValue placeholder="Only my events" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mine">Only my events</SelectItem>
+                  <SelectItem value="all">All workspace events</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
                 Project scope
               </Label>
               <Select
@@ -602,21 +633,28 @@ function CreateWebhookDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <div className="flex items-center justify-between gap-3">
-                <Label className="text-[13px] font-normal">
-                  Also fire for my own actions
-                </Label>
-                <Switch
-                  checked={includeSelf}
-                  onCheckedChange={(checked) => setIncludeSelf(checked)}
-                />
-              </div>
+            {scope === "all" ? (
               <p className="text-[11px] text-muted-foreground">
-                Fires even when you caused the change yourself — needed if a
-                personal agent should react to your own edits.
+                Org-wide webhooks fire for everyone&apos;s actions, including
+                your own.
               </p>
-            </div>
+            ) : (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-3">
+                  <Label className="text-[13px] font-normal">
+                    Also fire for my own actions
+                  </Label>
+                  <Switch
+                    checked={includeSelf}
+                    onCheckedChange={(checked) => setIncludeSelf(checked)}
+                  />
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Fires even when you caused the change yourself — needed if a
+                  personal agent should react to your own edits.
+                </p>
+              </div>
+            )}
             {errorMessage && (
               <p className="text-[12px] text-destructive">{errorMessage}</p>
             )}

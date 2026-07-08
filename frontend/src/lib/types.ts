@@ -575,20 +575,32 @@ export type NotificationEvent =
 
 // ─────────────────────────────────────────────────────────────────────────
 // Outbound webhooks — per-user endpoints that receive task events
-// (assigned/updated/moved/completed/deleted) as signed HTTP POSTs. See
-// `apps/webhooks` on the backend. `event_types: []` means "all events".
+// (assigned/updated/moved/completed/deleted/created) as signed HTTP POSTs.
+// See `apps/webhooks` on the backend. `event_types: []` means "all events".
 // ─────────────────────────────────────────────────────────────────────────
+
+/** "mine" (default) fires only for events involving the owner (recipient or
+ *  actor via `include_self`); "all" fires workspace-wide regardless of who
+ *  acted or was assigned. */
+export type WebhookScope = "mine" | "all";
+
+/** Webhook event types are a superset of `NotificationVerb` — "created" is
+ *  webhook-only and never appears in the in-app notification inbox. */
+export type WebhookEventType = NotificationVerb | "created";
 
 export type WebhookEndpoint = {
   id: number;
   name: string;
   url: string;
-  /** Subset of `NotificationVerb` values; empty = fire for every event. */
-  event_types: NotificationVerb[];
+  /** Subset of `WebhookEventType` values; empty = fire for every event. */
+  event_types: WebhookEventType[];
   /** Scope to one project, or null for all projects. */
   project: number | null;
-  /** Also fire for the owner's own actions (personal-agent use case). */
+  /** Also fire for the owner's own actions (personal-agent use case).
+   *  Ignored when `scope === "all"`. */
   include_self: boolean;
+  /** "mine" = owner-scoped (default); "all" = org-wide. */
+  scope: WebhookScope;
   active: boolean;
   consecutive_failures: number;
   /** Set when the endpoint was auto-disabled after repeated failures. */

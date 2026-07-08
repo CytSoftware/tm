@@ -12,9 +12,7 @@ from urllib.parse import urlsplit
 
 from rest_framework import serializers
 
-from apps.tasks.models import NotificationVerb
-
-from .models import WebhookDelivery, WebhookEndpoint
+from .models import WEBHOOK_EVENT_TYPES, WebhookDelivery, WebhookEndpoint
 
 #: Response bodies in delivery list responses are clipped to this length —
 #: the API is for status inspection, not receiver-output archiving.
@@ -29,6 +27,7 @@ class WebhookEndpointSerializer(serializers.ModelSerializer):
             "name",
             "url",
             "event_types",
+            "scope",
             "project",
             "include_self",
             "active",
@@ -53,7 +52,7 @@ class WebhookEndpointSerializer(serializers.ModelSerializer):
         return value
 
     def validate_event_types(self, value: list) -> list:
-        allowed = set(NotificationVerb.values)
+        allowed = set(WEBHOOK_EVENT_TYPES)
         bad = [v for v in value if v not in allowed]
         if bad:
             raise serializers.ValidationError(

@@ -5,11 +5,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { webhookDeliveriesKey, webhooksKey } from "@/lib/query-keys";
 import type {
-  NotificationVerb,
   WebhookDelivery,
   WebhookEndpoint,
   WebhookEndpointCreated,
   WebhookEndpointListResponse,
+  WebhookEventType,
+  WebhookScope,
 } from "@/lib/types";
 
 /** Single source of truth for the webhook endpoint list. */
@@ -24,10 +25,11 @@ type CreateWebhookPayload = {
   name: string;
   url: string;
   /** Empty array = subscribe to all events. */
-  event_types: NotificationVerb[];
+  event_types: WebhookEventType[];
   /** null = all projects. */
   project: number | null;
   include_self: boolean;
+  scope: WebhookScope;
 };
 
 /** The create response is the only place the plaintext secret appears —
@@ -49,7 +51,13 @@ export function useCreateWebhook() {
 type UpdateWebhookPayload = Partial<
   Pick<
     WebhookEndpoint,
-    "name" | "url" | "event_types" | "project" | "include_self" | "active"
+    | "name"
+    | "url"
+    | "event_types"
+    | "project"
+    | "include_self"
+    | "scope"
+    | "active"
   >
 >;
 

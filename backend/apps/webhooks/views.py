@@ -43,6 +43,22 @@ class WebhookEndpointViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user, secret=secrets.token_hex(32))
 
+    def perform_update(self, serializer):
+        # Re-enabling an auto-disabled endpoint clears its failure state.
+        # Auto-disable (delivery.py) leaves ``consecutive_failures`` at/above
+        # the threshold and stamps ``disabled_at``; without this reset the
+        # "auto-disabled" banner would persist and the very next failed
+        # delivery would immediately re-cross the threshold and re-disable it.
+        was_inactive = not serializer.instance.active
+        endpoint = serializer.save()
+        reactivating = was_inactive and endpoint.active
+        if reactivating and (endpoint.disabled_at or endpoint.consecutive_failures):
+            endpoint.consecutive_failures = 0
+            endpoint.disabled_at = None
+            endpoint.save(
+                update_fields=["consecutive_failures", "disabled_at", "updated_at"]
+            )
+
     @action(detail=True, methods=["post"], url_path="rotate_secret")
     def rotate_secret(self, request, pk=None):
         """Generate a fresh signing secret and reveal it (one time)."""

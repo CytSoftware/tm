@@ -38,7 +38,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Iterable
 from uuid import UUID
 
 from django.conf import settings
@@ -70,6 +70,7 @@ def build_envelope(
     actor,
     recipient,
     task,
+    recipients: Iterable[Any] | None = None,
     extra: dict[str, Any] | None = None,
     created_at: datetime | None = None,
 ) -> dict[str, Any]:
@@ -78,7 +79,11 @@ def build_envelope(
     ``actor`` may be ``None`` (system events, e.g. the recurring generator).
     ``task`` may be ``None`` (synthetic ``webhook.test`` deliveries), and a
     real task's ``project``/``column`` may be ``None`` (inbox tasks) — all
-    of those render as JSON nulls.
+    of those render as JSON nulls. ``recipient`` stays the endpoint owner
+    (singular, back-compat); ``recipients`` is the additive top-level array
+    of the underlying notification recipients for this event — may be empty
+    (e.g. an unassigned-task update reaching a scope="all" endpoint, or a
+    ``webhook.test`` delivery, which always passes ``[]``).
     """
     frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
@@ -105,6 +110,9 @@ def build_envelope(
             {"id": actor.id, "username": actor.username} if actor is not None else None
         ),
         "recipient": {"id": recipient.id, "username": recipient.username},
+        "recipients": [
+            {"id": u.id, "username": u.username} for u in (recipients or []) if u is not None
+        ],
         "task": task_dict,
         "data": extra or {},
     }

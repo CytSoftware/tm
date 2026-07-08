@@ -650,21 +650,30 @@ async def register_webhook(
     event_types: list[str] | None = None,
     project: str | int | None = None,
     include_self: bool = False,
+    scope: str = "mine",
 ) -> dict[str, Any]:
     """Register an outbound webhook endpoint for the calling user.
 
-    The endpoint fires whenever the calling user is an interested party in a
-    task event — same recipient logic as in-app notifications. ``event_types``
-    narrows to a subset of the five verbs (``assigned``, ``updated``,
-    ``moved``, ``completed``, ``deleted``); omit or pass ``[]`` for all.
-    ``project`` (prefix like "CYT" or id) scopes to one project; omit for all
-    projects. Set ``include_self=True`` to also fire for events the calling
-    user themself triggers (e.g. self-assignment) — off by default so an
-    agent isn't notified about its own writes.
+    ``scope="mine"`` (default): the endpoint fires whenever the calling user
+    is an interested party in a task event — same recipient logic as in-app
+    notifications (a recipient, or the actor themself with
+    ``include_self=True``). ``scope="all"``: org-wide — fires for EVERY
+    matching task event regardless of who acted or who is assigned,
+    including the calling user's own actions (``include_self`` is ignored in
+    this mode). Any user may register an org-wide endpoint.
+
+    ``event_types`` narrows to a subset of the six verbs (``assigned``,
+    ``updated``, ``moved``, ``completed``, ``deleted``, ``created``); omit or
+    pass ``[]`` for all. ``created`` is webhook-only — it fires once per new
+    task (with no in-app notification counterpart) and is distinct from
+    ``assigned`` (a task created with assignees fires both). ``project``
+    (prefix like "CYT" or id) scopes to one project; omit for all projects.
 
     Deliveries are HMAC-signed (Stripe-style): headers ``X-Cyt-Webhook-Id``,
     ``X-Cyt-Timestamp``, ``X-Cyt-Event``, and ``X-Cyt-Signature`` =
-    ``"sha256=" + HMAC_SHA256(secret, "{timestamp}." + body)``.
+    ``"sha256=" + HMAC_SHA256(secret, "{timestamp}." + body)``. Every
+    delivery envelope also carries a top-level ``recipients`` array (the
+    underlying notification recipients, which may be empty).
 
     Returns the endpoint **including its signing ``secret`` — this is the
     ONLY time the secret is revealed**. Save it; it cannot be retrieved
@@ -676,6 +685,7 @@ async def register_webhook(
         event_types=event_types,
         project=project,
         include_self=include_self,
+        scope=scope,
         mcp_user=_get_mcp_user(),
     )
 
