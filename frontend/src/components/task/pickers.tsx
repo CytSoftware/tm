@@ -1,20 +1,19 @@
 "use client";
 
 /**
- * Shared task-editing pickers — the single source of the assignee / label /
- * priority selection UI, used by both the TaskPanel property sidebar and the
- * kanban card's inline chip editors (`components/kanban/Card.tsx`).
+ * Shared task-editing pickers for the TaskPanel property sidebar: assignee /
+ * label selection. (The kanban card used to reuse the bare lists for its
+ * inline chip popovers; those chips now open the board's PropertyPalette
+ * instead — see components/board/PropertyPalette.tsx.)
  *
  * Each "thing" is split into a bare checkbox list (no Popover — the caller
- * owns that, since the panel and the card use very different triggers) plus
- * a "full" `*Picker` component that wraps the list in the panel's
- * chips-row + "+ Add ..." trigger UI. The card reuses the bare lists behind
- * its own trigger (the chip itself) so the two surfaces can't drift apart.
+ * owns that) plus a "full" `*Picker` component that wraps the list in the
+ * panel's chips-row + "+ Add ..." trigger UI.
  */
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,9 +27,7 @@ import {
 import { ColorPicker, PRESET_COLORS } from "@/components/ui/ColorPicker";
 import { UserAvatar } from "@/components/UserAvatar";
 import { apiFetch } from "@/lib/api";
-import type { Label as LabelType, Priority, User } from "@/lib/types";
-import { PRIORITY_DOT, PRIORITY_LABELS, PRIORITY_ORDER } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import type { Label as LabelType, User } from "@/lib/types";
 
 /* -------------------------------------------------------------------- */
 /* Assignees                                                             */
@@ -363,53 +360,5 @@ export function LabelPicker({
         </PopoverContent>
       </Popover>
     </div>
-  );
-}
-
-/* -------------------------------------------------------------------- */
-/* Priority                                                              */
-/* -------------------------------------------------------------------- */
-
-/** Rows for picking a single priority (or clearing it). No Popover wrapper —
- *  callers own it. Used by the kanban card's inline priority chip; the task
- *  panel sidebar uses a plain `<Select>` instead since it isn't a popover
- *  UI there. */
-export function PriorityMenu({
-  value,
-  onSelect,
-}: {
-  value: Priority | null;
-  onSelect: (next: Priority | null) => void;
-}) {
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => onSelect(null)}
-        className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] hover:bg-accent transition-colors"
-      >
-        <span className="size-2 rounded-full border border-dashed border-muted-foreground/50" />
-        No priority
-        {value == null && (
-          <Check className="size-3 ml-auto text-muted-foreground" />
-        )}
-      </button>
-      {PRIORITY_ORDER.map((p) => (
-        <button
-          key={p}
-          type="button"
-          onClick={() => onSelect(p)}
-          className={cn(
-            "flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] hover:bg-accent transition-colors",
-          )}
-        >
-          <span className={cn("size-2 rounded-full", PRIORITY_DOT[p])} />
-          {PRIORITY_LABELS[p]}
-          {value === p && (
-            <Check className="size-3 ml-auto text-muted-foreground" />
-          )}
-        </button>
-      ))}
-    </>
   );
 }
