@@ -22,6 +22,7 @@ from .views import (
     RecurringTaskViewSet,
     StalenessSettingsView,
     TaskViewSet,
+    ThroughputView,
     UploadImageView,
     UserViewSet,
     ViewViewSet,
@@ -59,6 +60,11 @@ urlpatterns = [
         "settings/staleness/",
         StalenessSettingsView.as_view(),
         name="staleness-settings",
+    ),
+    path(
+        "analytics/throughput/",
+        ThroughputView.as_view(),
+        name="analytics-throughput",
     ),
     path("schema/", SpectacularAPIView.as_view(), name="schema"),
     path(

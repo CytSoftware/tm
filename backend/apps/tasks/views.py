@@ -556,6 +556,73 @@ class StalenessSettingsView(APIView):
         return Response({"thresholds": config.thresholds})
 
 
+class ThroughputView(APIView):
+    """GET the daily throughput series (created/started/in_review/completed).
+
+    Read-only aggregation over the state-transition log; delegates the math to
+    :func:`apps.tasks.analytics.throughput`. Query params:
+
+    * ``project`` — project id, omitted for all projects.
+    * ``from`` / ``to`` — inclusive ``YYYY-MM-DD`` bounds. Defaults: ``to`` is
+      today in ``tz``, ``from`` is ``to`` − 29 days (a 30-day window).
+    * ``tz`` — IANA name used for day bucketing (default ``UTC``).
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from datetime import date, timedelta
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        from .analytics import MAX_RANGE_DAYS, throughput
+
+        tz_name = request.query_params.get("tz") or "UTC"
+        try:
+            tz = ZoneInfo(tz_name)
+        except (ZoneInfoNotFoundError, ValueError, ModuleNotFoundError) as exc:
+            raise ValidationError({"tz": f"Unknown timezone {tz_name!r}."}) from exc
+
+        def _parse_date(raw: str, field: str) -> date:
+            try:
+                return date.fromisoformat(raw)
+            except ValueError as exc:
+                raise ValidationError(
+                    {field: f"Expected a YYYY-MM-DD date, got {raw!r}."}
+                ) from exc
+
+        today = timezone.now().astimezone(tz).date()
+        to_raw = request.query_params.get("to")
+        date_to = _parse_date(to_raw, "to") if to_raw else today
+        from_raw = request.query_params.get("from")
+        date_from = (
+            _parse_date(from_raw, "from") if from_raw else date_to - timedelta(days=29)
+        )
+
+        if date_from > date_to:
+            raise ValidationError({"from": "'from' must not be after 'to'."})
+        # Inclusive span; +1 so a same-day request counts as one day.
+        if (date_to - date_from).days + 1 > MAX_RANGE_DAYS:
+            raise ValidationError(
+                {"range": f"Range must not exceed {MAX_RANGE_DAYS} days."}
+            )
+
+        project_id: int | None = None
+        project_raw = request.query_params.get("project")
+        if project_raw not in (None, ""):
+            try:
+                project_id = int(project_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(
+                    {"project": "Must be an integer project id."}
+                ) from exc
+            if not Project.objects.filter(pk=project_id).exists():
+                raise ValidationError({"project": "Project not found."})
+
+        return Response(
+            {"days": throughput(project_id, date_from, date_to, tz)}
+        )
+
+
 # ---------------------------------------------------------------------------
 # Read-only reference data
 # ---------------------------------------------------------------------------
@@ -676,10 +743,11 @@ class ColumnViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"project": "Cannot move a column between projects."}
             )
-        new_is_done = serializer.validated_data.get("is_done", instance.is_done)
-        if instance.is_done and not new_is_done:
-            # Don't let the last is_done column get unmarked — recurring task
-            # defaults and analytics rely on at least one existing.
+        new_kind = serializer.validated_data.get("kind", instance.kind)
+        if instance.is_done and new_kind != "done":
+            # Don't let the last done column get demoted — recurring task
+            # defaults and analytics rely on at least one existing. ``is_done``
+            # is derived from ``kind`` on save, so we gate on the incoming kind.
             others_done = (
                 instance.project.columns.filter(is_done=True)
                 .exclude(pk=instance.pk)
@@ -687,7 +755,7 @@ class ColumnViewSet(viewsets.ModelViewSet):
             )
             if not others_done:
                 raise ValidationError(
-                    {"is_done": "At least one column must be marked as done."}
+                    {"kind": "At least one column must be marked as done."}
                 )
         column = serializer.save()
         broadcast_task_event(
