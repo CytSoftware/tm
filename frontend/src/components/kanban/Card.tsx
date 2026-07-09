@@ -15,21 +15,14 @@ import {
 } from "@/components/ui/popover";
 import { UserAvatar } from "@/components/UserAvatar";
 import { TimeInColumn } from "@/components/task/TimeInColumn";
-import {
-  AssigneeCheckboxList,
-  LabelCheckboxList,
-  PriorityMenu,
-} from "@/components/task/pickers";
 import { LinkedPRBadge } from "@/components/integrations/LinkedPRBadge";
 import { useBetsQuery } from "@/hooks/use-bets";
 import { useUpdateTask } from "@/hooks/use-tasks";
-import { useUsersQuery } from "@/hooks/use-users";
-import { useLabelsQuery } from "@/hooks/use-labels";
 import { cn } from "@/lib/utils";
 import { withAlpha } from "@/lib/colors";
 import { currentPeriodStart } from "@/lib/periods";
 import { PRIORITY_DOT } from "@/lib/types";
-import type { Bet, BetRef, Task, Priority, CardField, User } from "@/lib/types";
+import type { Bet, BetRef, Task, Priority, CardField } from "@/lib/types";
 
 const PRIORITY_BADGE: Record<
   Priority,
@@ -61,8 +54,10 @@ const PRIORITY_BADGE: Record<
   },
 };
 
-/** Which inline chip popover is forced open by the keyboard (`p`/`a`/`l` on
- *  the board — see board/page.tsx). */
+/** Which property palette a chip click should open — see `PropertyPalette`
+ *  (components/board/PropertyPalette.tsx), which the board renders centered
+ *  over the whole page. The board also forces one open on `p`/`a`/`l` for
+ *  the selected card (see board/page.tsx). */
 export type EditorKind = "priority" | "assignee" | "labels";
 
 type Props = {
@@ -73,16 +68,13 @@ type Props = {
   isSelected?: boolean;
   showProject?: boolean;
   visibleFields?: CardField[] | null;
-  /** When passed (even as `null`), this card's chip popovers become
-   *  controlled: `openEditor` names the one that should be forced open, and
-   *  `onOpenEditorChange` is called whenever base-ui's own dismiss logic
-   *  (Escape, outside click) wants to close it. The board only passes this
-   *  pair for the currently-selected card — every other card keeps its
-   *  Popovers fully uncontrolled (prop omitted entirely, not just `undefined`
-   *  passed positionally, so the base-ui primitive stays in its normal
-   *  uncontrolled mode). */
-  openEditor?: EditorKind | null;
-  onOpenEditorChange?: (editor: EditorKind | null) => void;
+  /** Chip click → ask the board to select this card and open the matching
+   *  PropertyPalette (priority/assignee/labels) — see
+   *  `handleEditorOpenRequest` in board/page.tsx. The board owns rendering
+   *  the palette; this card just reports which chip was clicked. Cards
+   *  rendered outside the board's selection model (drag ghost) omit it,
+   *  leaving the chips inert. */
+  onEditorOpenRequest?: (kind: EditorKind) => void;
 };
 
 function isVisible(
@@ -101,21 +93,8 @@ export function KanbanCard({
   isSelected,
   showProject,
   visibleFields,
-  openEditor,
-  onOpenEditorChange,
+  onEditorOpenRequest,
 }: Props) {
-  // Presence (not value) of `openEditor` marks this card as the keyboard-
-  // controlled one. Spread an empty object for every other card so its
-  // Popovers stay uncontrolled (no `open`/`onOpenChange` prop at all).
-  const isEditorControlled = openEditor !== undefined;
-  const controlledPopoverProps = (kind: EditorKind) =>
-    isEditorControlled
-      ? {
-          open: openEditor === kind,
-          onOpenChange: (next: boolean) =>
-            onOpenEditorChange?.(next ? kind : null),
-        }
-      : {};
   const showKey = isVisible("key", visibleFields);
   const showTitle = isVisible("title", visibleFields);
   const showPriority = isVisible("priority", visibleFields);
@@ -131,52 +110,11 @@ export function KanbanCard({
 
   const pri = task.priority ? PRIORITY_BADGE[task.priority] : null;
 
-  // Inline chip editors (priority / assignees / labels) — reuse the same
-  // mutation + shared checkbox-list pickers as the task panel (see
-  // components/task/pickers.tsx), but PATCH immediately on each toggle
-  // instead of waiting for a form submit. `useUsersQuery`/`useLabelsQuery`
-  // share the same query keys the board page already fetches, so this is a
-  // cache hit, not an extra request, in the common case.
+  // Only the bet chip still mutates from this component — priority/assignee/
+  // labels are edited through PropertyPalette (components/board/
+  // PropertyPalette.tsx), which the board renders when a chip is clicked
+  // (see onEditorOpenRequest below).
   const updateTask = useUpdateTask();
-  const usersQuery = useUsersQuery();
-  const allUsers = usersQuery.data ?? [];
-  const labelsQuery = useLabelsQuery();
-  // Labels selectable for this task: global labels plus ones scoped to the
-  // task's own project — mirrors the scope rule the backend enforces in
-  // TaskUpdateSerializer. `task.project` is present even on the
-  // all-projects board, so this resolves correctly there too.
-  const availableLabels = (labelsQuery.data ?? []).filter(
-    (l) => l.project == null || l.project === task.project,
-  );
-
-  function handlePriorityChange(next: Priority | null) {
-    if (next === task.priority) return;
-    updateTask.mutate({ key: task.key, priority: next });
-  }
-
-  function handleAssigneeToggle(id: number) {
-    const current = task.assignees.map((u) => u.id);
-    const next = current.includes(id)
-      ? current.filter((x) => x !== id)
-      : [...current, id];
-    updateTask.mutate({
-      key: task.key,
-      assignee_ids: next,
-      optimisticAssignees: allUsers.filter((u) => next.includes(u.id)),
-    });
-  }
-
-  function handleLabelToggle(id: number) {
-    const current = task.labels.map((l) => l.id);
-    const next = current.includes(id)
-      ? current.filter((x) => x !== id)
-      : [...current, id];
-    updateTask.mutate({
-      key: task.key,
-      label_ids: next,
-      optimisticLabels: availableLabels.filter((l) => next.includes(l.id)),
-    });
-  }
 
   function handleBetSelect(bet: BetRef | null) {
     if ((bet?.id ?? null) === (task.bet?.id ?? null)) return;
@@ -189,7 +127,7 @@ export function KanbanCard({
 
   // The footer row also hosts the hover-reveal placeholder chips (ghost
   // priority dot / ghost assignee avatar) that make the empty priority and
-  // assignee fields reachable — see AssigneeStack and the priority Popover
+  // assignee fields reachable — see AssigneeStack and the priority button
   // below. So the row has to stay mounted whenever either field is enabled
   // for this view, even with no data to show, not just when it "has content"
   // like the other optional rows.
@@ -204,6 +142,11 @@ export function KanbanCard({
   return (
     <div
       onClick={(e) => {
+        // Popover content renders through a React portal, but portal events
+        // still bubble up the REACT tree (not the DOM tree), so a click
+        // inside any chip popover reaches this handler too. Bail unless the
+        // click's actual DOM target is inside the card element itself.
+        if (!e.currentTarget.contains(e.target as Node)) return;
         if (!isDragging) {
           e.stopPropagation();
           onClick?.();
@@ -248,43 +191,33 @@ export function KanbanCard({
         </div>
       )}
 
-      {/* Labels — click opens the same label picker as the task panel. Also
-          rendered (with an empty chip row) when the keyboard forces this
-          popover open on a label-less card, so `l` has a trigger to anchor
-          to even when there's nothing to show yet. */}
-      {showLabels && (task.labels.length > 0 || openEditor === "labels") && (
-        <Popover {...controlledPopoverProps("labels")}>
-          <PopoverTrigger
-            render={
-              <button
-                type="button"
-                onClick={(e) => e.stopPropagation()}
-                aria-label="Edit labels"
-                className="w-full px-3 pb-1.5 flex flex-wrap gap-1 text-left rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
-              >
-                {task.labels.map((l) => (
-                  <span
-                    key={l.id}
-                    className="text-[10px] font-medium px-1.5 py-[2px] rounded-md"
-                    style={{
-                      background: withAlpha(l.color, 0.12),
-                      color: l.color,
-                    }}
-                  >
-                    {l.name}
-                  </span>
-                ))}
-              </button>
-            }
-          />
-          <PopoverContent className="w-56 p-1" align="start">
-            <LabelCheckboxList
-              available={availableLabels}
-              selected={task.labels.map((l) => l.id)}
-              onToggle={handleLabelToggle}
-            />
-          </PopoverContent>
-        </Popover>
+      {/* Labels — click opens the labels PropertyPalette (see
+          onEditorOpenRequest). Hidden entirely for label-less tasks; `l` on
+          a label-less selected card still opens the palette via the board's
+          keyboard handler even without a chip to click. */}
+      {showLabels && task.labels.length > 0 && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEditorOpenRequest?.("labels");
+          }}
+          aria-label="Edit labels"
+          className="w-full px-3 pb-1.5 flex flex-wrap gap-1 text-left rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+        >
+          {task.labels.map((l) => (
+            <span
+              key={l.id}
+              className="text-[10px] font-medium px-1.5 py-[2px] rounded-md"
+              style={{
+                background: withAlpha(l.color, 0.12),
+                color: l.color,
+              }}
+            >
+              {l.name}
+            </span>
+          ))}
+        </button>
       )}
 
       {/* Bet chip — which bet this task serves (Cyt OS). Click opens a
@@ -333,48 +266,39 @@ export function KanbanCard({
             </Tooltip>
           )}
           {showPriority && (
-            <Popover {...controlledPopoverProps("priority")}>
-              <PopoverTrigger
-                render={
-                  <button
-                    type="button"
-                    onClick={(e) => e.stopPropagation()}
-                    title={pri && task.priority ? `Priority ${pri.label}` : "Set priority"}
-                    className="shrink-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
-                  >
-                    {pri && task.priority ? (
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1 font-mono text-[10px] font-semibold tracking-wider",
-                          pri.text,
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "size-2 rounded-full",
-                            PRIORITY_DOT[task.priority],
-                          )}
-                        />
-                        {pri.label}
-                      </span>
-                    ) : (
-                      // Hover-reveal placeholder — keeps "no priority" tasks
-                      // reachable without cluttering the default view.
-                      <span
-                        aria-hidden
-                        className="block size-2.5 rounded-full border border-dashed border-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity"
-                      />
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditorOpenRequest?.("priority");
+              }}
+              title={pri && task.priority ? `Priority ${pri.label}` : "Set priority"}
+              className="shrink-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+            >
+              {pri && task.priority ? (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 font-mono text-[10px] font-semibold tracking-wider",
+                    pri.text,
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "size-2 rounded-full",
+                      PRIORITY_DOT[task.priority],
                     )}
-                  </button>
-                }
-              />
-              <PopoverContent className="w-36 p-1" align="start">
-                <PriorityMenu
-                  value={task.priority}
-                  onSelect={handlePriorityChange}
+                  />
+                  {pri.label}
+                </span>
+              ) : (
+                // Hover-reveal placeholder — keeps "no priority" tasks
+                // reachable without cluttering the default view.
+                <span
+                  aria-hidden
+                  className="block size-2.5 rounded-full border border-dashed border-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity"
                 />
-              </PopoverContent>
-            </Popover>
+              )}
+            </button>
           )}
           {showPoints && task.story_points != null && (
             <span className="font-mono tabular-nums bg-muted/60 px-1.5 py-0.5 rounded text-[10px] text-muted-foreground shrink-0">
@@ -385,9 +309,7 @@ export function KanbanCard({
           {showAssignee && (
             <AssigneeStack
               task={task}
-              allUsers={allUsers}
-              onToggle={handleAssigneeToggle}
-              popoverProps={controlledPopoverProps("assignee")}
+              onOpenRequest={() => onEditorOpenRequest?.("assignee")}
             />
           )}
           {task.current_column_since && (
@@ -463,7 +385,14 @@ function BetChip({
       />
       <PopoverContent className="w-60 p-1" align="start">
         {open && (
-          <BetMenu current={bet} projectId={projectId} onSelect={onSelect} />
+          <BetMenu
+            current={bet}
+            projectId={projectId}
+            onSelect={(next) => {
+              onSelect(next);
+              setOpen(false);
+            }}
+          />
         )}
       </PopoverContent>
     </Popover>
@@ -498,16 +427,15 @@ function BetMenu({
         <button
           key={b.id}
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
+          onClick={() =>
             onSelect({
               id: b.id,
               name: b.name,
               color: b.color,
               status: b.status,
               period_start: b.period_start,
-            });
-          }}
+            })
+          }
           className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:bg-accent"
         >
           <Target className="size-3 shrink-0" style={{ color: b.color }} />
@@ -523,10 +451,7 @@ function BetMenu({
       {current && (
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelect(null);
-          }}
+          onClick={() => onSelect(null)}
           className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-muted-foreground hover:bg-accent"
         >
           Remove bet
@@ -562,22 +487,17 @@ function ProjectPill({ task }: { task: Task }) {
   );
 }
 
-/** Stacked avatars with a `+N` overflow bubble. Click opens the same
- *  assignee picker as the task panel; an empty stack shows a hover-reveal
+/** Stacked avatars with a `+N` overflow bubble. Click opens the assignee
+ *  PropertyPalette (see `onOpenRequest`); an empty stack shows a hover-reveal
  *  ghost avatar so the field stays reachable. */
 function AssigneeStack({
   task,
-  allUsers,
-  onToggle,
-  popoverProps,
+  onOpenRequest,
 }: {
   task: Task;
-  allUsers: User[];
-  onToggle: (id: number) => void;
-  /** Controlled `open`/`onOpenChange` pair from the parent card's
-   *  `controlledPopoverProps("assignee")` — empty object when this card
-   *  isn't the keyboard-selected one, so the Popover stays uncontrolled. */
-  popoverProps?: { open?: boolean; onOpenChange?: (open: boolean) => void };
+  /** Chip click → ask the card to open the assignee palette (bubbles up to
+   *  `onEditorOpenRequest` on `KanbanCard`). */
+  onOpenRequest?: () => void;
 }) {
   const VISIBLE = 3;
   const users = task.assignees;
@@ -586,59 +506,49 @@ function AssigneeStack({
   const singleName = users.length === 1 ? users[0].username : null;
 
   return (
-    <Popover {...popoverProps}>
-      <PopoverTrigger
-        render={
-          <button
-            type="button"
-            onClick={(e) => e.stopPropagation()}
-            aria-label="Edit assignees"
-            className="flex items-center gap-1.5 min-w-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
-          >
-            {users.length === 0 ? (
-              <span className="size-5 rounded-full border border-dashed border-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity grid place-items-center">
-                <UserPlus className="size-2.5 text-muted-foreground/60" />
-              </span>
-            ) : (
-              <div className="flex items-center -space-x-1.5">
-                {shown.map((u) => (
-                  <Tooltip key={u.id}>
-                    <TooltipTrigger
-                      render={
-                        <div className="ring-2 ring-card rounded-full">
-                          <UserAvatar
-                            username={u.username}
-                            avatarUrl={u.avatar_url}
-                            size="size-5"
-                          />
-                        </div>
-                      }
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpenRequest?.();
+      }}
+      aria-label="Edit assignees"
+      className="flex items-center gap-1.5 min-w-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+    >
+      {users.length === 0 ? (
+        <span className="size-5 rounded-full border border-dashed border-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity grid place-items-center">
+          <UserPlus className="size-2.5 text-muted-foreground/60" />
+        </span>
+      ) : (
+        <div className="flex items-center -space-x-1.5">
+          {shown.map((u) => (
+            <Tooltip key={u.id}>
+              <TooltipTrigger
+                render={
+                  <div className="ring-2 ring-card rounded-full">
+                    <UserAvatar
+                      username={u.username}
+                      avatarUrl={u.avatar_url}
+                      size="size-5"
                     />
-                    <TooltipContent>{u.username}</TooltipContent>
-                  </Tooltip>
-                ))}
-                {extra > 0 && (
-                  <div className="size-5 ring-2 ring-card rounded-full bg-muted text-[9px] font-semibold text-muted-foreground grid place-items-center">
-                    +{extra}
                   </div>
-                )}
-              </div>
-            )}
-            {singleName && (
-              <span className="text-[11px] text-muted-foreground truncate">
-                {singleName}
-              </span>
-            )}
-          </button>
-        }
-      />
-      <PopoverContent className="w-52 p-1" align="end">
-        <AssigneeCheckboxList
-          available={allUsers}
-          selected={users.map((u) => u.id)}
-          onToggle={onToggle}
-        />
-      </PopoverContent>
-    </Popover>
+                }
+              />
+              <TooltipContent>{u.username}</TooltipContent>
+            </Tooltip>
+          ))}
+          {extra > 0 && (
+            <div className="size-5 ring-2 ring-card rounded-full bg-muted text-[9px] font-semibold text-muted-foreground grid place-items-center">
+              +{extra}
+            </div>
+          )}
+        </div>
+      )}
+      {singleName && (
+        <span className="text-[11px] text-muted-foreground truncate">
+          {singleName}
+        </span>
+      )}
+    </button>
   );
 }

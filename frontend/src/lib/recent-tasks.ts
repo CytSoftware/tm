@@ -6,8 +6,8 @@ import type { Task } from "./types";
 
 /**
  * "Recent" is a small lightweight snapshot of the tasks the user has opened
- * recently. Used by GlobalSearch to show something useful before the user
- * types. We intentionally store a trimmed subset (not the full Task) so the
+ * recently. Used by the ⌘K command palette to show something useful before
+ * the user types. We intentionally store a trimmed subset (not the full Task) so the
  * list stays valid even if the task is later renamed/deleted — a stale entry
  * just shows stale text until the user clicks and the canonical record is
  * refetched by key.

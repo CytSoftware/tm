@@ -1,233 +1,375 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+/**
+ * Unified ⌘K palette — commands AND search in one overlay, mounted once in
+ * the Shell so it works on every page (open state lives in lib/palette.tsx).
+ *
+ * Sections:
+ *   - Task actions — when the board has a selected task (registered via
+ *     `usePalettePageContext`), move/priority/assign/label/open commands for
+ *     that task, headed by its key.
+ *   - Commands — create task (global), switch project / switch view, plus
+ *     whatever the active page registered (e.g. board's create project /
+ *     create label dialogs).
+ *   - Tasks / Projects — server task search + client project filter, with an
+ *     exact key match ("CYT-123") bubbled to the top.
+ *   - Recent — recently-opened tasks, shown while the query is empty.
+ *
+ * Keyboard: ↑/↓ navigate the flat list across sections, Enter runs, Esc
+ * closes. Typing filters commands (fuzzy) and searches tasks/projects.
+ */
+
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ArrowRight,
+  Clock,
+  FileText,
+  FolderKanban,
+  Search,
+  Terminal,
+} from "lucide-react";
 
 import { apiFetch } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { viewsKey } from "@/lib/query-keys";
+import { useActiveProject } from "@/lib/active-project";
+import { useTaskDialog } from "@/lib/task-dialog";
+import { usePalette, type PaletteAction } from "@/lib/palette";
+import { useRecentTasks, type RecentTask } from "@/lib/recent-tasks";
+import { useProjectsQuery } from "@/hooks/use-projects";
+import { useUsersQuery } from "@/hooks/use-users";
+import { useLabelsQuery } from "@/hooks/use-labels";
 import type {
+  Label,
+  Priority,
+  Project,
   Task,
   TaskListResponse,
-  Project,
-  User,
-  Label,
-  SavedView,
-  Priority,
+  ViewListResponse,
 } from "@/lib/types";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export type PaletteAction = {
-  id: string;
-  label: string;
-  /** Additional keywords for fuzzy matching */
-  keywords?: string;
-  handler: () => void;
-};
+import { cn } from "@/lib/utils";
 
 type Props = {
-  selectedTask: Task | null;
-  project: Project | undefined;
-  projects: Project[];
-  users: User[];
-  labels: Label[];
-  views: SavedView[];
+  open: boolean;
   onClose: () => void;
-  /** Callbacks the board page supplies */
-  onEditTask: (task: Task) => void;
-  onCreateTask: () => void;
-  onCreateProject: () => void;
-  onCreateLabel: () => void;
-  onSwitchProject: (id: number | null) => void;
-  onSwitchView: (id: number | null) => void;
 };
 
-// ---------------------------------------------------------------------------
-// Fuzzy match — every whitespace-separated word in query must appear
+type Entry =
+  | { kind: "task"; id: string; task: Task; exact?: boolean }
+  | { kind: "recent"; id: string; recent: RecentTask }
+  | { kind: "project"; id: string; project: Project }
+  | {
+      kind: "action";
+      id: string;
+      action: PaletteAction;
+      /** Which header the row sits under — task-scoped vs. global commands. */
+      group: "task" | "commands";
+    };
+
+// Task keys look like "ABC-123". Match loosely so partial-typing still
+// highlights the exact-match when the user types a full key.
+const TASK_KEY_REGEX = /^[a-z0-9]+-\d+$/i;
+
+const PRIORITY_COLORS: Record<Priority, string> = {
+  P1: "text-rose-600 dark:text-rose-400 border-rose-500/30 bg-rose-500/10",
+  P2: "text-orange-600 dark:text-orange-400 border-orange-500/30 bg-orange-500/10",
+  P3: "text-sky-600 dark:text-sky-400 border-sky-500/30 bg-sky-500/10",
+  P4: "text-muted-foreground border-border/60 bg-muted/60",
+};
+
+// Fuzzy match — every whitespace-separated word in the query must appear
 // somewhere in the target (case-insensitive).
-// ---------------------------------------------------------------------------
 function fuzzyMatch(query: string, target: string): boolean {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const lower = target.toLowerCase();
   return words.every((w) => lower.includes(w));
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+export function CommandPalette({ open, onClose }: Props) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const { setProjectId, setViewId } = useActiveProject();
+  const { openTask, openTaskByKey, createTask } = useTaskDialog();
+  const { pageContext } = usePalette();
+  const selectedTask = pageContext?.selectedTask ?? null;
 
-export function CommandPalette({
-  selectedTask,
-  project,
-  projects,
-  users,
-  labels,
-  views,
-  onClose,
-  onEditTask,
-  onCreateTask,
-  onCreateProject,
-  onCreateLabel,
-  onSwitchProject,
-  onSwitchView,
-}: Props) {
+  const projectsQuery = useProjectsQuery();
+  const allProjects: Project[] = useMemo(
+    () => (projectsQuery.data?.results ?? []).filter((p) => !p.archived),
+    [projectsQuery.data],
+  );
+  const usersQuery = useUsersQuery();
+  const labelsQuery = useLabelsQuery();
+  const viewsQuery = useQuery({
+    queryKey: viewsKey(),
+    queryFn: () => apiFetch<ViewListResponse>("/api/views/"),
+    enabled: open,
+  });
+
   const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  const [searchResults, setSearchResults] = useState<Task[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
-  const queryClient = useQueryClient();
 
-  // Focus the input on mount
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+  const recentTasks = useRecentTasks();
 
-  // Debounced task search
-  useEffect(() => {
-    if (selectedTask) {
-      // Don't search when in task-action mode
-      setSearchResults([]);
-      return;
+  // Reset the query/highlight whenever the palette (re)opens — done during
+  // render (the "store info from previous renders" pattern, same as
+  // Column.tsx's rename draft) so lint's no-sync-setState-in-effect rule
+  // stays happy and the reset lands in the same render pass.
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (prevOpen !== open) {
+    setPrevOpen(open);
+    if (open) {
+      setQuery("");
+      setDebounced("");
+      setActiveIndex(0);
     }
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    const trimmed = query.trim();
-    if (!trimmed || trimmed.length < 2) {
-      setSearchResults([]);
-      setIsSearching(false);
-      return;
-    }
-    setIsSearching(true);
-    searchTimerRef.current = setTimeout(async () => {
-      try {
-        const res = await apiFetch<TaskListResponse>(
-          `/api/tasks/?search=${encodeURIComponent(trimmed)}&limit=10`,
-        );
-        setSearchResults(res.results);
-      } catch {
-        setSearchResults([]);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 250);
-    return () => {
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    };
-  }, [query, selectedTask]);
+  }
 
-  // Helper: invalidate after mutations
+  // Focus the input on open — next tick so the input exists.
+  useEffect(() => {
+    if (!open) return;
+    const id = window.setTimeout(() => inputRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, [open]);
+
+  // Debounce the search query (200ms)
+  useEffect(() => {
+    if (!open) return;
+    const id = window.setTimeout(() => setDebounced(query.trim()), 200);
+    return () => window.clearTimeout(id);
+  }, [query, open]);
+
+  // Task search — disabled until the query has real content
+  const taskSearch = useQuery<TaskListResponse>({
+    queryKey: ["global-search", "tasks", debounced],
+    queryFn: () =>
+      apiFetch<TaskListResponse>(
+        `/api/tasks/?search=${encodeURIComponent(debounced)}&limit=10`,
+      ),
+    enabled: open && debounced.length >= 1,
+    staleTime: 10_000,
+  });
+
+  // Client-side project filter against the cached project list
+  const filteredProjects = useMemo<Project[]>(() => {
+    if (!debounced) return [];
+    const q = debounced.toLowerCase();
+    return allProjects
+      .filter((p) => {
+        const prefix = (p.prefix ?? "").toLowerCase();
+        const name = (p.name ?? "").toLowerCase();
+        return prefix.includes(q) || name.includes(q);
+      })
+      .slice(0, 5);
+  }, [debounced, allProjects]);
+
+  // Refetch everything a command may have touched. Command handlers hit the
+  // API directly (they don't go through the board's mutation hooks), so the
+  // palette owns cache invalidation for them.
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["tasks"] });
     queryClient.invalidateQueries({ queryKey: ["projects"] });
   }, [queryClient]);
 
-  // Build actions list
-  const actions: PaletteAction[] = useMemo(() => {
-    if (selectedTask) {
-      return buildTaskActions(
-        selectedTask,
-        project,
-        projects,
-        users,
-        labels,
-        invalidate,
-        onEditTask,
-        onClose,
-      );
-    }
-    return buildGlobalActions(
-      projects,
-      views,
-      onCreateTask,
-      onCreateProject,
-      onCreateLabel,
-      onSwitchProject,
-      onSwitchView,
-      onClose,
+  // Task-scoped commands for the board's selected task.
+  const taskActions = useMemo<PaletteAction[]>(() => {
+    if (!selectedTask) return [];
+    return buildTaskActions(
+      selectedTask,
+      allProjects,
+      usersQuery.data ?? [],
+      labelsQuery.data ?? [],
+      invalidate,
+      openTask,
     );
   }, [
     selectedTask,
-    project,
-    projects,
-    users,
-    labels,
-    views,
+    allProjects,
+    usersQuery.data,
+    labelsQuery.data,
     invalidate,
-    onEditTask,
-    onCreateTask,
-    onCreateProject,
-    onCreateLabel,
-    onSwitchProject,
-    onSwitchView,
-    onClose,
+    openTask,
   ]);
 
-  // Build search result actions
-  const searchActions: PaletteAction[] = useMemo(() => {
-    return searchResults.map((t) => ({
-      id: `search-task-${t.id}`,
-      label: `${t.key} — ${t.title}`,
-      keywords: t.project_name ?? "",
-      handler: () => {
-        onClose();
-        onEditTask(t);
+  // Global commands + whatever the active page registered.
+  const globalActions = useMemo<PaletteAction[]>(() => {
+    const actions: PaletteAction[] = [
+      {
+        id: "create-task",
+        label: "Create task",
+        keywords: "new add task",
+        handler: () => createTask({ columnId: null }),
       },
-    }));
-  }, [searchResults, onClose, onEditTask]);
+      ...(pageContext?.extraActions ?? []),
+      {
+        id: "switch-project-all",
+        label: "Switch project → All projects",
+        keywords: "switch project all",
+        handler: () => {
+          setProjectId(null);
+          router.push("/board");
+        },
+      },
+    ];
+    for (const p of allProjects) {
+      actions.push({
+        id: `switch-project-${p.id}`,
+        label: `Switch project → ${p.name}`,
+        keywords: "switch project",
+        handler: () => {
+          setProjectId(p.id);
+          router.push("/board");
+        },
+      });
+    }
+    for (const v of viewsQuery.data?.results ?? []) {
+      actions.push({
+        id: `switch-view-${v.id}`,
+        label: `Switch view → ${v.name}`,
+        keywords: "switch view",
+        handler: () => {
+          setViewId(v.id);
+          router.push("/board");
+        },
+      });
+    }
+    return actions;
+  }, [
+    pageContext?.extraActions,
+    allProjects,
+    viewsQuery.data,
+    createTask,
+    setProjectId,
+    setViewId,
+    router,
+  ]);
 
-  // Filter by query — combine command actions + search results
-  const filtered = useMemo(() => {
-    const commandActions = !query.trim()
-      ? actions
-      : actions.filter((a) => fuzzyMatch(query, a.label + " " + (a.keywords ?? "")));
-    if (searchActions.length === 0) return commandActions;
-    return [...searchActions, ...commandActions];
-  }, [actions, searchActions, query]);
+  const entries = useMemo<Entry[]>(() => {
+    const out: Entry[] = [];
+    const matchesQuery = (a: PaletteAction) =>
+      !debounced || fuzzyMatch(debounced, a.label + " " + (a.keywords ?? ""));
 
-  // Clamp active index when filtered list changes
-  useEffect(() => {
+    if (debounced) {
+      // Search results first — exact key match bubbles to the top.
+      const tasks = taskSearch.data?.results ?? [];
+      const qUpper = debounced.toUpperCase();
+      const exactTask = TASK_KEY_REGEX.test(debounced)
+        ? tasks.find((t) => t.key.toUpperCase() === qUpper)
+        : undefined;
+      if (exactTask) {
+        out.push({
+          kind: "task",
+          id: `task-${exactTask.id}`,
+          task: exactTask,
+          exact: true,
+        });
+      }
+      for (const t of tasks) {
+        if (t.id === exactTask?.id) continue;
+        out.push({ kind: "task", id: `task-${t.id}`, task: t });
+      }
+      for (const p of filteredProjects) {
+        out.push({ kind: "project", id: `project-${p.id}`, project: p });
+      }
+    }
+
+    for (const a of taskActions) {
+      if (!matchesQuery(a)) continue;
+      out.push({ kind: "action", id: a.id, action: a, group: "task" });
+    }
+    for (const a of globalActions) {
+      if (!matchesQuery(a)) continue;
+      out.push({ kind: "action", id: a.id, action: a, group: "commands" });
+    }
+
+    if (!debounced) {
+      for (const r of recentTasks) {
+        out.push({ kind: "recent", id: `recent-${r.id}`, recent: r });
+      }
+    }
+    return out;
+  }, [
+    debounced,
+    taskSearch.data,
+    filteredProjects,
+    taskActions,
+    globalActions,
+    recentTasks,
+  ]);
+
+  // Reset the highlight to the top whenever the query changes — during
+  // render, same pattern as the open reset above.
+  const [prevDebounced, setPrevDebounced] = useState(debounced);
+  if (prevDebounced !== debounced) {
+    setPrevDebounced(debounced);
     setActiveIndex(0);
-  }, [filtered.length, query]);
+  }
 
-  // Scroll active item into view
+  // The raw index can point past the end after entries shrink (e.g. search
+  // results arriving); clamp at read time instead of chasing it with state.
+  const clampedIndex =
+    entries.length === 0 ? 0 : Math.min(activeIndex, entries.length - 1);
+
+  // Scroll the active row into view
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
-    const activeEl = list.children[activeIndex] as HTMLElement | undefined;
-    activeEl?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex]);
+    const row = list.querySelector<HTMLElement>(
+      `[data-result-index="${clampedIndex}"]`,
+    );
+    row?.scrollIntoView({ block: "nearest" });
+  }, [clampedIndex]);
 
-  // Execute action
-  const execute = useCallback(
-    (action: PaletteAction) => {
-      action.handler();
+  const executeEntry = useCallback(
+    (entry: Entry) => {
+      onClose();
+      if (entry.kind === "task") {
+        openTask(entry.task);
+      } else if (entry.kind === "recent") {
+        // The cached snapshot may be stale — refetch by key so labels,
+        // description, etc. reflect the current state.
+        void openTaskByKey(entry.recent.key);
+      } else if (entry.kind === "project") {
+        setProjectId(entry.project.id);
+        setViewId(null);
+        router.push("/board");
+      } else {
+        entry.action.handler();
+      }
     },
-    [],
+    [onClose, openTask, openTaskByKey, setProjectId, setViewId, router],
   );
 
-  // Keyboard navigation within the palette
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
-          setActiveIndex((i) => Math.min(i + 1, filtered.length - 1));
+          setActiveIndex(
+            entries.length === 0
+              ? 0
+              : Math.min(clampedIndex + 1, entries.length - 1),
+          );
           break;
         case "ArrowUp":
           e.preventDefault();
-          setActiveIndex((i) => Math.max(i - 1, 0));
+          setActiveIndex(Math.max(clampedIndex - 1, 0));
           break;
         case "Enter":
           e.preventDefault();
           e.stopPropagation();
-          if (filtered[activeIndex]) {
-            execute(filtered[activeIndex]);
-          }
+          if (entries[clampedIndex]) executeEntry(entries[clampedIndex]);
           break;
         case "Escape":
           e.preventDefault();
@@ -236,21 +378,31 @@ export function CommandPalette({
           break;
       }
     },
-    [filtered, activeIndex, execute, onClose],
+    [entries, clampedIndex, executeEntry, onClose],
   );
 
+  if (!open) return null;
+
+  const isSearching = debounced.length > 0 && taskSearch.isFetching;
+  const showEmptyState = !isSearching && entries.length === 0;
+
   return (
-    <div className="fixed inset-0 z-50" onKeyDown={handleKeyDown}>
+    <div
+      className="fixed inset-0 z-[60]"
+      onKeyDown={handleKeyDown}
+      role="dialog"
+      aria-label="Command palette"
+    >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/20 supports-backdrop-filter:backdrop-blur-xs"
+        className="absolute inset-0 bg-black/30 supports-backdrop-filter:backdrop-blur-sm"
         onClick={onClose}
       />
 
-      {/* Palette */}
-      <div className="absolute top-[20%] left-1/2 -translate-x-1/2 w-full max-w-lg mx-auto">
+      {/* Dialog */}
+      <div className="absolute top-[12%] left-1/2 -translate-x-1/2 w-full max-w-xl mx-auto px-4">
         <div className="rounded-xl border border-border bg-popover text-popover-foreground shadow-2xl ring-1 ring-foreground/5 overflow-hidden">
-          {/* Search input */}
+          {/* Input row */}
           <div className="flex items-center gap-2 px-3 border-b border-border/60">
             <Search className="size-4 text-muted-foreground shrink-0" />
             <input
@@ -259,66 +411,129 @@ export function CommandPalette({
               onChange={(e) => setQuery(e.target.value)}
               placeholder={
                 selectedTask
-                  ? `Actions for ${selectedTask.key}...`
-                  : "Type a command..."
+                  ? `Search, or act on ${selectedTask.key}…`
+                  : "Search tasks, projects… or type a command"
               }
-              className="flex-1 h-11 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              className="flex-1 h-12 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              spellCheck={false}
+              autoComplete="off"
             />
-            <kbd className="hidden sm:inline-flex items-center text-[10px] font-mono text-muted-foreground/60 border border-border/60 rounded px-1 py-0.5">
+            <kbd className="hidden sm:inline-flex items-center text-[10px] font-mono text-muted-foreground/60 border border-border/60 rounded px-1 py-0.5 shrink-0">
               ESC
             </kbd>
           </div>
 
-          {/* Action list */}
-          <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
-            {filtered.length === 0 && !isSearching ? (
-              <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                No matching actions
+          {/* Results */}
+          <div ref={listRef} className="max-h-[60vh] overflow-y-auto py-1">
+            {entries.map((entry, i) => {
+              const active = i === clampedIndex;
+              const firstOfKind = (pred: (e: Entry) => boolean) =>
+                pred(entry) && entries.findIndex(pred) === i;
+              const isFirstTask = firstOfKind((e) => e.kind === "task");
+              const isFirstProject = firstOfKind((e) => e.kind === "project");
+              const isFirstRecent = firstOfKind((e) => e.kind === "recent");
+              const isFirstTaskAction = firstOfKind(
+                (e) => e.kind === "action" && e.group === "task",
+              );
+              const isFirstCommand = firstOfKind(
+                (e) => e.kind === "action" && e.group === "commands",
+              );
+
+              return (
+                <div key={entry.id}>
+                  {isFirstTask && (
+                    <SectionHeader
+                      icon={<FileText className="size-3" />}
+                      label="Tasks"
+                    />
+                  )}
+                  {isFirstProject && (
+                    <SectionHeader
+                      icon={<FolderKanban className="size-3" />}
+                      label="Projects"
+                    />
+                  )}
+                  {isFirstTaskAction && (
+                    <SectionHeader
+                      icon={<Terminal className="size-3" />}
+                      label={selectedTask ? selectedTask.key : "Task"}
+                    />
+                  )}
+                  {isFirstCommand && (
+                    <SectionHeader
+                      icon={<Terminal className="size-3" />}
+                      label="Commands"
+                    />
+                  )}
+                  {isFirstRecent && (
+                    <SectionHeader
+                      icon={<Clock className="size-3" />}
+                      label="Recent"
+                    />
+                  )}
+
+                  <button
+                    type="button"
+                    data-result-index={i}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2 text-left text-[13px] transition-colors cursor-pointer group",
+                      active
+                        ? "bg-accent text-accent-foreground"
+                        : "text-foreground hover:bg-accent/50",
+                    )}
+                    onMouseEnter={() => setActiveIndex(i)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      executeEntry(entry);
+                    }}
+                  >
+                    {entry.kind === "task" && (
+                      <TaskRow task={entry.task} exact={entry.exact} />
+                    )}
+                    {entry.kind === "recent" && (
+                      <RecentRow recent={entry.recent} />
+                    )}
+                    {entry.kind === "project" && (
+                      <ProjectRow project={entry.project} />
+                    )}
+                    {entry.kind === "action" && (
+                      <span className="truncate flex-1">
+                        {entry.action.label}
+                      </span>
+                    )}
+                    {active && (
+                      <ArrowRight className="size-3.5 text-muted-foreground/70 shrink-0" />
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+
+            {isSearching && (
+              <div className="px-3 py-2 text-[12px] text-muted-foreground">
+                Searching…
               </div>
-            ) : (
-              <>
-                {filtered.map((action, i) => {
-                  const isFirstSearchResult = i === 0 && searchActions.length > 0;
-                  const isFirstCommand =
-                    searchActions.length > 0 && i === searchActions.length;
-                  return (
-                    <div key={action.id}>
-                      {isFirstSearchResult && (
-                        <div className="px-3 pt-1 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
-                          Tasks
-                        </div>
-                      )}
-                      {isFirstCommand && (
-                        <div className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
-                          Commands
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        className={cn(
-                          "w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] transition-colors cursor-pointer",
-                          i === activeIndex
-                            ? "bg-accent text-accent-foreground"
-                            : "text-foreground hover:bg-accent/50",
-                        )}
-                        onMouseEnter={() => setActiveIndex(i)}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          execute(action);
-                        }}
-                      >
-                        <span className="truncate">{action.label}</span>
-                      </button>
-                    </div>
-                  );
-                })}
-                {isSearching && (
-                  <div className="px-3 py-2 text-[12px] text-muted-foreground">
-                    Searching tasks...
-                  </div>
-                )}
-              </>
             )}
+
+            {showEmptyState && (
+              <div className="px-3 py-10 text-center text-[13px] text-muted-foreground">
+                {debounced ? (
+                  <>
+                    No matches for{" "}
+                    <span className="font-medium">{debounced}</span>
+                  </>
+                ) : (
+                  "Type to search tasks and projects"
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Footer hints */}
+          <div className="flex items-center gap-3 px-3 h-8 border-t border-border/60 bg-muted/30 text-[11px] text-muted-foreground">
+            <Hint keys={["↑", "↓"]} label="navigate" />
+            <Hint keys={["↵"]} label="run" />
+            <Hint keys={["esc"]} label="close" />
           </div>
         </div>
       </div>
@@ -326,45 +541,154 @@ export function CommandPalette({
   );
 }
 
+function SectionHeader({
+  icon,
+  label,
+}: {
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+      {icon}
+      {label}
+    </div>
+  );
+}
+
+function Hint({ keys, label }: { keys: string[]; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {keys.map((k) => (
+        <kbd
+          key={k}
+          className="inline-flex items-center justify-center min-w-4 px-1 py-0.5 rounded border border-border/60 bg-muted font-mono text-[10px]"
+        >
+          {k}
+        </kbd>
+      ))}
+      {label}
+    </span>
+  );
+}
+
+function TaskRow({ task, exact }: { task: Task; exact?: boolean }) {
+  return (
+    <>
+      {task.project_color ? (
+        <span
+          className="size-2 rounded-full shrink-0"
+          style={{ background: task.project_color }}
+          aria-hidden
+        />
+      ) : (
+        <span className="size-2 rounded-full shrink-0 bg-muted-foreground/30" />
+      )}
+      <span className="font-mono text-[11px] text-muted-foreground shrink-0 w-16 truncate">
+        {task.key}
+      </span>
+      <span className="truncate flex-1">{task.title}</span>
+      {exact && (
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">
+          Exact
+        </span>
+      )}
+      {task.priority && (
+        <span
+          className={cn(
+            "shrink-0 text-[10px] font-medium border rounded px-1.5 py-0.5 font-mono",
+            PRIORITY_COLORS[task.priority],
+          )}
+        >
+          {task.priority}
+        </span>
+      )}
+    </>
+  );
+}
+
+function RecentRow({ recent }: { recent: RecentTask }) {
+  return (
+    <>
+      {recent.project_color ? (
+        <span
+          className="size-2 rounded-full shrink-0"
+          style={{ background: recent.project_color }}
+          aria-hidden
+        />
+      ) : (
+        <span className="size-2 rounded-full shrink-0 bg-muted-foreground/30" />
+      )}
+      <span className="font-mono text-[11px] text-muted-foreground shrink-0 w-16 truncate">
+        {recent.key}
+      </span>
+      <span className="truncate flex-1">{recent.title}</span>
+      {recent.priority && (
+        <span
+          className={cn(
+            "shrink-0 text-[10px] font-medium border rounded px-1.5 py-0.5 font-mono",
+            PRIORITY_COLORS[recent.priority],
+          )}
+        >
+          {recent.priority}
+        </span>
+      )}
+    </>
+  );
+}
+
+function ProjectRow({ project }: { project: Project }) {
+  return (
+    <>
+      <span
+        className="size-2 rounded-full shrink-0"
+        style={{ background: project.color ?? "#6366f1" }}
+        aria-hidden
+      />
+      <span className="font-mono text-[11px] text-muted-foreground shrink-0 w-16 truncate">
+        {project.prefix}
+      </span>
+      <span className="truncate flex-1">{project.name}</span>
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Action builders
+// Task-scoped command builder
 // ---------------------------------------------------------------------------
 
-const COLUMNS = ["Backlog", "Todo", "In Progress", "In Review", "Done"];
-const PRIORITIES: { value: Priority; label: string }[] = [
-  { value: "P1", label: "P1" },
-  { value: "P2", label: "P2" },
-  { value: "P3", label: "P3" },
-  { value: "P4", label: "P4" },
-];
-
+/** Commands for the board's selected task. Handlers do NOT close the palette
+ *  themselves — `executeEntry` closes before running, so these only perform
+ *  the mutation (+ cache invalidation via the shared `invalidate`). */
 function buildTaskActions(
   task: Task,
-  project: Project | undefined,
   projects: Project[],
-  users: User[],
+  users: { id: number; username: string }[],
   labels: Label[],
   invalidate: () => void,
-  onEditTask: (task: Task) => void,
-  onClose: () => void,
+  openTask: (task: Task) => void,
 ): PaletteAction[] {
   const actions: PaletteAction[] = [];
 
-  // Determine columns available for the task's project
+  actions.push({
+    id: "open-task",
+    label: `Open ${task.key}`,
+    keywords: "open show edit task",
+    handler: () => openTask(task),
+  });
+
+  // Move to → column
   const taskProject = projects.find((p) => p.id === task.project);
   const availableColumns = taskProject
     ? taskProject.columns.slice().sort((a, b) => a.order - b.order)
     : [];
-
-  // Move to → column
   for (const col of availableColumns) {
-    if (col.id === task.column?.id) continue; // skip current column
+    if (col.id === task.column?.id) continue;
     actions.push({
       id: `move-${col.id}`,
-      label: `Move to \u2192 ${col.name}`,
+      label: `Move to → ${col.name}`,
       keywords: "move column status",
       handler: async () => {
-        onClose();
         await apiFetch(`/api/tasks/${task.key}/move/`, {
           method: "POST",
           body: { column_id: col.id },
@@ -375,17 +699,16 @@ function buildTaskActions(
   }
 
   // Set priority
-  for (const p of PRIORITIES) {
-    if (task.priority === p.value) continue;
+  for (const p of ["P1", "P2", "P3", "P4"] as const) {
+    if (task.priority === p) continue;
     actions.push({
-      id: `priority-${p.value}`,
-      label: `Set priority \u2192 ${p.label}`,
+      id: `priority-${p}`,
+      label: `Set priority → ${p}`,
       keywords: "priority",
       handler: async () => {
-        onClose();
         await apiFetch(`/api/tasks/${task.key}/`, {
           method: "PATCH",
-          body: { priority: p.value },
+          body: { priority: p },
         });
         invalidate();
       },
@@ -397,7 +720,6 @@ function buildTaskActions(
       label: "Clear priority",
       keywords: "priority clear remove none",
       handler: async () => {
-        onClose();
         await apiFetch(`/api/tasks/${task.key}/`, {
           method: "PATCH",
           body: { priority: null },
@@ -414,11 +736,10 @@ function buildTaskActions(
     actions.push({
       id: `assign-${u.id}`,
       label: isAssigned
-        ? `Unassign \u2192 ${u.username}`
-        : `Add assignee \u2192 ${u.username}`,
+        ? `Unassign → ${u.username}`
+        : `Add assignee → ${u.username}`,
       keywords: "assign user",
       handler: async () => {
-        onClose();
         const next = isAssigned
           ? [...currentAssigneeIds].filter((id) => id !== u.id)
           : [...currentAssigneeIds, u.id];
@@ -431,7 +752,7 @@ function buildTaskActions(
     });
   }
 
-  // Add label — only show labels that are global or belong to the task's project
+  // Add label — only labels that are global or belong to the task's project
   const currentLabelIds = new Set(task.labels.map((l) => l.id));
   const validLabels = labels.filter(
     (l) => !l.project || l.project === task.project,
@@ -440,10 +761,9 @@ function buildTaskActions(
     if (currentLabelIds.has(l.id)) continue;
     actions.push({
       id: `label-${l.id}`,
-      label: `Add label \u2192 ${l.name}`,
+      label: `Add label → ${l.name}`,
       keywords: "label tag",
       handler: async () => {
-        onClose();
         await apiFetch(`/api/tasks/${task.key}/`, {
           method: "PATCH",
           body: { label_ids: [...Array.from(currentLabelIds), l.id] },
@@ -453,179 +773,23 @@ function buildTaskActions(
     });
   }
 
-  // Change project
+  // Change project — moves to the first column of the target project.
   for (const p of projects) {
     if (p.id === task.project) continue;
     actions.push({
       id: `change-project-${p.id}`,
-      label: `Change project \u2192 ${p.name}`,
+      label: `Change project → ${p.name}`,
       keywords: "project move",
       handler: async () => {
-        onClose();
-        // Move to first column of the target project
         const targetCol = p.columns
           .slice()
           .sort((a, b) => a.order - b.order)[0];
-        if (targetCol) {
-          await apiFetch(`/api/tasks/${task.key}/move/`, {
-            method: "POST",
-            body: { column_id: targetCol.id },
-          });
-          invalidate();
-        }
-      },
-    });
-  }
-
-  // Set story points
-  for (const pts of [1, 2, 3, 5, 8, 13, 21]) {
-    if (task.story_points === pts) continue;
-    actions.push({
-      id: `points-${pts}`,
-      label: `Set points \u2192 ${pts}`,
-      keywords: "story points estimate",
-      handler: async () => {
-        onClose();
-        await apiFetch(`/api/tasks/${task.key}/`, {
-          method: "PATCH",
-          body: { story_points: pts },
+        if (!targetCol) return;
+        await apiFetch(`/api/tasks/${task.key}/move/`, {
+          method: "POST",
+          body: { column_id: targetCol.id },
         });
         invalidate();
-      },
-    });
-  }
-
-  // Set deadline
-  const deadlineOptions = [
-    { label: "Today", days: 0 },
-    { label: "Tomorrow", days: 1 },
-    { label: "In 3 days", days: 3 },
-    { label: "In 1 week", days: 7 },
-    { label: "In 2 weeks", days: 14 },
-    { label: "In 1 month", days: 30 },
-    { label: "No deadline", days: -1 },
-  ];
-  for (const opt of deadlineOptions) {
-    actions.push({
-      id: `deadline-${opt.days}`,
-      label: `Set deadline \u2192 ${opt.label}`,
-      keywords: "deadline due date",
-      handler: async () => {
-        onClose();
-        const due_at =
-          opt.days === -1
-            ? null
-            : new Date(
-                Date.now() + opt.days * 24 * 60 * 60 * 1000,
-              ).toISOString();
-        await apiFetch(`/api/tasks/${task.key}/`, {
-          method: "PATCH",
-          body: { due_at },
-        });
-        invalidate();
-      },
-    });
-  }
-
-  // Edit task
-  actions.push({
-    id: "edit",
-    label: "Edit task",
-    keywords: "edit open detail",
-    handler: () => {
-      onClose();
-      onEditTask(task);
-    },
-  });
-
-  // Delete task
-  actions.push({
-    id: "delete",
-    label: "Delete task",
-    keywords: "delete remove",
-    handler: async () => {
-      onClose();
-      await apiFetch(`/api/tasks/${task.key}/`, { method: "DELETE" });
-      invalidate();
-    },
-  });
-
-  return actions;
-}
-
-function buildGlobalActions(
-  projects: Project[],
-  views: SavedView[],
-  onCreateTask: () => void,
-  onCreateProject: () => void,
-  onCreateLabel: () => void,
-  onSwitchProject: (id: number | null) => void,
-  onSwitchView: (id: number | null) => void,
-  onClose: () => void,
-): PaletteAction[] {
-  const actions: PaletteAction[] = [];
-
-  actions.push({
-    id: "create-task",
-    label: "Create task",
-    keywords: "new add task",
-    handler: () => {
-      onClose();
-      onCreateTask();
-    },
-  });
-
-  actions.push({
-    id: "create-project",
-    label: "Create project",
-    keywords: "new add project",
-    handler: () => {
-      onClose();
-      onCreateProject();
-    },
-  });
-
-  actions.push({
-    id: "create-label",
-    label: "Create label",
-    keywords: "new add label tag",
-    handler: () => {
-      onClose();
-      onCreateLabel();
-    },
-  });
-
-  // Switch project
-  actions.push({
-    id: "switch-project-all",
-    label: "Switch project \u2192 All projects",
-    keywords: "switch project all",
-    handler: () => {
-      onClose();
-      onSwitchProject(null);
-    },
-  });
-  for (const p of projects) {
-    actions.push({
-      id: `switch-project-${p.id}`,
-      label: `Switch project \u2192 ${p.name}`,
-      keywords: "switch project",
-      handler: () => {
-        onClose();
-        onSwitchProject(p.id);
-      },
-    });
-  }
-
-  // Switch view
-  for (const v of views) {
-    actions.push({
-      id: `switch-view-${v.id}`,
-      label: `Switch view \u2192 ${v.name}`,
-      keywords: "switch view",
-      handler: () => {
-        onClose();
-        onSwitchView(v.id);
       },
     });
   }
