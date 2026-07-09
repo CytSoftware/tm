@@ -342,26 +342,31 @@ type InfiniteSnapshot = Array<
   [readonly unknown[], InfiniteData<TaskListResponse> | undefined]
 >;
 
-/** Remove a task by id from every ``tasks-infinite`` cache. */
+/** Remove a task by id from every ``tasks-infinite`` cache. Also decrements
+ *  each page's ``count`` so the column header counter (which reads
+ *  ``pages[0].count``, not the flattened results length) stays in sync. */
 function removeTaskFromInfiniteCaches(qc: QueryClient, taskId: number) {
   const caches = qc.getQueriesData<InfiniteData<TaskListResponse>>({
     queryKey: ["tasks-infinite"],
   }) as InfiniteSnapshot;
   for (const [queryKey, data] of caches) {
     if (!data) continue;
-    let changed = false;
+    let removed = 0;
     const newPages = data.pages.map((page) => {
       const filtered = page.results.filter((t) => t.id !== taskId);
       if (filtered.length !== page.results.length) {
-        changed = true;
+        removed += page.results.length - filtered.length;
         return { ...page, results: filtered };
       }
       return page;
     });
-    if (changed) {
+    if (removed > 0) {
       qc.setQueryData<InfiniteData<TaskListResponse>>(queryKey, {
         ...data,
-        pages: newPages,
+        pages: newPages.map((page) => ({
+          ...page,
+          count: Math.max(0, page.count - removed),
+        })),
       });
     }
   }
@@ -415,7 +420,9 @@ function insertTaskIntoMatchingCaches(qc: QueryClient, task: Task) {
         pageIdx === data.pages.length - 1
           ? reordered.length
           : start + pageSizes[pageIdx];
-      return { ...page, results: reordered.slice(start, end) };
+      // Bump each page's ``count`` so the column header counter (which reads
+      // ``pages[0].count``) reflects the inserted card immediately.
+      return { ...page, count: page.count + 1, results: reordered.slice(start, end) };
     });
 
     qc.setQueryData<InfiniteData<TaskListResponse>>(queryKey, {
