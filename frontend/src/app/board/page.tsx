@@ -51,11 +51,11 @@ import {
 import { AddColumnCell, CollapsedColumn, KanbanColumn } from "@/components/kanban/Column";
 import { DeleteColumnDialog } from "@/components/kanban/DeleteColumnDialog";
 import { KanbanCard, type EditorKind } from "@/components/kanban/Card";
+import { PropertyPalette } from "@/components/board/PropertyPalette";
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import { LabelManager } from "@/components/label/LabelManager";
 import { RecurringManager } from "@/components/recurring/RecurringManager";
 import { ListView } from "@/components/list/ListView";
-import { CommandPalette } from "@/components/CommandPalette";
 import { DeclutterDialog } from "@/components/declutter/DeclutterDialog";
 import { AssignDialog } from "@/components/declutter/AssignDialog";
 import {
@@ -73,6 +73,11 @@ import { ViewSwitcher } from "@/components/views/ViewSwitcher";
 import { apiFetch } from "@/lib/api";
 import { viewsKey } from "@/lib/query-keys";
 import { useActiveProject } from "@/lib/active-project";
+import {
+  usePalette,
+  usePalettePageContext,
+  type PaletteAction,
+} from "@/lib/palette";
 import { useTaskDialog } from "@/lib/task-dialog";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import {
@@ -369,13 +374,25 @@ export default function BoardPage() {
   const [labelManagerOpen, setLabelManagerOpen] = useState(false);
   const [recurringManagerOpen, setRecurringManagerOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
-  // Which of the selected card's chip popovers the keyboard has forced open
-  // (`p`/`a`/`l` — see the keyboard effect below). Passed down to exactly one
-  // <KanbanCard> (the selected one) so its Popovers become controlled; every
-  // other card's Popovers stay fully uncontrolled.
+  // Which property PropertyPalette is open for the selected task — forced
+  // open by the keyboard (`p`/`a`/`l` — see the keyboard effect below) or
+  // opened from a chip click via handleEditorOpenRequest. Rendered once at
+  // the page level (see the JSX below), not per-card — see PropertyPalette.
   const [openEditor, setOpenEditor] = useState<EditorKind | null>(null);
+  // Chip click on any card → select that card and open the matching palette,
+  // so the palette behaves identically whether opened by click or keyboard.
+  const handleEditorOpenRequest = useCallback(
+    (taskId: number, kind: EditorKind) => {
+      setSelectedTaskId(taskId);
+      setOpenEditor(kind);
+    },
+    [],
+  );
   const [helpOpen, setHelpOpen] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Unified ⌘K palette open state — owned by PaletteContext (the Shell
+  // mounts the palette and binds ⌘K); the board only reads it to keep its
+  // own keydown handler quiet while the palette is up.
+  const { open: paletteOpen } = usePalette();
   const [declutterOpen, setDeclutterOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [columnPendingDelete, setColumnPendingDelete] =
@@ -458,6 +475,34 @@ export default function BoardPage() {
     }
     return null;
   }, [selectedTaskId, tasksByColumn]);
+
+  // Contribute board context to the shell-mounted ⌘K palette: the selected
+  // task (unlocks task-scoped commands) and the commands that need
+  // board-mounted dialogs. Everything else the palette needs (projects,
+  // users, labels, views, project/view switching) it sources globally.
+  const paletteExtraActions = useMemo<PaletteAction[]>(
+    () => [
+      {
+        id: "create-project",
+        label: "Create project",
+        keywords: "new add project",
+        handler: () => setCreateProjectOpen(true),
+      },
+      {
+        id: "create-label",
+        label: "Create label",
+        keywords: "new add label tag",
+        handler: () => setLabelManagerOpen(true),
+      },
+    ],
+    [],
+  );
+  usePalettePageContext(
+    useMemo(
+      () => ({ selectedTask, extraActions: paletteExtraActions }),
+      [selectedTask, paletteExtraActions],
+    ),
+  );
 
   // Resolve the currently-dragged task up here so any column can render it
   // as a ghost in its preview slot — the destination column's own query
@@ -611,9 +656,9 @@ export default function BoardPage() {
       });
     }
 
-    /** Selecting a task (or deselecting) always drops any keyboard-forced
-     *  popover — otherwise `openEditor` could keep pointing at a chip on a
-     *  card that's no longer selected. */
+    /** Selecting a task (or deselecting) always closes any open
+     *  PropertyPalette — otherwise `openEditor` could keep editing a task
+     *  that's no longer selected. */
     function selectTask(id: number | null) {
       setOpenEditor(null);
       setSelectedTaskId(id);
@@ -630,10 +675,8 @@ export default function BoardPage() {
         return;
       }
 
-      // Skip when palette, a dialog, or a keyboard-forced chip popover is
-      // open — while a popover is open its own Escape/outside-click dismiss
-      // logic owns the keyboard, and we don't want e.g. arrow keys changing
-      // the selection out from under it.
+      // Skip when the command palette or a dialog is open — those own the
+      // keyboard entirely while visible.
       if (
         paletteOpen ||
         taskDialog.isOpen ||
@@ -641,11 +684,20 @@ export default function BoardPage() {
         labelManagerOpen ||
         recurringManagerOpen ||
         declutterOpen ||
-        helpOpen ||
-        openEditor !== null
+        helpOpen
       ) {
         return;
       }
+
+      const noModifiers = !e.metaKey && !e.ctrlKey && !e.altKey;
+
+      // While the PropertyPalette is open, its filter input holds focus —
+      // the input/textarea/contenteditable check at the top of this handler
+      // already makes the board's own keydown inert whenever that's true.
+      // This early return just covers the frame before focus lands (or if
+      // it's ever lost): the board stops handling keys entirely and leaves
+      // Escape/digits/etc to the palette itself (see PropertyPalette).
+      if (openEditor !== null) return;
 
       // Only handle in board view
       if (viewKind !== "board") return;
@@ -658,7 +710,6 @@ export default function BoardPage() {
       // Modifier held (Cmd, or Alt as an alias) + arrow → move/reorder the
       // selected task instead of just changing the selection.
       const moveModifier = e.metaKey || e.altKey;
-      const noModifiers = !e.metaKey && !e.ctrlKey && !e.altKey;
 
       switch (e.key) {
         case "ArrowDown": {
@@ -769,11 +820,6 @@ export default function BoardPage() {
         case "Escape": {
           e.preventDefault();
           selectTask(null);
-          break;
-        }
-        case " ": {
-          e.preventDefault();
-          setPaletteOpen(true);
           break;
         }
         case "0":
@@ -1108,8 +1154,7 @@ export default function BoardPage() {
                 isAllProjects={isAllProjects}
                 cardDisplay={cardDisplay}
                 selectedTaskId={selectedTaskId}
-                openEditor={openEditor}
-                onOpenEditorChange={setOpenEditor}
+                onEditorOpenRequest={handleEditorOpenRequest}
                 onTasksChange={onColumnTasksChange}
                 onAddTask={
                   project
@@ -1225,21 +1270,11 @@ export default function BoardPage() {
           onClose={() => setRecurringManagerOpen(false)}
         />
       )}
-      {paletteOpen && (
-        <CommandPalette
-          selectedTask={selectedTask}
-          project={project}
-          projects={projects}
-          users={allUsers}
-          labels={allLabels}
-          views={viewsQuery.data?.results ?? []}
-          onClose={() => setPaletteOpen(false)}
-          onEditTask={(task) => taskDialog.openTask(task)}
-          onCreateTask={() => taskDialog.createTask({ columnId: null })}
-          onCreateProject={() => setCreateProjectOpen(true)}
-          onCreateLabel={() => setLabelManagerOpen(true)}
-          onSwitchProject={(id) => setProjectId(id)}
-          onSwitchView={(id) => setViewId(id)}
+      {openEditor && selectedTask && (
+        <PropertyPalette
+          task={selectedTask}
+          kind={openEditor}
+          onClose={() => setOpenEditor(null)}
         />
       )}
       <DeclutterDialog
@@ -1263,8 +1298,8 @@ export default function BoardPage() {
 const SHORTCUT_ROWS: { keys: string[]; description: string }[] = [
   { keys: ["↑", "↓", "←", "→"], description: "Move selection" },
   { keys: ["Enter"], description: "Open selected task" },
-  { keys: ["Esc"], description: "Deselect / close popover" },
-  { keys: ["Space"], description: "Command palette" },
+  { keys: ["Esc"], description: "Deselect / close palette" },
+  { keys: ["⌘K"], description: "Command palette & search" },
   { keys: ["c"], description: "New task" },
   { keys: ["⌘/Alt", "←", "→"], description: "Move task to prev/next column" },
   { keys: ["⌘/Alt", "↑", "↓"], description: "Reorder task in column" },
@@ -1336,10 +1371,9 @@ type ColumnContainerProps = {
   isAllProjects: boolean;
   cardDisplay: CardField[] | null;
   selectedTaskId: number | null;
-  /** Which chip popover the keyboard wants forced open, and the setter —
-   *  only threaded down to the selected card (see `KanbanCard` below). */
-  openEditor: EditorKind | null;
-  onOpenEditorChange: (editor: EditorKind | null) => void;
+  /** Chip click on any card → select it + open the matching property
+   *  palette at the page level (see `handleEditorOpenRequest` above). */
+  onEditorOpenRequest: (taskId: number, kind: EditorKind) => void;
   onTasksChange: (columnId: number, tasks: Task[]) => void;
   onAddTask?: () => void;
   onEditTask: (task: Task) => void;
@@ -1373,8 +1407,7 @@ function ColumnContainer({
   isAllProjects,
   cardDisplay,
   selectedTaskId,
-  openEditor,
-  onOpenEditorChange,
+  onEditorOpenRequest,
   onTasksChange,
   onAddTask,
   onEditTask,
@@ -1499,11 +1532,9 @@ function ColumnContainer({
                   showProject={isAllProjects}
                   visibleFields={cardDisplay}
                   onClick={() => onEditTask(task)}
-                  // Only the selected card's Popovers become controlled —
-                  // every other card gets `openEditor={undefined}`, which
-                  // KanbanCard treats as "stay uncontrolled".
-                  openEditor={isSelected ? openEditor : undefined}
-                  onOpenEditorChange={isSelected ? onOpenEditorChange : undefined}
+                  onEditorOpenRequest={(kind) =>
+                    onEditorOpenRequest(task.id, kind)
+                  }
                 />
               );
             }}
