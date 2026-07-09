@@ -27,6 +27,7 @@ from apps.tasks.models import (
     BetStatus,
     Checkin,
     Column,
+    ColumnKind,
     Label,
     Metric,
     Priority,
@@ -171,6 +172,7 @@ def _column_dict(c: Column) -> dict[str, Any]:
         "project_id": c.project_id,
         "name": c.name,
         "order": c.order,
+        "kind": c.kind,
         "is_done": c.is_done,
     }
 
@@ -298,19 +300,37 @@ def list_columns(project: str | int) -> list[dict[str, Any]]:
     return [_column_dict(c) for c in proj.columns.order_by("order")]
 
 
+def _normalize_kind(kind: str | None) -> str | None:
+    """Validate a column ``kind`` against the model choices (None passes)."""
+    if kind is None:
+        return None
+    valid = {c.value for c in ColumnKind}
+    if kind not in valid:
+        raise ValueError(
+            f"Invalid column kind {kind!r}. Choose one of: {sorted(valid)}."
+        )
+    return kind
+
+
 @transaction.atomic
 def create_column(
     project: str | int,
     name: str,
+    kind: str | None = None,
     is_done: bool = False,
 ) -> dict[str, Any]:
     proj = _resolve_project(project)
     name = (name or "").strip()
     if not name:
         raise ValueError("Column name must not be empty.")
+    # ``kind`` is the source of truth; ``is_done`` is kept only as a legacy
+    # convenience — is_done=True with no explicit kind means "done".
+    resolved_kind = _normalize_kind(kind)
+    if resolved_kind is None:
+        resolved_kind = ColumnKind.DONE if is_done else ColumnKind.OTHER
     next_order = (proj.columns.aggregate(m=Max("order"))["m"] or -1) + 1
     column = Column.objects.create(
-        project=proj, name=name, order=next_order, is_done=is_done
+        project=proj, name=name, order=next_order, kind=resolved_kind
     )
     broadcast_task_event(
         proj.id, "column.created", {"column": _column_dict(column)}
@@ -322,6 +342,7 @@ def create_column(
 def update_column(
     column_id: int,
     name: str | None = None,
+    kind: str | None = None,
     is_done: bool | None = None,
 ) -> dict[str, Any]:
     column = Column.objects.select_for_update().get(pk=column_id)
@@ -330,8 +351,17 @@ def update_column(
         if not name:
             raise ValueError("Column name must not be empty.")
         column.name = name
-    if is_done is not None:
-        if column.is_done and not is_done:
+    # Translate the legacy is_done toggle into a kind change; explicit kind
+    # wins if both are supplied. is_done=False only demotes a currently-done
+    # column (to "other") so it can't silently wipe a meaningful kind.
+    resolved_kind = _normalize_kind(kind)
+    if resolved_kind is None and is_done is not None:
+        if is_done:
+            resolved_kind = ColumnKind.DONE
+        elif column.is_done:
+            resolved_kind = ColumnKind.OTHER
+    if resolved_kind is not None:
+        if column.is_done and resolved_kind != ColumnKind.DONE:
             others = (
                 column.project.columns.filter(is_done=True)
                 .exclude(pk=column.pk)
@@ -341,7 +371,7 @@ def update_column(
                 raise ValueError(
                     "At least one column must be marked as done."
                 )
-        column.is_done = is_done
+        column.kind = resolved_kind
     column.save()
     broadcast_task_event(
         column.project_id, "column.updated", {"column": _column_dict(column)}
@@ -409,6 +439,39 @@ def reorder_columns(
         {"columns": [_column_dict(c) for c in refreshed]},
     )
     return [_column_dict(c) for c in refreshed]
+
+
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+
+def get_throughput(
+    project: str | int | None = None,
+    days: int = 30,
+    tz: str = "UTC",
+) -> list[dict[str, Any]]:
+    """Daily throughput series over the last ``days`` calendar days (inclusive
+    of today, in ``tz``). Wraps :func:`apps.tasks.analytics.throughput` so the
+    MCP tool and DRF view return identical numbers."""
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    from apps.tasks.analytics import MAX_RANGE_DAYS, throughput
+
+    try:
+        zone = ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError, ModuleNotFoundError) as exc:
+        raise ValueError(f"Unknown timezone {tz!r}.") from exc
+
+    if days < 1:
+        raise ValueError("days must be a positive integer.")
+    days = min(days, MAX_RANGE_DAYS)
+
+    project_id = _resolve_project(project).id if project is not None else None
+    date_to = timezone.now().astimezone(zone).date()
+    date_from = date_to - timedelta(days=days - 1)
+    return throughput(project_id, date_from, date_to, zone)
 
 
 def list_tasks(

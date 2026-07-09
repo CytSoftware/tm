@@ -101,12 +101,38 @@ class Project(TimestampedModel):
         return f"{self.name} ({self.prefix})"
 
 
+class ColumnKind(models.TextChoices):
+    """Semantic role of a column, independent of its display name.
+
+    Analytics (``apps.tasks.analytics``) codes against ``kind`` — not the
+    column name — so a project renaming "In Progress" to "Doing" keeps its
+    throughput series intact. ``DONE`` is the single semantic that
+    ``is_done`` mirrors (see ``Column.save``).
+    """
+
+    BACKLOG = "backlog", "Backlog"
+    TODO = "todo", "Todo"
+    IN_PROGRESS = "in_progress", "In progress"
+    REVIEW = "review", "Review"
+    DONE = "done", "Done"
+    OTHER = "other", "Other"
+
+
 class Column(TimestampedModel):
     project = models.ForeignKey(
         Project, on_delete=models.CASCADE, related_name="columns"
     )
     name = models.CharField(max_length=80)
     order = models.PositiveSmallIntegerField()
+    kind = models.CharField(
+        max_length=16,
+        choices=ColumnKind.choices,
+        default=ColumnKind.OTHER,
+        help_text=(
+            "Semantic role used by analytics. The single editing source of "
+            "truth for completion — ``is_done`` is derived from it on save."
+        ),
+    )
     is_done = models.BooleanField(
         default=False,
         help_text="Marks a 'completed' column for analytics and recurring defaults.",
@@ -125,6 +151,13 @@ class Column(TimestampedModel):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.project.prefix} / {self.name}"
+
+    def save(self, *args, **kwargs):
+        # ``kind`` is authoritative; ``is_done`` is a denormalized mirror kept
+        # in lockstep so existing queries (recurring defaults, staleness,
+        # analytics "completed") that key off ``is_done`` never diverge.
+        self.is_done = self.kind == ColumnKind.DONE
+        return super().save(*args, **kwargs)
 
 
 class Label(TimestampedModel):
@@ -484,11 +517,11 @@ def _create_user_profile(sender, instance, created, **kwargs):
 # recurring defaults know which column means "completed".
 
 DEFAULT_COLUMNS = [
-    {"name": "Backlog", "order": 0, "is_done": False},
-    {"name": "Todo", "order": 1, "is_done": False},
-    {"name": "In Progress", "order": 2, "is_done": False},
-    {"name": "In Review", "order": 3, "is_done": False},
-    {"name": "Done", "order": 4, "is_done": True},
+    {"name": "Backlog", "order": 0, "kind": ColumnKind.BACKLOG},
+    {"name": "Todo", "order": 1, "kind": ColumnKind.TODO},
+    {"name": "In Progress", "order": 2, "kind": ColumnKind.IN_PROGRESS},
+    {"name": "In Review", "order": 3, "kind": ColumnKind.REVIEW},
+    {"name": "Done", "order": 4, "kind": ColumnKind.DONE},
 ]
 
 
@@ -496,8 +529,17 @@ DEFAULT_COLUMNS = [
 def _seed_default_columns(sender, instance: Project, created: bool, **kwargs):
     if not created:
         return
+    # bulk_create bypasses Column.save(), so mirror is_done from kind here to
+    # keep the two in sync on the seeding path.
     Column.objects.bulk_create(
-        [Column(project=instance, **col) for col in DEFAULT_COLUMNS]
+        [
+            Column(
+                project=instance,
+                is_done=col["kind"] == ColumnKind.DONE,
+                **col,
+            )
+            for col in DEFAULT_COLUMNS
+        ]
     )
 
 

@@ -59,12 +59,41 @@ export type Me = User & {
   preferences: MePreferences;
 };
 
+/** Semantic column kind — a fixed vocabulary independent of the column's
+ *  (renameable) display name. Server-derives `is_done` from `kind === "done"`. */
+export type ColumnKind =
+  | "backlog"
+  | "todo"
+  | "in_progress"
+  | "review"
+  | "done"
+  | "other";
+
+export const COLUMN_KIND_ORDER: ColumnKind[] = [
+  "backlog",
+  "todo",
+  "in_progress",
+  "review",
+  "done",
+  "other",
+];
+
+export const COLUMN_KIND_LABELS: Record<ColumnKind, string> = {
+  backlog: "Backlog",
+  todo: "Todo",
+  in_progress: "In Progress",
+  review: "In Review",
+  done: "Done",
+  other: "Other",
+};
+
 export type Column = {
   id: number;
   project: number;
   name: string;
   order: number;
   is_done: boolean;
+  kind: ColumnKind;
 };
 
 export type Label = {
@@ -633,4 +662,39 @@ export type WebhookEndpointListResponse = {
   next: string | null;
   previous: string | null;
   results: WebhookEndpoint[];
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// Analytics — daily task-event throughput. `GET /api/analytics/throughput/`
+// returns one zero-filled row per day (ascending, `from`/`to` inclusive).
+// See `frontend/src/hooks/use-analytics.ts`.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type ThroughputDay = {
+  date: string;
+  created: number;
+  started: number;
+  in_review: number;
+  completed: number;
+};
+
+export type ThroughputResponse = {
+  days: ThroughputDay[];
+};
+
+/** The four series tracked on the throughput chart, in display order. */
+export type ThroughputMetric = "created" | "started" | "in_review" | "completed";
+
+export const THROUGHPUT_METRICS: ThroughputMetric[] = [
+  "created",
+  "started",
+  "in_review",
+  "completed",
+];
+
+export const THROUGHPUT_METRIC_LABELS: Record<ThroughputMetric, string> = {
+  created: "Created",
+  started: "Started",
+  in_review: "In review",
+  completed: "Completed",
 };

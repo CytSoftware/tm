@@ -219,15 +219,18 @@ async def list_columns(project: str | int) -> list[dict[str, Any]]:
 async def create_column(
     project: str | int,
     name: str,
+    kind: str | None = None,
     is_done: bool = False,
 ) -> dict[str, Any]:
     """Append a new column to ``project``.
 
-    The new column lands at the rightmost position. Set ``is_done=True`` to
-    mark it as a completion column (used by recurring-task defaults and
-    analytics)."""
+    The new column lands at the rightmost position. ``kind`` sets its semantic
+    role for analytics — one of "backlog", "todo", "in_progress", "review",
+    "done", "other" (default "other"). ``is_done`` is derived from ``kind``
+    ("done" ⇒ completed); the legacy ``is_done=True`` flag still works when
+    ``kind`` is omitted."""
     return await _async(tools.create_column)(
-        project=project, name=name, is_done=is_done
+        project=project, name=name, kind=kind, is_done=is_done
     )
 
 
@@ -235,13 +238,16 @@ async def create_column(
 async def update_column(
     column_id: int,
     name: str | None = None,
+    kind: str | None = None,
     is_done: bool | None = None,
 ) -> dict[str, Any]:
-    """Rename a column or toggle its ``is_done`` flag.
+    """Rename a column or change its ``kind``.
 
-    Refuses to unmark the last ``is_done`` column in a project."""
+    ``kind`` is one of "backlog", "todo", "in_progress", "review", "done",
+    "other" and drives the derived ``is_done`` flag. Refuses to demote the
+    last "done" column in a project."""
     return await _async(tools.update_column)(
-        column_id=column_id, name=name, is_done=is_done
+        column_id=column_id, name=name, kind=kind, is_done=is_done
     )
 
 
@@ -266,6 +272,23 @@ async def reorder_columns(
     return await _async(tools.reorder_columns)(
         project=project, ordered_ids=ordered_ids
     )
+
+
+@mcp.tool()
+async def get_throughput(
+    project: str | int | None = None,
+    days: int = 30,
+    tz: str = "UTC",
+) -> list[dict[str, Any]]:
+    """Daily flow metrics over the last ``days`` days (inclusive of today).
+
+    Returns one row per calendar day, ascending, zero-filled:
+    ``{"date", "created", "started", "in_review", "completed"}``. ``created``
+    counts new tasks; ``started``/``in_review``/``completed`` count distinct
+    tasks entering an in-progress / review / done column that day. ``project``
+    (id or prefix) limits to one project; omit for all. ``tz`` is an IANA
+    name used to bucket days (default UTC)."""
+    return await _async(tools.get_throughput)(project=project, days=days, tz=tz)
 
 
 @mcp.tool()

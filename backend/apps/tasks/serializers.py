@@ -69,13 +69,15 @@ class LabelSerializer(serializers.ModelSerializer):
 class ColumnSerializer(serializers.ModelSerializer):
     class Meta:
         model = Column
-        fields = ("id", "project", "name", "order", "is_done")
+        fields = ("id", "project", "name", "order", "kind", "is_done")
         # ``order`` is assigned by the viewset (append-on-create, the
         # ``reorder`` action for shuffles) so a stray PATCH can't punch a
         # value through the per-project unique constraint. ``project`` is
         # required on POST but locked afterwards — see ``perform_update``
-        # in ``ColumnViewSet`` for the cross-project rejection.
-        read_only_fields = ("order",)
+        # in ``ColumnViewSet`` for the cross-project rejection. ``is_done``
+        # is a read-only mirror of ``kind`` (``Column.save`` derives it) —
+        # ``kind`` is the single writable source of truth.
+        read_only_fields = ("order", "is_done")
 
 
 class ProjectSerializer(serializers.ModelSerializer):

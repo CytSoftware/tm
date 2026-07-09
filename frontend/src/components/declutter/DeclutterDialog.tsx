@@ -49,9 +49,6 @@ type Props = {
   scopeProjectId: number | null;
 };
 
-const BACKLOG = "Backlog";
-const TODO = "Todo";
-
 type Counters = Record<SwipeDirection, number>;
 const ZERO_COUNTERS: Counters = { right: 0, left: 0, up: 0, down: 0 };
 
@@ -95,13 +92,22 @@ export function DeclutterDialog({
 
   // Self-fetch the Backlog scoped to the active project (or all projects).
   // Bypasses the board's paginated cache because triage needs the full
-  // column up front, not whichever page happens to be loaded.
+  // column up front, not whichever page happens to be loaded. When scoped to
+  // a single project we can narrow the request to that project's own
+  // kind="backlog" column id (columns are renameable, so kind is the only
+  // stable handle); merging across every project has no single column id to
+  // filter on, so it fetches broadly and the `queue` memo below filters by
+  // kind client-side.
   const backlogQuery = useQuery<TaskListResponse>({
     queryKey: ["declutter-tasks", scopeProjectId, sessionKey],
     queryFn: () => {
       const params = new URLSearchParams();
-      params.set("column", BACKLOG);
-      if (scopeProjectId != null) params.set("project", String(scopeProjectId));
+      if (scopeProjectId != null) {
+        params.set("project", String(scopeProjectId));
+        const proj = projects.find((p) => p.id === scopeProjectId);
+        const backlogCol = proj?.columns.find((c) => c.kind === "backlog");
+        if (backlogCol) params.set("column", String(backlogCol.id));
+      }
       params.set("limit", "500");
       return apiFetch<TaskListResponse>(`/api/tasks/?${params.toString()}`);
     },
@@ -120,7 +126,9 @@ export function DeclutterDialog({
   // snapshot effect re-runs on the query's first success via sessionKey.
   const queue = useMemo(() => {
     if (!open) return [] as number[];
-    return tasks.map((t) => t.id);
+    return tasks
+      .filter((t) => t.column?.kind === "backlog")
+      .map((t) => t.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, sessionKey, scopeProjectId, backlogQuery.dataUpdatedAt]);
 
@@ -205,7 +213,7 @@ export function DeclutterDialog({
         const proj = projects.find((p) => p.id === task.project);
         const target =
           dir === "right"
-            ? proj?.columns.find((c) => c.name === TODO)
+            ? proj?.columns.find((c) => c.kind === "todo")
             : proj?.columns.find((c) => c.is_done);
         if (!target) {
           setErrorMessage(

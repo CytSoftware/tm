@@ -5,13 +5,12 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
-  CircleCheck,
-  CircleDashed,
   EyeOff,
   MoreHorizontal,
   Pencil,
   Plus,
   Sparkles,
+  SquareStack,
   Trash2,
   UserPlus,
   X,
@@ -22,13 +21,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuPortal,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { Column, Task } from "@/lib/types";
+import type { Column, ColumnKind, Task } from "@/lib/types";
+import { COLUMN_KIND_LABELS, COLUMN_KIND_ORDER } from "@/lib/types";
 
 type Props = {
   column: Column;
@@ -50,7 +54,7 @@ type Props = {
   canMoveLeft?: boolean;
   canMoveRight?: boolean;
   onRename?: (newName: string) => void;
-  onToggleDone?: () => void;
+  onSetKind?: (kind: ColumnKind) => void;
   onMove?: (direction: "left" | "right") => void;
   onRequestDelete?: () => void;
   /** Collapses the column into a thin strip. Offered on every column
@@ -76,7 +80,7 @@ export function KanbanColumn({
   canMoveLeft,
   canMoveRight,
   onRename,
-  onToggleDone,
+  onSetKind,
   onMove,
   onRequestDelete,
   onHide,
@@ -171,7 +175,7 @@ export function KanbanColumn({
           )}
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          {onDeclutter && column.name === "Backlog" && tasks.length > 0 && (
+          {onDeclutter && column.kind === "backlog" && tasks.length > 0 && (
             <Button
               variant="ghost"
               size="icon"
@@ -186,7 +190,7 @@ export function KanbanColumn({
               <Sparkles className="size-3.5" />
             </Button>
           )}
-          {onAssign && column.name === "Todo" && tasks.length > 0 && (
+          {onAssign && column.kind === "todo" && tasks.length > 0 && (
             <Button
               variant="ghost"
               size="icon"
@@ -236,14 +240,30 @@ export function KanbanColumn({
                       <Pencil className="size-3.5" />
                       Rename
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => onToggleDone?.()}>
-                      {column.is_done ? (
-                        <CircleDashed className="size-3.5" />
-                      ) : (
-                        <CircleCheck className="size-3.5" />
-                      )}
-                      {column.is_done ? "Unmark as done" : "Mark as done"}
-                    </DropdownMenuItem>
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <SquareStack className="size-3.5" />
+                        Column type
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuPortal>
+                        <DropdownMenuSubContent>
+                          {COLUMN_KIND_ORDER.map((kind) => (
+                            <DropdownMenuItem
+                              key={kind}
+                              onClick={() => onSetKind?.(kind)}
+                            >
+                              <Check
+                                className={cn(
+                                  "size-3.5",
+                                  kind !== column.kind && "invisible",
+                                )}
+                              />
+                              {COLUMN_KIND_LABELS[kind]}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuPortal>
+                    </DropdownMenuSub>
                   </>
                 )}
                 {onHide && (

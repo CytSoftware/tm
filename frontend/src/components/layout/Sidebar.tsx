@@ -26,6 +26,7 @@ import {
 import {
   Archive,
   ArchiveRestore,
+  BarChart3,
   BookText,
   ChevronRight,
   ChevronsLeft,
@@ -316,6 +317,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           collapsed={isCollapsed}
           onNavigate={() => {
             router.push("/bets");
+            onClose?.();
+          }}
+        />
+        <NavLink
+          icon={
+            <BarChart3
+              className={
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground"
+              }
+            />
+          }
+          label="Analytics"
+          active={pathname.startsWith("/analytics")}
+          collapsed={isCollapsed}
+          onNavigate={() => {
+            router.push("/analytics");
             onClose?.();
           }}
         />

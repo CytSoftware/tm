@@ -55,9 +55,9 @@ type Props = {
   scopeProjectId: number | null;
 };
 
-const TODO = "Todo";
-/** Columns that count toward a user's "active load" in the hotkey bar. */
-const ACTIVE_COLUMNS = new Set(["Todo", "In Progress", "In Review"]);
+/** Columns that count toward a user's "active load" in the hotkey bar,
+ *  identified by semantic kind rather than (renameable) column name. */
+const ACTIVE_COLUMNS = new Set(["todo", "in_progress", "review"]);
 
 /** Keys the dialog owns for other behaviors — never bindable. */
 const RESERVED_KEYS = new Set<string>(["ArrowDown", "Escape"]);
@@ -171,7 +171,7 @@ export function AssignDialog({
   const queue = useMemo(() => {
     if (!open) return [] as number[];
     return tasks
-      .filter((t) => t.column?.name === TODO)
+      .filter((t) => t.column?.kind === "todo")
       .filter((t) => scopeProjectId == null || t.project === scopeProjectId)
       .map((t) => t.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -215,7 +215,7 @@ export function AssignDialog({
   const loadByUser = useMemo(() => {
     const map = new Map<number, number>();
     for (const t of tasks) {
-      if (!t.column || !ACTIVE_COLUMNS.has(t.column.name)) continue;
+      if (!t.column || !ACTIVE_COLUMNS.has(t.column.kind)) continue;
       if (scopeProjectId != null && t.project !== scopeProjectId) continue;
       for (const a of t.assignees) {
         map.set(a.id, (map.get(a.id) ?? 0) + 1);
