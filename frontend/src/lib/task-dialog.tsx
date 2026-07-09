@@ -67,7 +67,7 @@ export function TaskDialogProvider({ children }: { children: ReactNode }) {
       setState({ mode: "edit", task });
     } catch {
       // Task not found or request failed — swallow so the caller UI doesn't
-      // crash; GlobalSearch will just close without effect.
+      // crash; the command palette will just close without effect.
     }
   }, []);
 

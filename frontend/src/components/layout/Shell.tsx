@@ -6,12 +6,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Menu, Search as SearchIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { GlobalSearch } from "@/components/GlobalSearch";
+import { CommandPalette } from "@/components/CommandPalette";
 import { GlobalShortcuts } from "@/components/GlobalShortcuts";
 import { meKey, myTasksKey } from "@/lib/query-keys";
 import { fetchMe } from "@/lib/auth";
 import { ensureCsrfCookie } from "@/lib/api";
 import { connectNotificationSocket } from "@/lib/ws";
+import { usePalette } from "@/lib/palette";
 import { useSidebar } from "@/lib/sidebar-state";
 import { TaskDialogProvider } from "@/lib/task-dialog";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -42,19 +43,20 @@ export function Shell({ children }: { children: ReactNode }) {
 
   // Mobile overlay state (not persisted — always starts closed)
   const [mobileOpen, setMobileOpen] = useState(false);
-  // Global search overlay (Cmd/Ctrl+K)
-  const [searchOpen, setSearchOpen] = useState(false);
+  // Unified command palette overlay (Cmd/Ctrl+K) — commands + search. Open
+  // state lives in PaletteContext so the board's keydown guard sees it too.
+  const { open: paletteOpen, setOpen: setPaletteOpen } = usePalette();
 
   // Close mobile overlay on navigation
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
 
-  // Close global search on navigation — result clicks already close it, but
+  // Close the palette on navigation — result clicks already close it, but
   // this also covers sidebar clicks behind the backdrop etc.
   useEffect(() => {
-    setSearchOpen(false);
-  }, [pathname]);
+    setPaletteOpen(false);
+  }, [pathname, setPaletteOpen]);
 
   useEffect(() => {
     ensureCsrfCookie().catch(() => {});
@@ -62,7 +64,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
   // Keyboard shortcuts:
   //   ⌘B / Ctrl+B  toggle sidebar
-  //   ⌘K / Ctrl+K  toggle global search
+  //   ⌘K / Ctrl+K  toggle the command palette
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
@@ -76,11 +78,11 @@ export function Shell({ children }: { children: ReactNode }) {
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setSearchOpen((v) => !v);
+        setPaletteOpen(!paletteOpen);
         return;
       }
     },
-    [isDesktop, toggle],
+    [isDesktop, toggle, paletteOpen, setPaletteOpen],
   );
 
   useEffect(() => {
@@ -148,7 +150,10 @@ export function Shell({ children }: { children: ReactNode }) {
             {children}
           </main>
         </div>
-        <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+        />
       </TaskDialogProvider>
     );
   }
@@ -181,7 +186,7 @@ export function Shell({ children }: { children: ReactNode }) {
             variant="ghost"
             size="icon"
             className="size-8"
-            onClick={() => setSearchOpen(true)}
+            onClick={() => setPaletteOpen(true)}
             aria-label="Search"
           >
             <SearchIcon className="size-4" />
@@ -212,7 +217,10 @@ export function Shell({ children }: { children: ReactNode }) {
           </>
         )}
       </div>
-      <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+      />
     </TaskDialogProvider>
   );
 }

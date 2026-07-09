@@ -9,6 +9,7 @@ import { ThemeProvider } from "next-themes";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ActiveProjectProvider } from "@/lib/active-project";
+import { PaletteProvider } from "@/lib/palette";
 import { SidebarProvider } from "@/lib/sidebar-state";
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -34,9 +35,11 @@ export function Providers({ children }: { children: ReactNode }) {
     >
       <QueryClientProvider client={queryClient}>
         <ActiveProjectProvider>
-          <SidebarProvider>
-            <TooltipProvider delay={200}>{children}</TooltipProvider>
-          </SidebarProvider>
+          <PaletteProvider>
+            <SidebarProvider>
+              <TooltipProvider delay={200}>{children}</TooltipProvider>
+            </SidebarProvider>
+          </PaletteProvider>
         </ActiveProjectProvider>
       </QueryClientProvider>
     </ThemeProvider>
