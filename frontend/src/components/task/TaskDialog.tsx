@@ -75,7 +75,7 @@ export function TaskDialog({
     return (
       p.columns.find((c) => c.id === initialColumnId)?.id ??
       task?.column?.id ??
-      p.columns.find((c) => c.name === "Todo")?.id ??
+      p.columns.find((c) => c.kind === "todo")?.id ??
       p.columns.find((c) => !c.is_done)?.id ??
       p.columns[0]?.id ??
       0

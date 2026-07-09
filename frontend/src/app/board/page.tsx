@@ -98,6 +98,7 @@ import { connectProjectSocket } from "@/lib/ws";
 import type {
   BoardFilters,
   Column,
+  ColumnKind,
   Label,
   Priority,
   Project,
@@ -110,12 +111,17 @@ import { EMPTY_BOARD_FILTERS } from "@/lib/types";
 
 /** Standard column names and their canonical order. */
 const STANDARD_COLUMNS = [
-  { name: "Backlog", order: 0, is_done: false },
-  { name: "Todo", order: 1, is_done: false },
-  { name: "In Progress", order: 2, is_done: false },
-  { name: "In Review", order: 3, is_done: false },
-  { name: "Done", order: 4, is_done: true },
-] as const;
+  { name: "Backlog", order: 0, is_done: false, kind: "backlog" },
+  { name: "Todo", order: 1, is_done: false, kind: "todo" },
+  { name: "In Progress", order: 2, is_done: false, kind: "in_progress" },
+  { name: "In Review", order: 3, is_done: false, kind: "review" },
+  { name: "Done", order: 4, is_done: true, kind: "done" },
+] as const satisfies readonly {
+  name: string;
+  order: number;
+  is_done: boolean;
+  kind: ColumnKind;
+}[];
 
 type CardDragData = {
   type: "card";
@@ -207,7 +213,7 @@ type DroppableColumnProps = {
   canMoveLeft?: boolean;
   canMoveRight?: boolean;
   onRename?: (newName: string) => void;
-  onToggleDone?: () => void;
+  onSetKind?: (kind: ColumnKind) => void;
   onMove?: (direction: "left" | "right") => void;
   onRequestDelete?: () => void;
   onHide?: () => void;
@@ -229,7 +235,7 @@ function DroppableColumn({
   canMoveLeft,
   canMoveRight,
   onRename,
-  onToggleDone,
+  onSetKind,
   onMove,
   onRequestDelete,
   onHide,
@@ -267,7 +273,7 @@ function DroppableColumn({
       canMoveLeft={canMoveLeft}
       canMoveRight={canMoveRight}
       onRename={onRename}
-      onToggleDone={onToggleDone}
+      onSetKind={onSetKind}
       onMove={onMove}
       onRequestDelete={onRequestDelete}
       onHide={onHide}
@@ -435,6 +441,7 @@ export default function BoardPage() {
       name: std.name,
       order: std.order,
       is_done: std.is_done,
+      kind: std.kind,
     }));
   }, [project]);
 
@@ -1180,13 +1187,9 @@ export default function BoardPage() {
                         updateColumn.mutate({ id: col.id, name })
                     : undefined
                 }
-                onToggleDone={
+                onSetKind={
                   project && col.id > 0
-                    ? () =>
-                        updateColumn.mutate({
-                          id: col.id,
-                          is_done: !col.is_done,
-                        })
+                    ? (kind) => updateColumn.mutate({ id: col.id, kind })
                     : undefined
                 }
                 onMove={
@@ -1383,7 +1386,7 @@ type ColumnContainerProps = {
   canMoveLeft?: boolean;
   canMoveRight?: boolean;
   onRename?: (newName: string) => void;
-  onToggleDone?: () => void;
+  onSetKind?: (kind: ColumnKind) => void;
   onMove?: (direction: "left" | "right") => void;
   onRequestDelete?: () => void;
   /** Collapsed state, lifted to the board so it can survive this column's
@@ -1417,7 +1420,7 @@ function ColumnContainer({
   canMoveLeft,
   canMoveRight,
   onRename,
-  onToggleDone,
+  onSetKind,
   onMove,
   onRequestDelete,
   isHidden,
@@ -1513,7 +1516,7 @@ function ColumnContainer({
       canMoveLeft={canMoveLeft}
       canMoveRight={canMoveRight}
       onRename={onRename}
-      onToggleDone={onToggleDone}
+      onSetKind={onSetKind}
       onMove={onMove}
       onRequestDelete={onRequestDelete}
       onHide={onHide}

@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "@/lib/api";
 import { projectKey, projectsKey } from "@/lib/query-keys";
-import type { Column } from "@/lib/types";
+import type { Column, ColumnKind } from "@/lib/types";
 
 function invalidateProject(qc: ReturnType<typeof useQueryClient>, projectId: number) {
   qc.invalidateQueries({ queryKey: projectKey(projectId) });
@@ -14,7 +14,11 @@ function invalidateProject(qc: ReturnType<typeof useQueryClient>, projectId: num
 export function useCreateColumn() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { project: number; name: string; is_done?: boolean }) =>
+    mutationFn: (payload: {
+      project: number;
+      name: string;
+      kind?: ColumnKind;
+    }) =>
       apiFetch<Column>("/api/columns/", { method: "POST", body: payload }),
     onSuccess: (col) => invalidateProject(qc, col.project),
   });
@@ -29,7 +33,7 @@ export function useUpdateColumn() {
     }: {
       id: number;
       name?: string;
-      is_done?: boolean;
+      kind?: ColumnKind;
     }) =>
       apiFetch<Column>(`/api/columns/${id}/`, {
         method: "PATCH",
