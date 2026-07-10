@@ -27,7 +27,13 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from .models import Column, RecurringTaskTemplate, Task, TransitionSource
+from .models import (
+    Column,
+    RecurringTaskTemplate,
+    Task,
+    TransitionEvent,
+    TransitionSource,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +246,7 @@ def generate_due_instances(now: datetime | None = None) -> list[Task]:
                 task,
                 from_column=None,
                 to_column=tpl.column,
+                event_type=TransitionEvent.CREATED,
                 user=tpl.created_by,
                 source=TransitionSource.RECURRING,
             )

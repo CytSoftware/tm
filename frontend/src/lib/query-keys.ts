@@ -73,10 +73,19 @@ export const webhooksKey = () => ["webhooks"] as const;
 export const webhookDeliveriesKey = (endpointId: number) =>
   ["webhooks", endpointId, "deliveries"] as const;
 
-// Analytics — daily task-event throughput. `projectId` null = all projects.
+// Analytics. `projectId` null = all projects.
 export const throughputKey = (
   projectId: number | null,
   from: string,
   to: string,
   tz: string,
 ) => ["analytics", "throughput", projectId, from, to, tz] as const;
+
+// `weekStart` is the Monday of the selected week ("current" sentinel when
+// following the live current week rather than a pinned date).
+export const weeklyCompletionsKey = (
+  projectId: number | null,
+  weekStart: string,
+  weeks: number,
+  tz: string,
+) => ["analytics", "completions", projectId, weekStart, weeks, tz] as const;

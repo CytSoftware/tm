@@ -90,24 +90,58 @@ export function DeclutterDialog({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const counters = useRef<Counters>({ ...ZERO_COUNTERS });
 
+  const scopedBacklogColumnIds = useMemo(() => {
+    if (scopeProjectId == null) return [] as number[];
+    return (
+      projects
+        .find((project) => project.id === scopeProjectId)
+        ?.columns.filter((column) => column.kind === "backlog")
+        .map((column) => column.id) ?? []
+    );
+  }, [projects, scopeProjectId]);
+
   // Self-fetch the Backlog scoped to the active project (or all projects).
   // Bypasses the board's paginated cache because triage needs the full
-  // column up front, not whichever page happens to be loaded. When scoped to
-  // a single project we can narrow the request to that project's own
-  // kind="backlog" column id (columns are renameable, so kind is the only
-  // stable handle); merging across every project has no single column id to
-  // filter on, so it fetches broadly and the `queue` memo below filters by
-  // kind client-side.
+  // column up front, not whichever page happens to be loaded. A project may
+  // legitimately have more than one kind="backlog" column, so scoped mode
+  // fetches each one and merges the results instead of silently choosing the
+  // first. Merging across every project has no single column id to filter on,
+  // so it fetches broadly and the `queue` memo below filters by kind.
   const backlogQuery = useQuery<TaskListResponse>({
-    queryKey: ["declutter-tasks", scopeProjectId, sessionKey],
-    queryFn: () => {
-      const params = new URLSearchParams();
+    queryKey: [
+      "declutter-tasks",
+      scopeProjectId,
+      scopedBacklogColumnIds,
+      sessionKey,
+    ],
+    queryFn: async () => {
       if (scopeProjectId != null) {
-        params.set("project", String(scopeProjectId));
-        const proj = projects.find((p) => p.id === scopeProjectId);
-        const backlogCol = proj?.columns.find((c) => c.kind === "backlog");
-        if (backlogCol) params.set("column", String(backlogCol.id));
+        if (scopedBacklogColumnIds.length === 0) {
+          return { count: 0, next: null, previous: null, results: [] };
+        }
+
+        const responses = await Promise.all(
+          scopedBacklogColumnIds.map((columnId) => {
+            const params = new URLSearchParams({
+              project: String(scopeProjectId),
+              column: String(columnId),
+              limit: "500",
+            });
+            return apiFetch<TaskListResponse>(
+              `/api/tasks/?${params.toString()}`,
+            );
+          }),
+        );
+
+        return {
+          count: responses.reduce((total, response) => total + response.count, 0),
+          next: null,
+          previous: null,
+          results: responses.flatMap((response) => response.results),
+        };
       }
+
+      const params = new URLSearchParams();
       params.set("limit", "500");
       return apiFetch<TaskListResponse>(`/api/tasks/?${params.toString()}`);
     },
@@ -193,7 +227,6 @@ export function DeclutterDialog({
   );
 
   const done = cursor >= queue.length;
-  const remaining = Math.max(0, queue.length - cursor);
 
   const commit = useCallback(
     (dir: SwipeDirection) => {

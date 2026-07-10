@@ -67,6 +67,11 @@ class LabelSerializer(serializers.ModelSerializer):
 
 
 class ColumnSerializer(serializers.ModelSerializer):
+    # Kept writable for older API clients. ``validate`` translates it to the
+    # canonical ``kind`` field; representation still exposes the derived
+    # model value.
+    is_done = serializers.BooleanField(required=False)
+
     class Meta:
         model = Column
         fields = ("id", "project", "name", "order", "kind", "is_done")
@@ -75,9 +80,20 @@ class ColumnSerializer(serializers.ModelSerializer):
         # value through the per-project unique constraint. ``project`` is
         # required on POST but locked afterwards — see ``perform_update``
         # in ``ColumnViewSet`` for the cross-project rejection. ``is_done``
-        # is a read-only mirror of ``kind`` (``Column.save`` derives it) —
-        # ``kind`` is the single writable source of truth.
-        read_only_fields = ("order", "is_done")
+        # remains a compatibility alias; ``kind`` is canonical.
+        read_only_fields = ("order",)
+
+    def validate(self, attrs):
+        legacy_is_done = attrs.pop("is_done", None)
+        if "kind" not in attrs and legacy_is_done is not None:
+            if legacy_is_done:
+                attrs["kind"] = "done"
+            elif self.instance is None or self.instance.is_done:
+                # Match the MCP compatibility behavior: false creates an
+                # ordinary column or demotes an existing done column, but is
+                # otherwise a no-op rather than erasing a meaningful kind.
+                attrs["kind"] = "other"
+        return super().validate(attrs)
 
 
 class ProjectSerializer(serializers.ModelSerializer):
@@ -394,8 +410,16 @@ class StateTransitionSerializer(serializers.ModelSerializer):
         model = StateTransition
         fields = (
             "id",
+            "event_type",
             "from_column",
             "to_column",
+            "task_id_snapshot",
+            "task_key_snapshot",
+            "project_id_snapshot",
+            "from_column_name",
+            "to_column_name",
+            "to_column_kind",
+            "to_column_is_done",
             "at",
             "triggered_by",
             "source",

@@ -34,6 +34,7 @@ from apps.tasks.models import (
     Project,
     RecurringTaskTemplate,
     Task,
+    TransitionEvent,
     TransitionSource,
     View,
 )
@@ -408,6 +409,13 @@ def delete_column(
             task.column = target
             task.position = next_pos
             task.save(update_fields=["column", "position", "updated_at"])
+            record_transition(
+                task,
+                from_column=column,
+                to_column=target,
+                event_type=TransitionEvent.MOVED,
+                source=TransitionSource.MCP,
+            )
             next_pos += 1000.0
     deleted_id = column.id
     column.delete()
@@ -472,6 +480,45 @@ def get_throughput(
     date_to = timezone.now().astimezone(zone).date()
     date_from = date_to - timedelta(days=days - 1)
     return throughput(project_id, date_from, date_to, zone)
+
+
+def get_weekly_completions(
+    project: str | int | None = None,
+    week: str | None = None,
+    weeks: int = 8,
+    tz: str = "UTC",
+) -> dict[str, Any]:
+    """Weekly completion counts, overall and per person. Wraps
+    :func:`apps.tasks.analytics.weekly_completions` so the MCP tool and DRF
+    view return identical numbers. ``week`` is any ``YYYY-MM-DD`` date inside
+    the desired week (default: today in ``tz``); ``weeks`` is the trend
+    length (default 8, capped). No ``request`` is available here, so avatar
+    URLs come back exactly as stored (not absolutized)."""
+    from datetime import date
+
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    from apps.tasks.analytics import MAX_WEEKS, weekly_completions
+
+    try:
+        zone = ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError, ModuleNotFoundError) as exc:
+        raise ValueError(f"Unknown timezone {tz!r}.") from exc
+
+    if week:
+        try:
+            week_date = date.fromisoformat(week)
+        except ValueError as exc:
+            raise ValueError(f"Expected a YYYY-MM-DD date, got {week!r}.") from exc
+    else:
+        week_date = timezone.now().astimezone(zone).date()
+
+    if weeks < 1:
+        raise ValueError("weeks must be a positive integer.")
+    weeks = min(weeks, MAX_WEEKS)
+
+    project_id = _resolve_project(project).id if project is not None else None
+    return weekly_completions(project_id, week_date, weeks, zone)
 
 
 def list_tasks(
@@ -547,6 +594,7 @@ def create_task(
         task,
         from_column=None,
         to_column=col,
+        event_type=TransitionEvent.CREATED,
         user=mcp_user,
         source=TransitionSource.MCP,
     )
@@ -675,6 +723,7 @@ def move_task(
             task,
             from_column=old_column,
             to_column=col,
+            event_type=TransitionEvent.MOVED,
             user=mcp_user,
             source=TransitionSource.MCP,
         )
