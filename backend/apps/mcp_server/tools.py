@@ -34,6 +34,7 @@ from apps.tasks.models import (
     Project,
     RecurringTaskTemplate,
     Task,
+    TransitionEvent,
     TransitionSource,
     View,
 )
@@ -408,6 +409,13 @@ def delete_column(
             task.column = target
             task.position = next_pos
             task.save(update_fields=["column", "position", "updated_at"])
+            record_transition(
+                task,
+                from_column=column,
+                to_column=target,
+                event_type=TransitionEvent.MOVED,
+                source=TransitionSource.MCP,
+            )
             next_pos += 1000.0
     deleted_id = column.id
     column.delete()
@@ -586,6 +594,7 @@ def create_task(
         task,
         from_column=None,
         to_column=col,
+        event_type=TransitionEvent.CREATED,
         user=mcp_user,
         source=TransitionSource.MCP,
     )
@@ -714,6 +723,7 @@ def move_task(
             task,
             from_column=old_column,
             to_column=col,
+            event_type=TransitionEvent.MOVED,
             user=mcp_user,
             source=TransitionSource.MCP,
         )

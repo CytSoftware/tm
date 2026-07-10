@@ -8,7 +8,7 @@ single-source discipline of :mod:`apps.tasks.query`.
 Everything is derived from the immutable :class:`~apps.tasks.models.StateTransition`
 log, bucketed into local calendar days. The four series answer:
 
-* ``created``   — creation events (``from_column`` is null). Every task emits
+* ``created``   — explicit creation events. Every task emits
   exactly one, so a plain count is correct.
 * ``started``   — tasks that entered an ``in_progress`` column that day.
 * ``in_review`` — tasks that entered a ``review`` column that day.
@@ -33,7 +33,7 @@ from django.contrib.auth import get_user_model
 from django.db.models import Count, QuerySet
 from django.db.models.functions import TruncDate
 
-from .models import ColumnKind, StateTransition
+from .models import ColumnKind, StateTransition, TransitionEvent
 
 User = get_user_model()
 
@@ -59,7 +59,7 @@ def _bucket_by_day(
     plain row count (creation events).
     """
     day = TruncDate("at", tzinfo=tz)
-    counter = Count("task", distinct=True) if distinct else Count("id")
+    counter = Count("task_id_snapshot", distinct=True) if distinct else Count("id")
     rows = (
         qs.annotate(day=day)
         .filter(day__gte=date_from, day__lte=date_to)
@@ -83,31 +83,31 @@ def throughput(
     """
     base = StateTransition.objects.all()
     if project_id is not None:
-        base = base.filter(task__project_id=project_id)
+        base = base.filter(project_id_snapshot=project_id)
 
     created = _bucket_by_day(
-        base.filter(from_column__isnull=True),
+        base.filter(event_type=TransitionEvent.CREATED),
         tz,
         date_from,
         date_to,
         distinct=False,
     )
     started = _bucket_by_day(
-        base.filter(to_column__kind=ColumnKind.IN_PROGRESS),
+        base.filter(to_column_kind=ColumnKind.IN_PROGRESS),
         tz,
         date_from,
         date_to,
         distinct=True,
     )
     in_review = _bucket_by_day(
-        base.filter(to_column__kind=ColumnKind.REVIEW),
+        base.filter(to_column_kind=ColumnKind.REVIEW),
         tz,
         date_from,
         date_to,
         distinct=True,
     )
     completed = _bucket_by_day(
-        base.filter(to_column__is_done=True),
+        base.filter(to_column_is_done=True),
         tz,
         date_from,
         date_to,
@@ -189,16 +189,16 @@ def weekly_completions(
     # necessarily overlap (e.g. weeks=1), so fetch the union of both spans.
     fetch_start = min(trend_start, prev_week_start)
 
-    base = StateTransition.objects.filter(to_column__is_done=True)
+    base = StateTransition.objects.filter(to_column_is_done=True)
     if project_id is not None:
-        base = base.filter(task__project_id=project_id)
+        base = base.filter(project_id_snapshot=project_id)
 
     day = TruncDate("at", tzinfo=tz)
     rows = (
         base.annotate(day=day)
         .filter(day__gte=fetch_start, day__lte=week_end)
-        .order_by("at")
-        .values_list("task_id", "day", "assignee_ids")
+        .order_by("at", "id")
+        .values_list("task_id_snapshot", "day", "assignee_ids")
     )
 
     # weekly[week_monday][task_id] = assignee_ids snapshot of the LATEST

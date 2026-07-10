@@ -26,6 +26,7 @@ from .models import (
     RecurringTaskTemplate,
     StaleThresholdConfig,
     Task,
+    TransitionEvent,
     TransitionSource,
     View,
 )
@@ -875,6 +876,14 @@ class ColumnViewSet(viewsets.ModelViewSet):
                     task.column = target
                     task.position = next_pos
                     task.save(update_fields=["column", "position", "updated_at"])
+                    record_transition(
+                        task,
+                        from_column=column,
+                        to_column=target,
+                        event_type=TransitionEvent.MOVED,
+                        user=request.user,
+                        source=TransitionSource.USER,
+                    )
                     next_pos += 1000.0
                     broadcast_task_event(
                         project.id,
@@ -1227,14 +1236,14 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         task = serializer.save(reporter=self.request.user)
-        if task.column_id:
-            record_transition(
-                task,
-                from_column=None,
-                to_column=task.column,
-                user=self.request.user,
-                source=TransitionSource.USER,
-            )
+        record_transition(
+            task,
+            from_column=None,
+            to_column=task.column,
+            event_type=TransitionEvent.CREATED,
+            user=self.request.user,
+            source=TransitionSource.USER,
+        )
         broadcast_task_event(
             task.project_id, "task.created", {"key": task.key, "id": task.id}
         )
@@ -1269,6 +1278,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 task,
                 from_column=old_column,
                 to_column=task.column,
+                event_type=TransitionEvent.MOVED,
                 user=self.request.user,
                 source=TransitionSource.USER,
             )
@@ -1372,6 +1382,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                     task,
                     from_column=old_column,
                     to_column=column,
+                    event_type=TransitionEvent.MOVED,
                     user=request.user,
                     source=TransitionSource.USER,
                 )

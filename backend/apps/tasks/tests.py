@@ -23,7 +23,14 @@ from rest_framework.test import APIClient
 from apps.mcp_server import tools as mcp_tools
 
 from .analytics import throughput, weekly_completions
-from .models import Column, ColumnKind, Project, StateTransition, Task
+from .models import (
+    Column,
+    ColumnKind,
+    Project,
+    StateTransition,
+    Task,
+    TransitionEvent,
+)
 from .transitions import record_transition
 
 User = get_user_model()
@@ -160,10 +167,22 @@ class ThroughputTestBase(TestCase):
         )
 
     def _created(self, task, at):
-        record_transition(task, from_column=None, to_column=self.backlog, at=at)
+        record_transition(
+            task,
+            from_column=None,
+            to_column=self.backlog,
+            event_type=TransitionEvent.CREATED,
+            at=at,
+        )
 
     def _enter(self, task, column, at, frm=None):
-        record_transition(task, from_column=frm, to_column=column, at=at)
+        record_transition(
+            task,
+            from_column=frm,
+            to_column=column,
+            event_type=TransitionEvent.MOVED,
+            at=at,
+        )
 
     def _row(self, days, iso):
         return next(r for r in days if r["date"] == iso)
@@ -258,6 +277,201 @@ class ThroughputProjectFilterTests(ThroughputTestBase):
 
         all_projects = throughput(None, date(2026, 7, 1), date(2026, 7, 1), UTC)
         self.assertEqual(self._row(all_projects, "2026-07-01")["completed"], 2)
+
+
+class AnalyticsSnapshotIntegrityTests(ThroughputTestBase):
+    """Analytics read immutable event facts, never mutable task/column state."""
+
+    def _client(self):
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        return client
+
+    def test_column_reclassification_does_not_rewrite_history(self):
+        task = self._task()
+        at = _dt(2026, 7, 1, 9)
+        transition = record_transition(
+            task,
+            from_column=self.backlog,
+            to_column=self.in_progress,
+            event_type=TransitionEvent.MOVED,
+            at=at,
+        )
+
+        self.in_progress.name = "Actually shipped"
+        self.in_progress.kind = ColumnKind.DONE
+        self.in_progress.save()
+
+        transition.refresh_from_db()
+        self.assertEqual(transition.to_column_name, "In Progress")
+        self.assertEqual(transition.to_column_kind, ColumnKind.IN_PROGRESS)
+        self.assertFalse(transition.to_column_is_done)
+        days = throughput(self.project.id, at.date(), at.date(), UTC)
+        self.assertEqual(days[0]["started"], 1)
+        self.assertEqual(days[0]["completed"], 0)
+
+    def test_task_deletion_preserves_history_and_counts(self):
+        task = self._task()
+        task_id = task.id
+        at = _dt(2026, 7, 1, 9)
+        transition = record_transition(
+            task,
+            from_column=self.backlog,
+            to_column=self.done,
+            event_type=TransitionEvent.MOVED,
+            at=at,
+        )
+
+        task.delete()
+
+        transition.refresh_from_db()
+        self.assertIsNone(transition.task_id)
+        self.assertEqual(transition.task_id_snapshot, task_id)
+        days = throughput(self.project.id, at.date(), at.date(), UTC)
+        self.assertEqual(days[0]["completed"], 1)
+        weekly = weekly_completions(self.project.id, at.date(), 1, UTC)
+        self.assertEqual(weekly["total"], 1)
+
+    def test_project_move_does_not_reassign_old_events(self):
+        other = Project.objects.create(name="Other", prefix="OTH")
+        task = self._task()
+        at = _dt(2026, 7, 1, 9)
+        record_transition(
+            task,
+            from_column=self.backlog,
+            to_column=self.done,
+            event_type=TransitionEvent.MOVED,
+            at=at,
+        )
+
+        response = self._client().patch(
+            f"/api/tasks/{task.key}/",
+            {"project_id": other.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
+        original = throughput(self.project.id, at.date(), at.date(), UTC)[0]
+        destination = throughput(other.id, at.date(), at.date(), UTC)[0]
+        self.assertEqual(original["completed"], 1)
+        self.assertEqual(destination["completed"], 0)
+
+    def test_inbox_creation_is_explicit_and_first_assignment_is_a_move(self):
+        response = self._client().post(
+            "/api/tasks/", {"title": "Inbox first"}, format="json"
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        task = Task.objects.get(key=response.data["key"])
+        creation = task.transitions.get(event_type=TransitionEvent.CREATED)
+        self.assertIsNone(creation.project_id_snapshot)
+        self.assertIsNone(creation.to_column_id)
+
+        old_key = task.key
+        response = self._client().patch(
+            f"/api/tasks/{old_key}/",
+            {"project_id": self.project.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        task.refresh_from_db()
+        self.assertEqual(
+            list(task.transitions.values_list("event_type", flat=True)),
+            [TransitionEvent.CREATED, TransitionEvent.MOVED],
+        )
+        day = timezone.localdate(creation.at, UTC)
+        self.assertEqual(throughput(None, day, day, UTC)[0]["created"], 1)
+        self.assertEqual(
+            throughput(self.project.id, day, day, UTC)[0]["created"], 0
+        )
+
+    def test_column_delete_relocation_records_durable_move(self):
+        source = Column.objects.create(
+            project=self.project,
+            name="Temporary",
+            order=99,
+            kind=ColumnKind.TODO,
+        )
+        task = Task.objects.create(
+            project=self.project,
+            column=source,
+            title="Relocate me",
+            reporter=self.user,
+        )
+
+        response = self._client().delete(
+            f"/api/columns/{source.id}/?move_tasks_to={self.done.id}"
+        )
+        self.assertEqual(response.status_code, 204, response.data)
+
+        transition = task.transitions.get(event_type=TransitionEvent.MOVED)
+        self.assertIsNone(transition.from_column_id)
+        self.assertEqual(transition.from_column_name, "Temporary")
+        self.assertEqual(transition.to_column_kind, ColumnKind.DONE)
+        self.assertTrue(transition.to_column_is_done)
+        day = timezone.localdate(transition.at, UTC)
+        self.assertEqual(
+            throughput(self.project.id, day, day, UTC)[0]["completed"], 1
+        )
+
+
+class AnalyticsSnapshotMigrationTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("chris", "chris@example.com", "x")
+        self.project = Project.objects.create(name="Cyt", prefix="CYT")
+        self.backlog = self.project.columns.get(kind=ColumnKind.BACKLOG)
+        self.done = self.project.columns.get(kind=ColumnKind.DONE)
+        self.migration = importlib.import_module(
+            "apps.tasks.migrations.0025_statetransition_analytics_snapshots"
+        )
+
+    def test_backfill_snapshots_rows_and_adds_one_true_creation(self):
+        task = Task.objects.create(
+            project=self.project,
+            column=self.backlog,
+            title="Existing",
+            reporter=self.user,
+        )
+        transition = StateTransition.objects.create(
+            task=task,
+            from_column=self.backlog,
+            to_column=self.done,
+            at=_dt(2026, 7, 1, 9),
+            task_id_snapshot=0,
+            task_key_snapshot="placeholder",
+        )
+
+        self.migration.backfill_analytics_snapshots(django_apps, None)
+
+        transition.refresh_from_db()
+        self.assertEqual(transition.event_type, TransitionEvent.MOVED)
+        self.assertEqual(transition.task_id_snapshot, task.id)
+        self.assertEqual(transition.task_key_snapshot, task.key)
+        self.assertEqual(transition.project_id_snapshot, self.project.id)
+        self.assertEqual(transition.to_column_kind, ColumnKind.DONE)
+        self.assertTrue(transition.to_column_is_done)
+        creation = task.transitions.get(event_type=TransitionEvent.CREATED)
+        self.assertEqual(creation.at, task.created_at)
+        self.assertIsNone(creation.to_column_id)
+
+    def test_reverse_cleanup_removes_rows_the_old_fk_cannot_represent(self):
+        task = Task.objects.create(
+            project=self.project,
+            column=self.backlog,
+            title="Deleted later",
+            reporter=self.user,
+        )
+        transition = record_transition(
+            task,
+            from_column=self.backlog,
+            to_column=self.done,
+            event_type=TransitionEvent.MOVED,
+        )
+        transition_id = transition.id
+        task.delete()
+
+        self.migration.remove_synthetic_creations(django_apps, None)
+
+        self.assertFalse(StateTransition.objects.filter(id=transition_id).exists())
 
 
 class ThroughputAPITests(ThroughputTestBase):
@@ -397,6 +611,20 @@ class ColumnKindApiTests(TestCase):
         self.assertEqual(resp.status_code, 201, resp.data)
         self.assertTrue(resp.data["is_done"])
 
+    def test_create_column_accepts_legacy_is_done(self):
+        resp = self._client().post(
+            "/api/columns/",
+            {
+                "project": self.project.id,
+                "name": "Legacy shipped",
+                "is_done": True,
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data["kind"], "done")
+        self.assertTrue(resp.data["is_done"])
+
     def test_create_column_rejects_bad_kind(self):
         resp = self._client().post(
             "/api/columns/",
@@ -414,13 +642,24 @@ class ColumnKindApiTests(TestCase):
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(resp.data["kind"], "in_progress")
 
-    def test_is_done_is_read_only_via_api(self):
+    def test_legacy_is_done_write_translates_to_kind(self):
         col = self.project.columns.get(name="Backlog")
         resp = self._client().patch(
             f"/api/columns/{col.id}/", {"is_done": True}, format="json"
         )
         self.assertEqual(resp.status_code, 200)
-        # Ignored — kind unchanged, so still not done.
+        self.assertTrue(resp.data["is_done"])
+        self.assertEqual(resp.data["kind"], "done")
+
+    def test_explicit_kind_wins_over_legacy_is_done(self):
+        col = self.project.columns.get(name="Backlog")
+        resp = self._client().patch(
+            f"/api/columns/{col.id}/",
+            {"kind": "review", "is_done": True},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["kind"], "review")
         self.assertFalse(resp.data["is_done"])
 
     def test_cannot_demote_last_done_column(self):
@@ -499,21 +738,33 @@ class AssigneeSnapshotHelperTests(AssigneeSnapshotTestBase):
     def test_snapshot_captures_current_assignees(self):
         task = self._task(assignees=[self.alice, self.bob])
         st = record_transition(
-            task, from_column=self.backlog, to_column=self.done, at=timezone.now()
+            task,
+            from_column=self.backlog,
+            to_column=self.done,
+            event_type=TransitionEvent.MOVED,
+            at=timezone.now(),
         )
         self.assertEqual(sorted(st.assignee_ids), sorted([self.alice.id, self.bob.id]))
 
     def test_snapshot_empty_when_unassigned(self):
         task = self._task()
         st = record_transition(
-            task, from_column=None, to_column=self.backlog, at=timezone.now()
+            task,
+            from_column=None,
+            to_column=self.backlog,
+            event_type=TransitionEvent.CREATED,
+            at=timezone.now(),
         )
         self.assertEqual(st.assignee_ids, [])
 
     def test_snapshot_is_immutable_after_reassignment(self):
         task = self._task(assignees=[self.alice])
         st = record_transition(
-            task, from_column=self.backlog, to_column=self.done, at=timezone.now()
+            task,
+            from_column=self.backlog,
+            to_column=self.done,
+            event_type=TransitionEvent.MOVED,
+            at=timezone.now(),
         )
         task.assignees.set([self.bob])
         st.refresh_from_db()
@@ -592,7 +843,12 @@ class AssigneeSnapshotBackfillMigrationTests(AssigneeSnapshotTestBase):
         # Simulate a pre-migration row: created directly, bypassing
         # record_transition(), so it keeps the schema default [].
         st = StateTransition.objects.create(
-            task=task, from_column=None, to_column=self.backlog, at=timezone.now()
+            task=task,
+            from_column=None,
+            to_column=self.backlog,
+            at=timezone.now(),
+            task_id_snapshot=task.id,
+            task_key_snapshot=task.key,
         )
         self.assertEqual(st.assignee_ids, [])
         self._backfill(django_apps, None)
@@ -602,7 +858,12 @@ class AssigneeSnapshotBackfillMigrationTests(AssigneeSnapshotTestBase):
     def test_backfill_leaves_unassigned_tasks_empty(self):
         task = self._task()
         st = StateTransition.objects.create(
-            task=task, from_column=None, to_column=self.backlog, at=timezone.now()
+            task=task,
+            from_column=None,
+            to_column=self.backlog,
+            at=timezone.now(),
+            task_id_snapshot=task.id,
+            task_key_snapshot=task.key,
         )
         self._backfill(django_apps, None)
         st.refresh_from_db()
@@ -637,6 +898,7 @@ class WeeklyCompletionsTestBase(TestCase):
             task,
             from_column=frm if frm is not None else self.backlog,
             to_column=self.done,
+            event_type=TransitionEvent.MOVED,
             at=at,
         )
 
@@ -674,7 +936,11 @@ class WeeklyCompletionsDistinctTests(WeeklyCompletionsTestBase):
         task = self._task()
         self._complete(task, _dt(2026, 7, 6, 9))
         record_transition(
-            task, from_column=self.done, to_column=self.backlog, at=_dt(2026, 7, 7, 9)
+            task,
+            from_column=self.done,
+            to_column=self.backlog,
+            event_type=TransitionEvent.MOVED,
+            at=_dt(2026, 7, 7, 9),
         )
         self._complete(task, _dt(2026, 7, 7, 12), frm=self.backlog)
         result = weekly_completions(self.project.id, date(2026, 7, 6), 1, UTC)
@@ -684,13 +950,30 @@ class WeeklyCompletionsDistinctTests(WeeklyCompletionsTestBase):
         task = self._task()
         self._complete(task, _dt(2026, 7, 6, 9))
         record_transition(
-            task, from_column=self.done, to_column=self.backlog, at=_dt(2026, 7, 10, 9)
+            task,
+            from_column=self.done,
+            to_column=self.backlog,
+            event_type=TransitionEvent.MOVED,
+            at=_dt(2026, 7, 10, 9),
         )
         self._complete(task, _dt(2026, 7, 13, 9), frm=self.backlog)
         week1 = weekly_completions(self.project.id, date(2026, 7, 6), 1, UTC)
         week2 = weekly_completions(self.project.id, date(2026, 7, 13), 1, UTC)
         self.assertEqual(week1["total"], 1)
         self.assertEqual(week2["total"], 1)
+
+    def test_equal_timestamps_choose_higher_id_as_latest(self):
+        task = self._task(assignees=[self.alice])
+        at = _dt(2026, 7, 7, 12)
+        self._complete(task, at)
+        task.assignees.set([self.bob])
+        self._complete(task, at)
+
+        result = weekly_completions(self.project.id, at.date(), 1, UTC)
+        counts = {entry["user_id"]: entry["count"] for entry in result["per_person"]}
+        self.assertEqual(result["total"], 1)
+        self.assertNotIn(self.alice.id, counts)
+        self.assertEqual(counts[self.bob.id], 1)
 
 
 class WeeklyCompletionsPerPersonTests(WeeklyCompletionsTestBase):
@@ -787,7 +1070,11 @@ class WeeklyCompletionsProjectFilterTests(WeeklyCompletionsTestBase):
             project=other, column=other_done, title="x", reporter=self.user
         )
         record_transition(
-            other_task, from_column=None, to_column=other_done, at=_dt(2026, 7, 6, 9)
+            other_task,
+            from_column=None,
+            to_column=other_done,
+            event_type=TransitionEvent.MOVED,
+            at=_dt(2026, 7, 6, 9),
         )
         mine = self._task()
         self._complete(mine, _dt(2026, 7, 6, 9))

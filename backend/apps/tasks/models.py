@@ -556,16 +556,31 @@ class TransitionSource(models.TextChoices):
     GITHUB = "github", "GitHub webhook"
 
 
-class StateTransition(models.Model):
-    """Immutable log of every column change for a task.
+class TransitionEvent(models.TextChoices):
+    """Why a state-transition row exists.
 
-    Each record answers: "at time ``at``, task moved from ``from_column`` to
-    ``to_column``, triggered by ``triggered_by`` via ``source``." Used to
-    compute time-in-column durations and staleness.
+    Creation is deliberately explicit rather than inferred from a null
+    ``from_column``: Inbox tasks are created without a column and may only be
+    assigned one much later.
+    """
+
+    CREATED = "created", "Created"
+    MOVED = "moved", "Moved"
+
+
+class StateTransition(models.Model):
+    """Immutable event log of task creation and every column change.
+
+    Foreign keys support live navigation and staleness queries. Snapshot
+    fields are the analytics source of truth and survive later edits/deletes.
     """
 
     task = models.ForeignKey(
-        "Task", on_delete=models.CASCADE, related_name="transitions"
+        "Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transitions",
     )
     from_column = models.ForeignKey(
         Column,
@@ -594,6 +609,40 @@ class StateTransition(models.Model):
         choices=TransitionSource.choices,
         default=TransitionSource.USER,
     )
+    event_type = models.CharField(
+        max_length=16,
+        choices=TransitionEvent.choices,
+        default=TransitionEvent.MOVED,
+        help_text=(
+            "Explicit event semantic. Creation must never be inferred from a "
+            "null from_column because Inbox tasks begin without a column."
+        ),
+    )
+    task_id_snapshot = models.PositiveBigIntegerField(
+        help_text="Immutable task primary-key snapshot for durable distinct counts."
+    )
+    task_key_snapshot = models.CharField(
+        max_length=32,
+        help_text="Immutable human-readable task key snapshot.",
+    )
+    project_id_snapshot = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Immutable project id at the time of the event; null for Inbox.",
+    )
+    from_column_name = models.CharField(max_length=80, null=True, blank=True)
+    to_column_name = models.CharField(max_length=80, null=True, blank=True)
+    to_column_kind = models.CharField(
+        max_length=16,
+        choices=ColumnKind.choices,
+        null=True,
+        blank=True,
+        help_text="Immutable semantic kind of the destination column.",
+    )
+    to_column_is_done = models.BooleanField(
+        default=False,
+        help_text="Immutable completion status of the destination column.",
+    )
     assignee_ids = models.JSONField(
         default=list,
         help_text=(
@@ -610,12 +659,15 @@ class StateTransition(models.Model):
         indexes = [
             models.Index(fields=["task", "at"]),
             models.Index(fields=["task", "to_column"]),
+            models.Index(fields=["project_id_snapshot", "event_type", "at"]),
+            models.Index(fields=["project_id_snapshot", "to_column_kind", "at"]),
+            models.Index(fields=["task_id_snapshot", "at"]),
         ]
 
     def __str__(self) -> str:  # pragma: no cover
-        frm = self.from_column.name if self.from_column_id else "∅"
-        to = self.to_column.name if self.to_column_id else "∅"
-        return f"{self.task_id}: {frm} → {to} @ {self.at.isoformat()}"
+        frm = self.from_column_name or "∅"
+        to = self.to_column_name or "∅"
+        return f"{self.task_id_snapshot}: {frm} → {to} @ {self.at.isoformat()}"
 
 
 # Default global thresholds applied to columns by name. Columns not listed
