@@ -1,29 +1,28 @@
 /**
- * Chart chrome + categorical palette for the analytics page.
+ * Chart chrome + accent colors for the analytics page.
  *
  * Values come from the dataviz skill's validated reference palette (see
  * `references/palette.md` in the `dataviz` skill), not the app's own
  * near-grayscale `--chart-1..5` theme tokens — those are unassigned
- * placeholders with no hue, unsuitable for telling four series apart.
- * Both light and dark steps here were run through the skill's
- * `validate_palette.js` (lightness band, chroma floor, CVD separation,
- * contrast) before being picked.
+ * placeholders with no hue.
  *
- * Slot order is fixed (never cycled) and follows the task pipeline:
- * created → started → in_review → completed.
+ * The weekly-completions chart is nominal-categorical-by-person, but per the
+ * skill's color formula (`color-formula.md`) a nominal set where reordering
+ * doesn't change meaning takes a SINGLE slot-1 hue for every bar — not a
+ * generated per-person palette. "Unassigned" is the one exception: it's a
+ * distinct, always-last bucket, so it's treated as an emphasis "de-emphasize
+ * the rest" gray rather than a second identity color.
  */
 
-import type { ThroughputMetric } from "./types";
+/** Slot-1 blue — the one accent hue used for every real-person completions
+ *  bar, the current-week bar in the trend strip, and the totals-row figure. */
+export const COMPLETIONS_ACCENT = { light: "#2a78d6", dark: "#3987e5" };
 
-export const THROUGHPUT_COLORS: Record<
-  ThroughputMetric,
-  { light: string; dark: string }
-> = {
-  created: { light: "#2a78d6", dark: "#3987e5" }, // categorical slot 1 — blue
-  started: { light: "#1baf7a", dark: "#199e70" }, // categorical slot 2 — aqua
-  in_review: { light: "#eda100", dark: "#c98500" }, // categorical slot 3 — yellow
-  completed: { light: "#008300", dark: "#008300" }, // categorical slot 4 — green
-};
+/** The "Unassigned" bucket + de-emphasized (non-selected) trend bars — the
+ *  chrome's muted-ink gray (same value both modes, already validated as the
+ *  app's de-emphasis step for axis/legend text), reused as a fill rather
+ *  than a second identity hue. */
+export const COMPLETIONS_MUTED = "#898781";
 
 export type ChartChrome = {
   surface: string;

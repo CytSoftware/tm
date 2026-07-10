@@ -665,36 +665,32 @@ export type WebhookEndpointListResponse = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────
-// Analytics — daily task-event throughput. `GET /api/analytics/throughput/`
-// returns one zero-filled row per day (ascending, `from`/`to` inclusive).
+// Analytics — weekly completions. `GET /api/analytics/completions/` returns
+// the selected week's per-person completion counts plus a zero-filled trend
+// of the trailing `weeks` weeks (ascending, ending at the selected week).
 // See `frontend/src/hooks/use-analytics.ts`.
 // ─────────────────────────────────────────────────────────────────────────
 
-export type ThroughputDay = {
-  date: string;
-  created: number;
-  started: number;
-  in_review: number;
-  completed: number;
+/** One row of `per_person` — `user_id: null` is the "Unassigned" bucket,
+ *  always sorted last by the server. */
+export type CompletionsPerson = {
+  user_id: number | null;
+  username: string | null;
+  avatar_url: string | null;
+  count: number;
+  prev_count: number;
 };
 
-export type ThroughputResponse = {
-  days: ThroughputDay[];
+export type CompletionsTrendWeek = {
+  week_start: string;
+  total: number;
 };
 
-/** The four series tracked on the throughput chart, in display order. */
-export type ThroughputMetric = "created" | "started" | "in_review" | "completed";
-
-export const THROUGHPUT_METRICS: ThroughputMetric[] = [
-  "created",
-  "started",
-  "in_review",
-  "completed",
-];
-
-export const THROUGHPUT_METRIC_LABELS: Record<ThroughputMetric, string> = {
-  created: "Created",
-  started: "Started",
-  in_review: "In review",
-  completed: "Completed",
+export type WeeklyCompletionsResponse = {
+  week_start: string;
+  week_end: string;
+  total: number;
+  prev_total: number;
+  per_person: CompletionsPerson[];
+  trend: CompletionsTrendWeek[];
 };

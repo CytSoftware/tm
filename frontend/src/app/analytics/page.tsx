@@ -1,21 +1,32 @@
 "use client";
 
 /**
- * /analytics — daily task-event throughput.
+ * /analytics — "how much did we get done this week, per person."
  *
- * Header mirrors the /bets project switcher: a range control (7/30/90 days)
- * plus an all-projects/single-project select, both scoping everything below
- * them (see the dataviz skill's filter composition rule — one row, above the
- * charts). Data comes from `useThroughputQuery`, which fetches 2x the
- * selected range in one request and slices it into the visible window and
- * the prior window used for the stat-tile deltas.
+ * v2 replaces the v1 daily 4-line throughput chart + stat tiles (noisy,
+ * low-level) with a single high-level weekly view: a week switcher, a big
+ * total + delta, a per-person hero bar chart, and a compact trend strip of
+ * recent weeks (clicking a week re-scopes everything above it). Header
+ * mirrors the old page's project filter; the week switcher follows the same
+ * prev/next/"back to now" pattern as `PeriodMasthead` on /bets.
  *
- * The endpoint may not be deployed yet (`GET /api/analytics/throughput/`
- * 404s) — that surfaces as a quiet inline error state, not a crash.
+ * Data comes from `useWeeklyCompletionsQuery` against the frozen
+ * `GET /api/analytics/completions/` contract — one request per (project,
+ * week) pair returns the selected week's totals/per-person breakdown AND a
+ * zero-filled trend of the trailing weeks, so the switcher and trend strip
+ * never desync.
  */
 
 import { useState } from "react";
-import { AlertTriangle, BarChart3, Layers, RotateCw } from "lucide-react";
+import {
+  AlertTriangle,
+  BarChart3,
+  ChevronLeft,
+  ChevronRight,
+  Layers,
+  RotateCw,
+  Undo2,
+} from "lucide-react";
 
 import {
   Select,
@@ -25,36 +36,39 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { StatTiles } from "@/components/analytics/StatTiles";
-import { ThroughputChart } from "@/components/analytics/ThroughputChart";
-import { useThroughputQuery, type ThroughputRange } from "@/hooks/use-analytics";
+import { CompletionsChart } from "@/components/analytics/CompletionsChart";
+import { DeltaIndicator } from "@/components/analytics/DeltaIndicator";
+import { TrendStrip } from "@/components/analytics/TrendStrip";
+import {
+  addWeeksIso,
+  currentWeekStart,
+  formatWeekRange,
+  isCurrentWeek,
+  useWeeklyCompletionsQuery,
+} from "@/hooks/use-analytics";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import { useActiveProject } from "@/lib/active-project";
-import { cn } from "@/lib/utils";
 
-const RANGE_OPTIONS: ThroughputRange[] = [7, 30, 90];
+const TREND_WEEKS = 8;
 
 export default function AnalyticsPage() {
   const { projectId, setProjectId, hydrated } = useActiveProject();
   const projectsQuery = useProjectsQuery({ includeArchived: false });
   const projects = projectsQuery.data?.results ?? [];
 
-  const [range, setRange] = useState<ThroughputRange>(30);
+  const [weekStart, setWeekStart] = useState<string>(() => currentWeekStart());
 
-  const throughput = useThroughputQuery({
+  const completions = useWeeklyCompletionsQuery({
     projectId: hydrated ? projectId : null,
-    days: range,
+    weekStart,
+    weeks: TREND_WEEKS,
+    enabled: hydrated,
   });
 
-  const isEmpty =
-    throughput.isSuccess &&
-    throughput.current.every(
-      (d) =>
-        d.created === 0 &&
-        d.started === 0 &&
-        d.in_review === 0 &&
-        d.completed === 0,
-    );
+  const data = completions.data;
+  const isWeekEmpty = data != null && data.total === 0;
+  const hasTrendData = data?.trend.some((w) => w.total > 0) ?? false;
+  const fullyEmpty = isWeekEmpty && !hasTrendData;
 
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -62,7 +76,7 @@ export default function AnalyticsPage() {
         <BarChart3 className="size-4 text-muted-foreground" />
         <h1 className="text-[13px] font-semibold tracking-tight">Analytics</h1>
 
-        <RangeControl value={range} onChange={setRange} />
+        <WeekSwitcher weekStart={weekStart} onChange={setWeekStart} />
 
         <Select
           value={projectId != null ? String(projectId) : "all"}
@@ -74,7 +88,7 @@ export default function AnalyticsPage() {
             } as Record<string, React.ReactNode>
           }
         >
-          <SelectTrigger className="h-7 w-44 text-[12px]">
+          <SelectTrigger className="ml-auto h-7 w-44 text-[12px]">
             <SelectValue placeholder="Pick a project" />
           </SelectTrigger>
           <SelectContent>
@@ -100,22 +114,42 @@ export default function AnalyticsPage() {
       </header>
 
       <div className="flex-1 min-h-0 overflow-y-auto bg-muted/40 px-4 py-5">
-        <div className="max-w-5xl mx-auto space-y-4">
-          {!hydrated || throughput.isLoading ? (
+        <div className="max-w-4xl mx-auto space-y-4">
+          {!hydrated || completions.isLoading ? (
             <LoadingSkeleton />
-          ) : throughput.isError ? (
-            <ErrorState onRetry={() => throughput.refetch()} />
-          ) : isEmpty ? (
+          ) : completions.isError ? (
+            <ErrorState onRetry={() => completions.refetch()} />
+          ) : !data ? null : fullyEmpty ? (
             <EmptyState />
           ) : (
             <>
-              <StatTiles
-                current={throughput.current}
-                previous={throughput.previous}
-              />
-              <div className="rounded-lg border border-border/60 bg-card p-4 h-[420px]">
-                <ThroughputChart data={throughput.current} />
-              </div>
+              {isWeekEmpty ? (
+                <div className="rounded-lg border border-dashed border-border/60 py-8 px-6 text-center text-[12px] text-muted-foreground">
+                  Nothing completed this week yet.
+                </div>
+              ) : (
+                <>
+                  <TotalsRow total={data.total} prevTotal={data.prev_total} />
+                  <div className="rounded-lg border border-border/60 bg-card p-4 h-[360px]">
+                    <CompletionsChart people={data.per_person} />
+                  </div>
+                </>
+              )}
+
+              {hasTrendData && (
+                <div className="rounded-lg border border-border/60 bg-card p-4">
+                  <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Last {TREND_WEEKS} weeks
+                  </h2>
+                  <div className="h-[110px]">
+                    <TrendStrip
+                      trend={data.trend}
+                      selectedWeekStart={weekStart}
+                      onSelectWeek={setWeekStart}
+                    />
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -124,35 +158,64 @@ export default function AnalyticsPage() {
   );
 }
 
-function RangeControl({
-  value,
+function WeekSwitcher({
+  weekStart,
   onChange,
 }: {
-  value: ThroughputRange;
-  onChange: (v: ThroughputRange) => void;
+  weekStart: string;
+  onChange: (weekStart: string) => void;
 }) {
+  const atCurrent = isCurrentWeek(weekStart);
   return (
-    <div
-      className="ml-1 flex items-center gap-0.5 rounded-md border border-border/70 p-0.5"
-      role="group"
-      aria-label="Date range"
-    >
-      {RANGE_OPTIONS.map((r) => (
+    <div className="ml-1 flex items-center gap-1">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7"
+        onClick={() => onChange(addWeeksIso(weekStart, -1))}
+        aria-label="Previous week"
+      >
+        <ChevronLeft className="size-4" />
+      </Button>
+      <span className="min-w-[126px] text-center text-[12px] font-medium tabular-nums">
+        {formatWeekRange(weekStart)}
+      </span>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7"
+        disabled={atCurrent}
+        onClick={() => onChange(addWeeksIso(weekStart, 1))}
+        aria-label="Next week"
+      >
+        <ChevronRight className="size-4" />
+      </Button>
+      {!atCurrent && (
         <button
-          key={r}
           type="button"
-          onClick={() => onChange(r)}
-          aria-pressed={value === r}
-          className={cn(
-            "px-2.5 py-1 rounded text-[11px] font-medium tabular-nums transition-colors",
-            value === r
-              ? "bg-accent text-foreground"
-              : "text-muted-foreground hover:text-foreground",
-          )}
+          onClick={() => onChange(currentWeekStart())}
+          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
         >
-          {r}d
+          <Undo2 className="size-3" />
+          This week
         </button>
-      ))}
+      )}
+    </div>
+  );
+}
+
+function TotalsRow({ total, prevTotal }: { total: number; prevTotal: number }) {
+  return (
+    <div className="flex items-baseline gap-3 px-1">
+      <span className="text-[30px] font-semibold tracking-tight">
+        {total.toLocaleString()} done
+      </span>
+      <DeltaIndicator
+        current={total}
+        previous={prevTotal}
+        suffix="vs last week"
+        size="lg"
+      />
     </div>
   );
 }
@@ -160,12 +223,9 @@ function RangeControl({
 function LoadingSkeleton() {
   return (
     <div className="animate-pulse space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-[74px] rounded-lg bg-muted" />
-        ))}
-      </div>
-      <div className="h-[420px] rounded-lg bg-muted" />
+      <div className="h-8 w-40 rounded-md bg-muted" />
+      <div className="h-[360px] rounded-lg bg-muted" />
+      <div className="h-[150px] rounded-lg bg-muted" />
     </div>
   );
 }
@@ -174,9 +234,9 @@ function EmptyState() {
   return (
     <div className="mt-14 mx-auto max-w-md grid place-items-center gap-2 rounded-lg border border-dashed border-border/60 py-14 px-6 text-center">
       <BarChart3 className="size-6 text-muted-foreground/60" />
-      <p className="text-[13px] font-medium">No activity yet</p>
+      <p className="text-[13px] font-medium">Nothing completed this week yet</p>
       <p className="text-[12px] text-muted-foreground">
-        Nothing was created, started, reviewed, or completed in this window.
+        Finished tasks will show up here, broken down by who closed them.
       </p>
     </div>
   );
@@ -189,7 +249,7 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
       <div className="space-y-1">
         <p className="text-[13px] font-medium">Couldn&apos;t load analytics</p>
         <p className="text-[12px] text-muted-foreground">
-          The throughput data isn&apos;t available right now.
+          The weekly completions data isn&apos;t available right now.
         </p>
       </div>
       <Button variant="outline" size="sm" onClick={onRetry}>
