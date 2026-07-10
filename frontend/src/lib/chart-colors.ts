@@ -1,5 +1,5 @@
 /**
- * Chart chrome + accent colors for the analytics page.
+ * Chart chrome + restrained categorical colors for the analytics page.
  *
  * Values come from the dataviz skill's validated reference palette (see
  * `references/palette.md` in the `dataviz` skill), not the app's own
@@ -14,6 +14,8 @@
  * the rest" gray rather than a second identity color.
  */
 
+import type { ThroughputMetric } from "./types";
+
 /** Slot-1 blue — the one accent hue used for every real-person completions
  *  bar, the current-week bar in the trend strip, and the totals-row figure. */
 export const COMPLETIONS_ACCENT = { light: "#2a78d6", dark: "#3987e5" };
@@ -23,6 +25,16 @@ export const COMPLETIONS_ACCENT = { light: "#2a78d6", dark: "#3987e5" };
  *  app's de-emphasis step for axis/legend text), reused as a fill rather
  *  than a second identity hue. */
 export const COMPLETIONS_MUTED = "#898781";
+
+export const THROUGHPUT_COLORS: Record<
+  ThroughputMetric,
+  { light: string; dark: string }
+> = {
+  created: { light: "#2a78d6", dark: "#3987e5" },
+  started: { light: "#1b9a73", dark: "#32b58b" },
+  in_review: { light: "#c58715", dark: "#d8a137" },
+  completed: { light: "#328454", dark: "#4ca66d" },
+};
 
 export type ChartChrome = {
   surface: string;

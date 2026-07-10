@@ -13,15 +13,12 @@ import { Minus, TrendingDown, TrendingUp } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-export type DeltaDirection = "up" | "down" | "flat" | "none";
+export type DeltaDirection = "up" | "down" | "flat";
 
 export function describeDelta(
   current: number,
   previous: number,
 ): { direction: DeltaDirection; diff: number } {
-  if (previous === 0) {
-    return { direction: current > 0 ? "none" : "flat", diff: current };
-  }
   const diff = current - previous;
   return {
     direction: diff > 0 ? "up" : diff < 0 ? "down" : "flat",
@@ -47,18 +44,10 @@ export function DeltaIndicator({
   const textSize = size === "lg" ? "text-[13px]" : "text-[11px]";
   const iconSize = size === "lg" ? "size-3.5" : "size-3";
 
-  if (direction === "none") {
-    return (
-      <span className={cn(textSize, "text-muted-foreground/70", className)}>
-        no prior data
-      </span>
-    );
-  }
-
   const Icon = direction === "up" ? TrendingUp : direction === "down" ? TrendingDown : Minus;
   const label =
     direction === "flat"
-      ? "no change"
+      ? `no change${suffix ? ` ${suffix}` : ""}`
       : `${diff > 0 ? "+" : ""}${diff}${suffix ? ` ${suffix}` : ""}`;
 
   return (

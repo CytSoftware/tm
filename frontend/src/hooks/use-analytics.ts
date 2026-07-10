@@ -4,8 +4,12 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { apiFetch } from "@/lib/api";
-import { weeklyCompletionsKey } from "@/lib/query-keys";
-import type { WeeklyCompletionsResponse } from "@/lib/types";
+import { throughputKey, weeklyCompletionsKey } from "@/lib/query-keys";
+import type {
+  ThroughputDay,
+  ThroughputResponse,
+  WeeklyCompletionsResponse,
+} from "@/lib/types";
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -42,6 +46,51 @@ export function addWeeksIso(iso: string, deltaWeeks: number): string {
 
 export function isCurrentWeek(weekStart: string): boolean {
   return weekStart === currentWeekStart();
+}
+
+export type ThroughputRange = 7 | 30 | 90;
+
+type UseThroughputArgs = {
+  projectId: number | null;
+  days: ThroughputRange;
+  enabled?: boolean;
+};
+
+/** Fetch the visible flow window and the equally-sized prior comparison in
+ * one request. The backend zero-fills both windows. */
+export function useThroughputQuery({
+  projectId,
+  days,
+  enabled = true,
+}: UseThroughputArgs) {
+  const { from, to, tz } = useMemo(() => {
+    const today = isoDate(new Date());
+    return {
+      to: today,
+      from: addDaysIso(today, -(days * 2 - 1)),
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    };
+  }, [days]);
+
+  const query = useQuery({
+    queryKey: throughputKey(projectId, from, to, tz),
+    queryFn: () =>
+      apiFetch<ThroughputResponse>("/api/analytics/throughput/", {
+        query: { project: projectId ?? undefined, from, to, tz },
+      }),
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+
+  const allDays: ThroughputDay[] = query.data?.days ?? [];
+  const current = allDays.slice(Math.max(0, allDays.length - days));
+  const previous = allDays.slice(
+    Math.max(0, allDays.length - days * 2),
+    Math.max(0, allDays.length - days),
+  );
+
+  return { ...query, current, previous };
 }
 
 /** "Jul 6 – Jul 12" (or "Jul 6 – Aug 2" across a month boundary), local. */
@@ -108,5 +157,6 @@ export function useWeeklyCompletionsQuery({
       }),
     enabled,
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 }
