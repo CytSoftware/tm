@@ -322,24 +322,6 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
         />
         <NavLink
           icon={
-            <BarChart3
-              className={
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground"
-              }
-            />
-          }
-          label="Analytics"
-          active={pathname.startsWith("/analytics")}
-          collapsed={isCollapsed}
-          onNavigate={() => {
-            router.push("/analytics");
-            onClose?.();
-          }}
-        />
-        <NavLink
-          icon={
             <BookText
               className={
                 isCollapsed
@@ -487,6 +469,30 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
               ))}
           </div>
         )}
+
+        {/* Analytics is intentionally separated from the everyday workspace
+            links. It stays easy to find without competing with Tasks, Bets,
+            or the project list for primary-navigation attention. */}
+        <ProjectGroup title="Insights" collapsed={isCollapsed}>
+          <NavLink
+            icon={
+              <BarChart3
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="Analytics"
+            active={pathname.startsWith("/analytics")}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/analytics");
+              onClose?.();
+            }}
+          />
+        </ProjectGroup>
       </nav>
 
       {/* Footer: user + theme */}

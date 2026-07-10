@@ -292,6 +292,27 @@ async def get_throughput(
 
 
 @mcp.tool()
+async def get_weekly_completions(
+    project: str | int | None = None,
+    week: str | None = None,
+    weeks: int = 8,
+    tz: str = "UTC",
+) -> dict[str, Any]:
+    """Weekly completion counts, overall and per person, plus a trend series.
+
+    A completion is a task entering an ``is_done`` column; each task counts
+    once per week even if it toggled done/undone multiple times. ``week`` is
+    any ``YYYY-MM-DD`` date inside the desired week (default: today in
+    ``tz``); weeks are Monday-start. ``weeks`` sets the trend length (default
+    8, capped at 52) — the trend ends at the selected week, zero-filled.
+    ``project`` (id or prefix) limits to one project; omit for all. ``tz`` is
+    an IANA name used to bucket weeks (default UTC)."""
+    return await _async(tools.get_weekly_completions)(
+        project=project, week=week, weeks=weeks, tz=tz
+    )
+
+
+@mcp.tool()
 async def list_labels(project: str | int | None = None) -> list[dict[str, Any]]:
     """List labels. With ``project`` set, returns that project's labels plus
     global (project-less) labels. Without ``project``, returns every label."""

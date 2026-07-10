@@ -58,7 +58,7 @@ export const viewport: Viewport = {
  *
  * HARD INVARIANT: the page itself must NEVER scroll.
  *
- *   <html class="h-full">
+ *   <html class="h-full overflow-hidden">
  *     <body class="h-full overflow-hidden">     ← no page scroll
  *       <div class="h-screen flex flex-col">    ← the shell
  *         ...fixed regions + min-h-0 scrollable children
@@ -80,7 +80,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      className={`${inter.variable} ${jetbrainsMono.variable} h-full overflow-hidden antialiased`}
     >
       <body className="h-full overflow-hidden bg-background text-foreground">
         <Providers>

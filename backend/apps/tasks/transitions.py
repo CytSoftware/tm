@@ -2,9 +2,9 @@
 
 Two public surfaces:
 
-* :func:`record_transition` — append a new row to the ``StateTransition`` log
-  whenever a task changes column. Every write path (DRF viewset, MCP tools,
-  recurring generator) calls this so the log stays authoritative.
+* :func:`record_transition` — append a creation or movement event to the
+  ``StateTransition`` log. Every write path (DRF viewset, MCP tools, recurring
+  generator) calls this so the log stays authoritative.
 * :func:`compute_staleness` / :func:`get_stale_thresholds` — derive the
   yellow/red badge from the currently-effective :class:`StaleThresholdConfig`.
   Thresholds are cached in-process for ~30s to avoid DB load on serializer
@@ -29,6 +29,7 @@ from .models import (
     StaleThresholdConfig,
     StateTransition,
     Task,
+    TransitionEvent,
     TransitionSource,
 )
 
@@ -43,6 +44,7 @@ def record_transition(
     *,
     from_column: Column | None,
     to_column: Column | None,
+    event_type: str,
     user=None,
     source: str = TransitionSource.USER,
     at: datetime | None = None,
@@ -52,7 +54,18 @@ def record_transition(
     Callers pass the old column explicitly — we don't infer it from
     ``task.column`` because by the time this is called the column has
     usually already been reassigned.
+
+    ``assignee_ids`` is snapshotted from ``task.assignees`` right now, so
+    every write path must set assignees on the task *before* calling this —
+    see the module docstring on ``StateTransition.assignee_ids``.
+
+    Analytics must read the snapshot fields written here rather than joining
+    mutable task/column rows. The foreign keys remain useful for the live task
+    transition timeline and current-column staleness lookup.
     """
+    if event_type not in TransitionEvent.values:
+        raise ValueError(f"Unknown transition event type: {event_type!r}")
+
     return StateTransition.objects.create(
         task=task,
         from_column=from_column,
@@ -60,6 +73,15 @@ def record_transition(
         at=at or timezone.now(),
         triggered_by=user if (user is not None and getattr(user, "pk", None)) else None,
         source=source,
+        event_type=event_type,
+        task_id_snapshot=task.id,
+        task_key_snapshot=task.key,
+        project_id_snapshot=task.project_id,
+        from_column_name=from_column.name if from_column else None,
+        to_column_name=to_column.name if to_column else None,
+        to_column_kind=to_column.kind if to_column else None,
+        to_column_is_done=bool(to_column and to_column.is_done),
+        assignee_ids=list(task.assignees.values_list("id", flat=True)),
     )
 
 

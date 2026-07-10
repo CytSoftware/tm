@@ -3,12 +3,13 @@
 /**
  * / — the home dashboard.
  *
- * One glance answers three questions: where are we in the current two-month
- * period, how are the bets doing (team-wide, every project), and what's on
- * my plate. The period masthead reuses the bets page's clock and navigates
- * periods — browse back to see how past bets closed, or forward to place
- * next period's bets. The bets column follows the selected period (new bets
- * and check-in history in place); My Tasks and Activity stay pinned to now.
+ * One glance answers four questions: where are we in the current two-month
+ * period, how are the bets doing (team-wide, every project), how much did we
+ * get done this week, and what's on my plate. The period masthead reuses the
+ * bets page's clock and navigates periods — browse back to see how past bets
+ * closed, or forward to place next period's bets. The bets column follows
+ * the selected period (new bets and check-in history in place); This week,
+ * My Tasks, and Activity stay pinned to now.
  *
  * Freshness: no project sockets here — the sections poll every 60s, the
  * global notification socket prepends activity live, and Shell invalidates
@@ -21,6 +22,7 @@ import { Home } from "lucide-react";
 import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import { BetsOverview } from "@/components/dashboard/BetsOverview";
 import { MyTasks } from "@/components/dashboard/MyTasks";
+import { WeekOverview } from "@/components/dashboard/WeekOverview";
 import { PeriodMasthead } from "@/components/bets/PeriodMasthead";
 import { currentPeriodStart } from "@/lib/periods";
 
@@ -42,6 +44,7 @@ export default function DashboardPage() {
             <BetsOverview period={period} />
           </div>
           <div className="min-w-0 space-y-5 order-first lg:order-none">
+            <WeekOverview />
             <MyTasks />
             <ActivityFeed />
           </div>
