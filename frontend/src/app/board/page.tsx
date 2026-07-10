@@ -65,6 +65,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  ActiveFilterChips,
   FilterBar,
   boardFiltersFromSavedView,
   savedViewPayloadFromFilters,
@@ -1118,6 +1119,15 @@ export default function BoardPage() {
           activeView ? () => saveViewMutation.mutate() : undefined
         }
         showArchivedToggle={isAllProjects && hasArchivedProjects}
+      />
+      {/* Applied filters get their own wrapping row — inside the packed
+          header they'd collapse to zero width on narrow windows (TAS-040). */}
+      <ActiveFilterChips
+        filters={boardFilters}
+        onFiltersChange={setBoardFilters}
+        projects={projects}
+        users={allUsers}
+        labels={allLabels}
       />
       <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden bg-muted/40">
         {projects.length === 0 ? (
