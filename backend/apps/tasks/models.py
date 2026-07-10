@@ -594,6 +594,16 @@ class StateTransition(models.Model):
         choices=TransitionSource.choices,
         default=TransitionSource.USER,
     )
+    assignee_ids = models.JSONField(
+        default=list,
+        help_text=(
+            "Immutable snapshot of the task's assignee user ids at the moment "
+            "of this transition. Assignees change over a task's life, so "
+            "per-person analytics (e.g. weekly completions) must credit "
+            "whoever was assigned *when the transition happened*, not whoever "
+            "is assigned now."
+        ),
+    )
 
     class Meta:
         ordering = ["task_id", "at", "id"]

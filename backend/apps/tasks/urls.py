@@ -26,6 +26,7 @@ from .views import (
     UploadImageView,
     UserViewSet,
     ViewViewSet,
+    WeeklyCompletionsView,
     csrf_view,
     internal_broadcast,
 )
@@ -65,6 +66,11 @@ urlpatterns = [
         "analytics/throughput/",
         ThroughputView.as_view(),
         name="analytics-throughput",
+    ),
+    path(
+        "analytics/completions/",
+        WeeklyCompletionsView.as_view(),
+        name="analytics-completions",
     ),
     path("schema/", SpectacularAPIView.as_view(), name="schema"),
     path(

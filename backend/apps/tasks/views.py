@@ -623,6 +623,74 @@ class ThroughputView(APIView):
         )
 
 
+class WeeklyCompletionsView(APIView):
+    """GET weekly completion counts, overall and per person.
+
+    Read-only aggregation over the state-transition log; delegates the math to
+    :func:`apps.tasks.analytics.weekly_completions`. Query params:
+
+    * ``project`` — project id, omitted for all projects.
+    * ``week`` — any ``YYYY-MM-DD`` date inside the desired week (default:
+      today in ``tz``). Weeks are Monday-start, computed in ``tz``.
+    * ``weeks`` — trend length, default 8, silently capped at
+      :data:`~apps.tasks.analytics.MAX_WEEKS`.
+    * ``tz`` — IANA name used for week bucketing (default ``UTC``).
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from datetime import date
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        from .analytics import MAX_WEEKS, weekly_completions
+
+        tz_name = request.query_params.get("tz") or "UTC"
+        try:
+            tz = ZoneInfo(tz_name)
+        except (ZoneInfoNotFoundError, ValueError, ModuleNotFoundError) as exc:
+            raise ValidationError({"tz": f"Unknown timezone {tz_name!r}."}) from exc
+
+        week_raw = request.query_params.get("week")
+        if week_raw:
+            try:
+                week = date.fromisoformat(week_raw)
+            except ValueError as exc:
+                raise ValidationError(
+                    {"week": f"Expected a YYYY-MM-DD date, got {week_raw!r}."}
+                ) from exc
+        else:
+            week = timezone.now().astimezone(tz).date()
+
+        weeks_raw = request.query_params.get("weeks")
+        if weeks_raw not in (None, ""):
+            try:
+                weeks = int(weeks_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError({"weeks": "Must be an integer."}) from exc
+            if weeks < 1:
+                raise ValidationError({"weeks": "Must be at least 1."})
+        else:
+            weeks = 8
+        weeks = min(weeks, MAX_WEEKS)
+
+        project_id: int | None = None
+        project_raw = request.query_params.get("project")
+        if project_raw not in (None, ""):
+            try:
+                project_id = int(project_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(
+                    {"project": "Must be an integer project id."}
+                ) from exc
+            if not Project.objects.filter(pk=project_id).exists():
+                raise ValidationError({"project": "Project not found."})
+
+        return Response(
+            weekly_completions(project_id, week, weeks, tz, request=request)
+        )
+
+
 # ---------------------------------------------------------------------------
 # Read-only reference data
 # ---------------------------------------------------------------------------

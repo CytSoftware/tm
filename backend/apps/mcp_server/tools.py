@@ -474,6 +474,45 @@ def get_throughput(
     return throughput(project_id, date_from, date_to, zone)
 
 
+def get_weekly_completions(
+    project: str | int | None = None,
+    week: str | None = None,
+    weeks: int = 8,
+    tz: str = "UTC",
+) -> dict[str, Any]:
+    """Weekly completion counts, overall and per person. Wraps
+    :func:`apps.tasks.analytics.weekly_completions` so the MCP tool and DRF
+    view return identical numbers. ``week`` is any ``YYYY-MM-DD`` date inside
+    the desired week (default: today in ``tz``); ``weeks`` is the trend
+    length (default 8, capped). No ``request`` is available here, so avatar
+    URLs come back exactly as stored (not absolutized)."""
+    from datetime import date
+
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    from apps.tasks.analytics import MAX_WEEKS, weekly_completions
+
+    try:
+        zone = ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError, ModuleNotFoundError) as exc:
+        raise ValueError(f"Unknown timezone {tz!r}.") from exc
+
+    if week:
+        try:
+            week_date = date.fromisoformat(week)
+        except ValueError as exc:
+            raise ValueError(f"Expected a YYYY-MM-DD date, got {week!r}.") from exc
+    else:
+        week_date = timezone.now().astimezone(zone).date()
+
+    if weeks < 1:
+        raise ValueError("weeks must be a positive integer.")
+    weeks = min(weeks, MAX_WEEKS)
+
+    project_id = _resolve_project(project).id if project is not None else None
+    return weekly_completions(project_id, week_date, weeks, zone)
+
+
 def list_tasks(
     project: str | int | None = None,
     assignee: str | None = None,

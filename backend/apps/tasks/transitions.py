@@ -52,6 +52,10 @@ def record_transition(
     Callers pass the old column explicitly — we don't infer it from
     ``task.column`` because by the time this is called the column has
     usually already been reassigned.
+
+    ``assignee_ids`` is snapshotted from ``task.assignees`` right now, so
+    every write path must set assignees on the task *before* calling this —
+    see the module docstring on ``StateTransition.assignee_ids``.
     """
     return StateTransition.objects.create(
         task=task,
@@ -60,6 +64,7 @@ def record_transition(
         at=at or timezone.now(),
         triggered_by=user if (user is not None and getattr(user, "pk", None)) else None,
         source=source,
+        assignee_ids=list(task.assignees.values_list("id", flat=True)),
     )
 
 
