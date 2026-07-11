@@ -407,17 +407,24 @@ export function AddColumnCell({ onAdd, isPending }: AddColumnCellProps) {
 
   if (!isEditing) {
     return (
-      <div className="shrink-0 w-[240px] h-full flex items-start pt-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start text-muted-foreground hover:text-foreground"
-          onClick={() => setIsEditing(true)}
-          disabled={isPending}
-        >
-          <Plus className="size-3.5" />
-          Add column
-        </Button>
+      <div className="shrink-0 h-full flex items-start pt-1">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 text-muted-foreground/60 hover:text-foreground"
+                onClick={() => setIsEditing(true)}
+                disabled={isPending}
+                aria-label="Add column"
+              >
+                <Plus className="size-3.5" />
+              </Button>
+            }
+          />
+          <TooltipContent>Add column</TooltipContent>
+        </Tooltip>
       </div>
     );
   }
