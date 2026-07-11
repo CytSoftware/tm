@@ -65,6 +65,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  ActiveFilterChips,
   FilterBar,
   boardFiltersFromSavedView,
   savedViewPayloadFromFilters,
@@ -208,6 +209,7 @@ type DroppableColumnProps = {
   hasMore?: boolean;
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
+  isInitialLoading?: boolean;
   totalCount?: number;
   manageable?: boolean;
   canMoveLeft?: boolean;
@@ -230,6 +232,7 @@ function DroppableColumn({
   hasMore,
   isLoadingMore,
   onLoadMore,
+  isInitialLoading,
   totalCount,
   manageable,
   canMoveLeft,
@@ -268,6 +271,7 @@ function DroppableColumn({
       hasMore={hasMore}
       isLoadingMore={isLoadingMore}
       onLoadMore={onLoadMore}
+      isInitialLoading={isInitialLoading}
       totalCount={totalCount}
       manageable={manageable}
       canMoveLeft={canMoveLeft}
@@ -1119,6 +1123,15 @@ export default function BoardPage() {
         }
         showArchivedToggle={isAllProjects && hasArchivedProjects}
       />
+      {/* Applied filters get their own wrapping row — inside the packed
+          header they'd collapse to zero width on narrow windows (TAS-040). */}
+      <ActiveFilterChips
+        filters={boardFilters}
+        onFiltersChange={setBoardFilters}
+        projects={projects}
+        users={allUsers}
+        labels={allLabels}
+      />
       <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden bg-muted/40">
         {projects.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center gap-2 text-[13px] text-muted-foreground">
@@ -1508,6 +1521,7 @@ function ColumnContainer({
       hasMore={query.hasNextPage ?? false}
       isLoadingMore={query.isFetchingNextPage}
       onLoadMore={handleLoadMore}
+      isInitialLoading={query.isLoading}
       onAddTask={onAddTask}
       onDeclutter={onDeclutter}
       onAssign={onAssign}
@@ -1588,6 +1602,7 @@ function TableContainer({
       hasMore={query.hasNextPage ?? false}
       isLoadingMore={query.isFetchingNextPage}
       onLoadMore={handleLoadMore}
+      isInitialLoading={query.isLoading}
     />
   );
 }

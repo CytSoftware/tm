@@ -14,10 +14,16 @@
 
 import { useMemo } from "react";
 import {
+  Archive,
   ArrowDownWideNarrow,
   ArrowUpWideNarrow,
+  Columns3,
   Filter,
+  Flag,
+  Folder,
   Search,
+  Tag,
+  UserRound,
   X,
 } from "lucide-react";
 
@@ -75,38 +81,17 @@ export function FilterBar({
   showArchivedToggle,
 }: Props) {
   const modified = loadedView ? !filtersMatchSavedView(filters, loadedView) : false;
-  const hasActiveFilters = !isEmptyFilters(filters);
 
   function update<K extends keyof BoardFilters>(key: K, value: BoardFilters[K]) {
     onFiltersChange({ ...filters, [key]: value });
   }
 
-  function clearAll() {
-    onFiltersChange({ ...EMPTY_BOARD_FILTERS });
-  }
-
-  const userById = useMemo(() => {
-    const m = new Map<number, User>();
-    users.forEach((u) => m.set(u.id, u));
-    return m;
-  }, [users]);
-
-  const labelById = useMemo(() => {
-    const m = new Map<number, LabelType>();
-    labels.forEach((l) => m.set(l.id, l));
-    return m;
-  }, [labels]);
-
-  const projectById = useMemo(() => {
-    const m = new Map<number, Project>();
-    projects.forEach((p) => m.set(p.id, p));
-    return m;
-  }, [projects]);
-
-  const sortEntry = filters.sort[0];
-
   // Rendered as a fragment so it can live inline inside the BoardHeader row
-  // alongside the project selector, view switcher, and action buttons.
+  // alongside the project selector, view switcher, and action buttons. The
+  // applied-filter chips deliberately do NOT live here: the header row is
+  // packed, so a flex-1 chips container collapses to zero width on narrow
+  // windows. The board mounts <ActiveFilterChips> as its own row under the
+  // header instead.
   return (
     <>
       {/* Filter popover */}
@@ -143,103 +128,6 @@ export function FilterBar({
         )}
       </div>
 
-      <div className="flex-1 min-w-0 flex items-center gap-1 overflow-x-auto scrollbar-none">
-        {/* Active filter chips */}
-        {filters.project != null && (
-          <Chip
-            label={projectById.get(filters.project)?.name ?? "Project"}
-            color={projectById.get(filters.project)?.color}
-            onClear={() => update("project", null)}
-          />
-        )}
-        {filters.priorities.map((p) => (
-          <Chip
-            key={`pri-${p}`}
-            label={PRIORITY_LABELS[p]}
-            onClear={() =>
-              update(
-                "priorities",
-                filters.priorities.filter((x) => x !== p),
-              )
-            }
-          />
-        ))}
-        {filters.includeUnassigned && (
-          <Chip
-            label="Unassigned"
-            onClear={() => update("includeUnassigned", false)}
-          />
-        )}
-        {filters.assigneeIds.map((id) => {
-          const u = userById.get(id);
-          if (!u) return null;
-          return (
-            <Chip
-              key={`assignee-${id}`}
-              label={u.username}
-              onClear={() =>
-                update(
-                  "assigneeIds",
-                  filters.assigneeIds.filter((x) => x !== id),
-                )
-              }
-            />
-          );
-        })}
-        {filters.labelIds.map((id) => {
-          const l = labelById.get(id);
-          if (!l) return null;
-          return (
-            <Chip
-              key={`label-${id}`}
-              label={l.name}
-              color={l.color}
-              onClear={() =>
-                update(
-                  "labelIds",
-                  filters.labelIds.filter((x) => x !== id),
-                )
-              }
-            />
-          );
-        })}
-        {filters.columnName && (
-          <Chip
-            label={filters.columnName}
-            onClear={() => update("columnName", null)}
-          />
-        )}
-        {filters.includeArchived && (
-          <Chip
-            label="Incl. archived"
-            onClear={() => update("includeArchived", false)}
-          />
-        )}
-      </div>
-
-      {/* Sort indicator (always visible when non-default) */}
-      {sortEntry && (
-        <span className="text-[11px] text-muted-foreground shrink-0 inline-flex items-center gap-1">
-          {sortEntry.dir === "desc" ? (
-            <ArrowDownWideNarrow className="size-3" />
-          ) : (
-            <ArrowUpWideNarrow className="size-3" />
-          )}
-          {SORT_FIELD_LABELS[sortEntry.field]}
-        </span>
-      )}
-
-      {hasActiveFilters && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-[11px] text-muted-foreground shrink-0"
-          onClick={clearAll}
-        >
-          Clear all
-        </Button>
-      )}
-
       {modified && loadedView && onSaveToView && (
         <Button
           variant="outline"
@@ -254,36 +142,191 @@ export function FilterBar({
   );
 }
 
-function Chip({
-  label,
-  color,
+/** Applied-filter summary — one chip per active filter FIELD (not per value)
+ *  so it's obvious what dimension is being filtered, plus "Clear all". Fixed
+ *  field order: Project, Priority, Assignee, Label, Column, Archived.
+ *  Rendered by the board as its own wrapping row UNDER the header (renders
+ *  null with no active filters) — inside the packed header row the chips
+ *  would collapse/clip on narrow windows. See TAS-040. */
+export function ActiveFilterChips({
+  filters,
+  onFiltersChange,
+  projects,
+  users,
+  labels,
+}: {
+  filters: BoardFilters;
+  onFiltersChange: (next: BoardFilters) => void;
+  projects: Project[];
+  users: User[];
+  labels: LabelType[];
+}) {
+  const userById = useMemo(() => {
+    const m = new Map<number, User>();
+    users.forEach((u) => m.set(u.id, u));
+    return m;
+  }, [users]);
+
+  const labelById = useMemo(() => {
+    const m = new Map<number, LabelType>();
+    labels.forEach((l) => m.set(l.id, l));
+    return m;
+  }, [labels]);
+
+  const projectById = useMemo(() => {
+    const m = new Map<number, Project>();
+    projects.forEach((p) => m.set(p.id, p));
+    return m;
+  }, [projects]);
+
+  if (isEmptyFilters(filters)) return null;
+
+  function update<K extends keyof BoardFilters>(key: K, value: BoardFilters[K]) {
+    onFiltersChange({ ...filters, [key]: value });
+  }
+
+  // Some chips (e.g. Assignee, which folds includeUnassigned into one field)
+  // clear more than one BoardFilters key at once.
+  function updateMany(patch: Partial<BoardFilters>) {
+    onFiltersChange({ ...filters, ...patch });
+  }
+
+  return (
+    <div className="shrink-0 flex items-center flex-wrap gap-1 px-4 py-1.5 border-b border-border/80 bg-background">
+      {filters.project != null && (() => {
+        const p = projectById.get(filters.project);
+        return (
+          <FieldChip
+            icon={Folder}
+            field="Project"
+            values={[{ text: p?.name ?? "Unknown project", color: p?.color }]}
+            onClear={() => update("project", null)}
+          />
+        );
+      })()}
+
+      {filters.priorities.length > 0 && (
+        <FieldChip
+          icon={Flag}
+          field="Priority"
+          values={filters.priorities.map((p) => ({ text: PRIORITY_LABELS[p] }))}
+          onClear={() => update("priorities", [])}
+        />
+      )}
+
+      {/* Unassigned is folded into the Assignee chip's value list so
+          clearing the field clears both assigneeIds and includeUnassigned
+          in one action. */}
+      {(() => {
+        const values = filters.assigneeIds
+          .map((id) => userById.get(id))
+          .filter((u): u is User => u != null)
+          .map((u) => ({ text: u.username }));
+        if (filters.includeUnassigned) values.push({ text: "Unassigned" });
+        if (values.length === 0) return null;
+        return (
+          <FieldChip
+            icon={UserRound}
+            field="Assignee"
+            values={values}
+            onClear={() =>
+              updateMany({ assigneeIds: [], includeUnassigned: false })
+            }
+          />
+        );
+      })()}
+
+      {(() => {
+        const values = filters.labelIds
+          .map((id) => labelById.get(id))
+          .filter((l): l is LabelType => l != null)
+          .map((l) => ({ text: l.name, color: l.color }));
+        if (values.length === 0) return null;
+        return (
+          <FieldChip
+            icon={Tag}
+            field="Label"
+            values={values}
+            onClear={() => update("labelIds", [])}
+          />
+        );
+      })()}
+
+      {filters.columnName && (
+        <FieldChip
+          icon={Columns3}
+          field="Column"
+          values={[{ text: filters.columnName }]}
+          onClear={() => update("columnName", null)}
+        />
+      )}
+
+      {filters.includeArchived && (
+        <FieldChip
+          icon={Archive}
+          field="Archived"
+          values={[{ text: "included" }]}
+          onClear={() => update("includeArchived", false)}
+        />
+      )}
+
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 text-[11px] text-muted-foreground shrink-0"
+        onClick={() => onFiltersChange({ ...EMPTY_BOARD_FILTERS })}
+      >
+        Clear all
+      </Button>
+    </div>
+  );
+}
+
+/** One chip per active filter field: icon, muted "Field:" label, up to 3
+ *  values (then "+N", full list in the title attr), and a clear-the-field
+ *  button. Per-value color dots (project/label) are opt-in via `value.color`
+ *  — the chip itself stays in the app's calm muted style rather than being
+ *  colored wholesale. */
+function FieldChip({
+  icon: Icon,
+  field,
+  values,
   onClear,
 }: {
-  label: string;
-  color?: string;
+  icon: React.ComponentType<{ className?: string }>;
+  field: string;
+  values: { text: string; color?: string }[];
   onClear: () => void;
 }) {
+  const shown = values.slice(0, 3);
+  const overflow = values.length - shown.length;
+  const fullTitle = values.map((v) => v.text).join(", ");
   return (
     <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] border shrink-0",
-        color ? "font-medium" : "bg-accent/60 text-foreground border-border/60",
-      )}
-      style={
-        color
-          ? {
-              background: withAlpha(color, 0.14),
-              color,
-              borderColor: withAlpha(color, 0.35),
-            }
-          : undefined
-      }
+      title={fullTitle}
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] border border-border/60 bg-accent/60 text-foreground shrink-0 max-w-[220px]"
     >
-      {label}
+      <Icon className="size-3 text-muted-foreground shrink-0" />
+      <span className="text-muted-foreground shrink-0">{field}:</span>
+      <span className="inline-flex items-center gap-1 truncate">
+        {shown.map((v, i) => (
+          <span key={i} className="inline-flex items-center gap-1 shrink-0">
+            {v.color && (
+              <span
+                className="size-1.5 rounded-full shrink-0"
+                style={{ background: v.color }}
+              />
+            )}
+            {v.text}
+            {i < shown.length - 1 && ","}
+          </span>
+        ))}
+        {overflow > 0 && <span className="shrink-0">+{overflow}</span>}
+      </span>
       <button
         type="button"
         onClick={onClear}
-        className="opacity-70 hover:opacity-100"
+        className="opacity-70 hover:opacity-100 shrink-0"
       >
         <X className="size-2.5" />
       </button>
@@ -316,11 +359,18 @@ function FilterPopover({
     <Popover>
       <PopoverTrigger
         render={
-          <Button variant="outline" size="sm" className="h-7 text-[12px] shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn(
+              "h-7 text-[12px] shrink-0",
+              activeCount > 0 && "border-foreground/30 bg-accent/50",
+            )}
+          >
             <Filter className="size-3" />
             Filter
             {activeCount > 0 && (
-              <span className="ml-1 font-mono text-[10px] text-muted-foreground">
+              <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-foreground/15 text-[10px] font-medium tabular-nums">
                 {activeCount}
               </span>
             )}
@@ -537,17 +587,27 @@ function SortPopover({
   onSortChange: (next: SavedViewSort) => void;
 }) {
   const entry = sort[0] ?? { field: "updated_at", dir: "desc" as const };
+  // The "position" field is the manual drag-and-drop order — EMPTY_BOARD_FILTERS'
+  // default — so treat it as "no sort applied" rather than an active choice.
+  const isDefaultSort = entry.field === "position" && entry.dir === "asc";
   return (
     <Popover>
       <PopoverTrigger
         render={
-          <Button variant="outline" size="sm" className="h-7 text-[12px] shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn(
+              "h-7 text-[12px] shrink-0",
+              !isDefaultSort && "border-foreground/30 bg-accent/50",
+            )}
+          >
             {entry.dir === "desc" ? (
               <ArrowDownWideNarrow className="size-3" />
             ) : (
               <ArrowUpWideNarrow className="size-3" />
             )}
-            Sort
+            {isDefaultSort ? "Sort" : `Sort: ${SORT_FIELD_LABELS[entry.field]}`}
           </Button>
         }
       />

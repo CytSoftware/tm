@@ -55,6 +55,10 @@ type Props = {
   hasMore?: boolean;
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
+  /** True while the initial (non-paginated) fetch is in flight. Distinct
+   *  from `isLoadingMore` (which only covers subsequent pages) so an empty
+   *  in-flight query doesn't briefly flash "No tasks found." */
+  isInitialLoading?: boolean;
 };
 
 export function ListView({
@@ -66,6 +70,7 @@ export function ListView({
   hasMore,
   isLoadingMore,
   onLoadMore,
+  isInitialLoading,
 }: Props) {
   const sentinelRef = useRef<HTMLTableRowElement>(null);
 
@@ -232,7 +237,16 @@ export function ListView({
               </TableCell>
             </TableRow>
           ))}
-          {tasks.length === 0 && !isLoadingMore && (
+          {tasks.length === 0 && isInitialLoading && (
+            <TableRow>
+              <TableCell colSpan={10} className="py-8">
+                <div className="flex justify-center">
+                  <div className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
+                </div>
+              </TableCell>
+            </TableRow>
+          )}
+          {tasks.length === 0 && !isLoadingMore && !isInitialLoading && (
             <TableRow>
               <TableCell
                 colSpan={10}

@@ -432,7 +432,9 @@ export function AssignDialog({
           </div>
         )}
 
-        {queue.length === 0 ? (
+        {todoQuery.isLoading ? (
+          <LoadingState />
+        ) : queue.length === 0 ? (
           <EmptyState
             mode="empty"
             assigned={assignedCount.current}
@@ -494,6 +496,17 @@ export function AssignDialog({
 }
 
 function noop() {}
+
+// ---------------------------------------------------------------------------
+
+function LoadingState() {
+  return (
+    <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 p-8">
+      <div className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
+      <p className="text-[12px] text-muted-foreground">Loading tasks…</p>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 
