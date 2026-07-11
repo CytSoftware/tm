@@ -95,6 +95,12 @@ import {
   useUpdateColumn,
 } from "@/hooks/use-columns";
 import { useBoardColumnPrefs } from "@/hooks/use-board-column-prefs";
+import {
+  copyTaskId,
+  copyTaskPrompt,
+  hasTextSelection,
+  isPrimaryModifier,
+} from "@/lib/task-copy";
 import { connectProjectSocket } from "@/lib/ws";
 import type {
   BoardFilters,
@@ -875,6 +881,15 @@ export default function BoardPage() {
           setHelpOpen(true);
           break;
         }
+        case "c":
+        case "C": {
+          if (!isPrimaryModifier(e) || e.altKey) return; // plain "c" stays GlobalShortcuts' new-task
+          if (!selectedTask || hasTextSelection()) return;
+          e.preventDefault();
+          if (e.shiftKey) void copyTaskPrompt(selectedTask);
+          else void copyTaskId(selectedTask);
+          break;
+        }
       }
     }
 
@@ -1325,6 +1340,8 @@ const SHORTCUT_ROWS: { keys: string[]; description: string }[] = [
   { keys: ["p"], description: "Edit priority" },
   { keys: ["a"], description: "Edit assignees" },
   { keys: ["l"], description: "Edit labels" },
+  { keys: ["⌘C"], description: "Copy task ID" },
+  { keys: ["⌘⇧C"], description: "Copy prompt for Claude" },
   { keys: ["?"], description: "Show this help" },
 ];
 

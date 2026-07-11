@@ -2,7 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Trash2, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  ClipboardCopy,
+  Copy,
+  Trash2,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +22,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { AssigneePicker, LabelPicker } from "./pickers";
 import {
@@ -30,6 +42,13 @@ import { useUsersQuery } from "@/hooks/use-users";
 import { apiFetch } from "@/lib/api";
 import { currentPeriodStart } from "@/lib/periods";
 import { projectsKey, taskListKey } from "@/lib/query-keys";
+import {
+  copyTaskId,
+  copyTaskPrompt,
+  hasTextSelection,
+  isEditableElement,
+  isPrimaryModifier,
+} from "@/lib/task-copy";
 import type {
   Project,
   Task,
@@ -430,6 +449,34 @@ export function TaskPanel(props: Props) {
     return () => window.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
+  // ⌘C copies the task id, ⌘⇧C copies the full prompt (with live unsaved
+  // title/description). Bail without preventDefault outside edit mode, over
+  // a text selection, or with an editable element focused (title input,
+  // TipTap, a portalised Select) — native ⌘C must win in all of those.
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if ((e.key !== "c" && e.key !== "C") || !isPrimaryModifier(e) || e.altKey) {
+        return;
+      }
+      if (
+        mode !== "edit" ||
+        !task ||
+        hasTextSelection() ||
+        isEditableElement(document.activeElement)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      if (e.shiftKey) {
+        void copyTaskPrompt(task, { title, description });
+      } else {
+        void copyTaskId(task);
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [mode, task, title, description]);
+
   return (
     <>
       {/* Backdrop */}
@@ -453,6 +500,47 @@ export function TaskPanel(props: Props) {
                 : `${task?.key} — ${task?.title}`}
           </h2>
           <div className="flex items-center gap-2">
+            {mode === "edit" && task && (
+              <>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        onClick={() => void copyTaskId(task)}
+                      >
+                        <Copy className="size-3.5" />
+                      </Button>
+                    }
+                  />
+                  <TooltipContent>
+                    Copy task ID <kbd className="ml-1 text-[10px]">⌘C</kbd>
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        onClick={() =>
+                          void copyTaskPrompt(task, { title, description })
+                        }
+                      >
+                        <ClipboardCopy className="size-3.5" />
+                      </Button>
+                    }
+                  />
+                  <TooltipContent>
+                    Copy prompt for Claude{" "}
+                    <kbd className="ml-1 text-[10px]">⌘⇧C</kbd>
+                  </TooltipContent>
+                </Tooltip>
+              </>
+            )}
             {mode !== "create" && (
               <Button
                 variant="ghost"
