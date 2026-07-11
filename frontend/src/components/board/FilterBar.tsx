@@ -589,7 +589,7 @@ function SortPopover({
   const entry = sort[0] ?? { field: "updated_at", dir: "desc" as const };
   // The "position" field is the manual drag-and-drop order — EMPTY_BOARD_FILTERS'
   // default — so treat it as "no sort applied" rather than an active choice.
-  const isDefaultSort = entry.field === "position";
+  const isDefaultSort = entry.field === "position" && entry.dir === "asc";
   return (
     <Popover>
       <PopoverTrigger
