@@ -209,6 +209,7 @@ type DroppableColumnProps = {
   hasMore?: boolean;
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
+  isInitialLoading?: boolean;
   totalCount?: number;
   manageable?: boolean;
   canMoveLeft?: boolean;
@@ -231,6 +232,7 @@ function DroppableColumn({
   hasMore,
   isLoadingMore,
   onLoadMore,
+  isInitialLoading,
   totalCount,
   manageable,
   canMoveLeft,
@@ -269,6 +271,7 @@ function DroppableColumn({
       hasMore={hasMore}
       isLoadingMore={isLoadingMore}
       onLoadMore={onLoadMore}
+      isInitialLoading={isInitialLoading}
       totalCount={totalCount}
       manageable={manageable}
       canMoveLeft={canMoveLeft}
@@ -1518,6 +1521,7 @@ function ColumnContainer({
       hasMore={query.hasNextPage ?? false}
       isLoadingMore={query.isFetchingNextPage}
       onLoadMore={handleLoadMore}
+      isInitialLoading={query.isLoading}
       onAddTask={onAddTask}
       onDeclutter={onDeclutter}
       onAssign={onAssign}
@@ -1598,6 +1602,7 @@ function TableContainer({
       hasMore={query.hasNextPage ?? false}
       isLoadingMore={query.isFetchingNextPage}
       onLoadMore={handleLoadMore}
+      isInitialLoading={query.isLoading}
     />
   );
 }

@@ -367,7 +367,9 @@ export function DeclutterDialog({
         )}
 
         {/* Body */}
-        {queue.length === 0 ? (
+        {backlogQuery.isLoading ? (
+          <LoadingState />
+        ) : queue.length === 0 ? (
           <EmptyState
             mode="empty"
             counters={counters.current}
@@ -528,8 +530,17 @@ function TombstoneCard({
 }
 
 // ---------------------------------------------------------------------------
-// Empty + completion state
+// Loading + empty + completion state
 // ---------------------------------------------------------------------------
+
+function LoadingState() {
+  return (
+    <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 p-8">
+      <div className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
+      <p className="text-[12px] text-muted-foreground">Loading tasks…</p>
+    </div>
+  );
+}
 
 function EmptyState({
   mode,

@@ -46,6 +46,10 @@ type Props = {
   hasMore?: boolean;
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
+  /** True while the column's initial (non-paginated) fetch is in flight.
+   *  The parent renders no `children` while loading, so this is what tells
+   *  an empty column apart from a still-loading one. */
+  isInitialLoading?: boolean;
   totalCount?: number;
   /** When true, show rename / done-toggle / move / delete affordances. The
    *  parent only enables this for real (single-project) columns — virtual
@@ -75,6 +79,7 @@ export function KanbanColumn({
   hasMore,
   isLoadingMore,
   onLoadMore,
+  isInitialLoading,
   totalCount,
   manageable,
   canMoveLeft,
@@ -311,7 +316,13 @@ export function KanbanColumn({
           isDraggingOver && "bg-accent/40",
         )}
       >
-        {children}
+        {isInitialLoading && tasks.length === 0 ? (
+          <div className="flex justify-center py-8">
+            <div className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
+          </div>
+        ) : (
+          children
+        )}
         {hasMore && (
           <div
             ref={sentinelRef}
