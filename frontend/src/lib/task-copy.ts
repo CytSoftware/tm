@@ -96,8 +96,16 @@ export function buildTaskPrompt(
     }
   }
 
+  // Review-mode prompt for tasks sitting in a review column; the default
+  // work prompt encodes the usual ritual (plan → branch → PR → move task)
+  // so the paste replaces the follow-up messages normally typed by hand.
+  const inReview = /review/i.test(task.column?.name ?? "");
+  const inProgress = /progress/i.test(task.column?.name ?? "");
+
   const lines: string[] = [
-    "Work on this task from the Cyt task manager:",
+    inReview
+      ? `Let's review ${task.key} from the Cyt task manager — it's in review.`
+      : `Let's work on ${task.key} from the Cyt task manager.`,
     "",
     `# ${task.key} — ${title}`,
   ];
@@ -108,6 +116,31 @@ export function buildTaskPrompt(
 
   if (description) {
     lines.push("", "## Description", "", description);
+  }
+
+  lines.push("", "---", "");
+  if (inReview) {
+    const target =
+      task.linked_prs.length > 0
+        ? "Review the linked PR(s) thoroughly against the task"
+        : "Review the latest changes on this task's branch against the task";
+    lines.push(
+      `${target} — correctness, edge cases, and whether it fully covers the description. Answer concisely: good to merge, or list what needs fixing by severity. If it's good, tell me — once I confirm, merge and move ${task.key} to Done via the task manager MCP.`,
+    );
+  } else {
+    lines.push(
+      "Plan this out thoroughly first — ask me for clarifications if needed, then present the implementation plan before implementing. ultrathink",
+      "",
+      [
+        "Work on a new branch.",
+        inProgress
+          ? null
+          : `Move ${task.key} to In Progress and assign it to me via the task manager MCP.`,
+        `When done: run lint/build, commit, push and open a PR to main, then move ${task.key} to In Review.`,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
   }
 
   return lines.join("\n");
