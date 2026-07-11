@@ -7,6 +7,7 @@ import {
 import { ReactNode, useState } from "react";
 import { ThemeProvider } from "next-themes";
 
+import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ActiveProjectProvider } from "@/lib/active-project";
 import { PaletteProvider } from "@/lib/palette";
@@ -37,7 +38,10 @@ export function Providers({ children }: { children: ReactNode }) {
         <ActiveProjectProvider>
           <PaletteProvider>
             <SidebarProvider>
-              <TooltipProvider delay={200}>{children}</TooltipProvider>
+              <TooltipProvider delay={200}>
+                {children}
+                <Toaster position="bottom-right" />
+              </TooltipProvider>
             </SidebarProvider>
           </PaletteProvider>
         </ActiveProjectProvider>

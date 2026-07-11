@@ -43,6 +43,7 @@ import { useActiveProject } from "@/lib/active-project";
 import { useTaskDialog } from "@/lib/task-dialog";
 import { usePalette, type PaletteAction } from "@/lib/palette";
 import { useRecentTasks, type RecentTask } from "@/lib/recent-tasks";
+import { copyTaskId, copyTaskPrompt } from "@/lib/task-copy";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import { useUsersQuery } from "@/hooks/use-users";
 import { useLabelsQuery } from "@/hooks/use-labels";
@@ -675,6 +676,19 @@ function buildTaskActions(
     label: `Open ${task.key}`,
     keywords: "open show edit task",
     handler: () => openTask(task),
+  });
+
+  actions.push({
+    id: "copy-task-id",
+    label: `Copy task ID — ${task.key}`,
+    keywords: "copy id key clipboard",
+    handler: () => void copyTaskId(task),
+  });
+  actions.push({
+    id: "copy-task-prompt",
+    label: "Copy prompt for Claude",
+    keywords: "copy prompt claude context clipboard",
+    handler: () => void copyTaskPrompt(task),
   });
 
   // Move to → column
