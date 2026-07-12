@@ -48,7 +48,7 @@ from django.db.models import (
     When,
 )
 
-from .models import Bet, Label, Priority, Project, StateTransition, Task
+from .models import Bet, Column, Label, Priority, Project, StateTransition, Task
 
 User = get_user_model()
 
@@ -326,11 +326,50 @@ def apply_task_filters(
     return qs
 
 
+def _resolve_column_for_sort(
+    filters: Mapping[str, Any] | None,
+) -> Column | None:
+    """Resolve a single-column filter to its :class:`Column`, for the
+    Done-column recency-sort default (Linear-style).
+
+    Returns ``None`` unless the filters narrow to exactly one column: an id
+    filter resolves to that column; a name filter (e.g. the all-projects
+    board's ``"Done"``) resolves only when *every* column of that name is
+    ``is_done`` — so a mixed set never silently flips ordering. Any other
+    shape (no column filter, unknown id/name) yields ``None`` and leaves the
+    default position ordering in place.
+    """
+    if not filters:
+        return None
+    raw = filters.get("column")
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, int) or (isinstance(raw, str) and raw.isdigit()):
+        return Column.objects.filter(pk=int(raw)).first()
+    if isinstance(raw, str):
+        cols = list(Column.objects.filter(name__iexact=raw))
+        if cols and all(c.is_done for c in cols):
+            return cols[0]
+    return None
+
+
 def apply_task_sort(
-    qs: QuerySet[Task], sort: list[Mapping[str, str]] | None
+    qs: QuerySet[Task],
+    sort: list[Mapping[str, str]] | None,
+    column: Column | None = None,
 ) -> QuerySet[Task]:
-    """Apply a saved-view sort spec. Falls back to the default Task ordering."""
+    """Apply a saved-view sort spec. Falls back to the default Task ordering.
+
+    When no explicit ``sort`` is given and ``column`` is a Done column
+    (``is_done``), tasks are ordered by ``current_column_since`` descending —
+    most recently completed first, matching Linear's Done column. An explicit
+    sort always wins, so a saved view's sort overrides the recency default.
+    """
     if not sort:
+        if column is not None and column.is_done:
+            # Most recently moved into the Done column first. Stable id
+            # tie-breaker so pagination is deterministic.
+            return qs.order_by("-current_column_since", "id")
         return qs
 
     order_fields: list[str] = []
@@ -382,5 +421,8 @@ def filter_and_sort_tasks(
     """One-shot helper used by both DRF and MCP."""
     qs = base if base is not None else base_task_queryset()
     qs = apply_task_filters(qs, filters, requesting_user=requesting_user)
-    qs = apply_task_sort(qs, sort)
+    # Only resolve the column when there's no explicit sort — it's the sole
+    # case the Done-recency default applies, and resolving costs a query.
+    column = _resolve_column_for_sort(filters) if not sort else None
+    qs = apply_task_sort(qs, sort, column=column)
     return qs

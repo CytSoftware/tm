@@ -1565,6 +1565,7 @@ function ColumnContainer({
                   isSelected={isSelected}
                   showProject={isAllProjects}
                   visibleFields={cardDisplay}
+                  sortable={!column.is_done}
                   onClick={() => onEditTask(task)}
                   onEditorOpenRequest={(kind) =>
                     onEditorOpenRequest(task.id, kind)

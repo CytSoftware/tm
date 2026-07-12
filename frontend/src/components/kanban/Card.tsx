@@ -68,6 +68,11 @@ type Props = {
   isSelected?: boolean;
   showProject?: boolean;
   visibleFields?: CardField[] | null;
+  /** Whether manual reorder applies. Done columns sort by recency (see
+   *  `column.is_done`), so their cards drop the grab-cursor affordance —
+   *  the card stays draggable (to move it out of Done) but no longer
+   *  invites reordering. Defaults to true. */
+  sortable?: boolean;
   /** Chip click → ask the board to select this card and open the matching
    *  PropertyPalette (priority/assignee/labels) — see
    *  `handleEditorOpenRequest` in board/page.tsx. The board owns rendering
@@ -93,6 +98,7 @@ export function KanbanCard({
   isSelected,
   showProject,
   visibleFields,
+  sortable = true,
   onEditorOpenRequest,
 }: Props) {
   const showKey = isVisible("key", visibleFields);
@@ -154,7 +160,8 @@ export function KanbanCard({
       }}
       className={cn(
         "group rounded-lg border bg-card text-[13px]",
-        "cursor-grab active:cursor-grabbing select-none",
+        "select-none",
+        sortable && "cursor-grab active:cursor-grabbing",
         "shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
         "transition-[background-color,border-color,box-shadow] duration-150",
         isDragging && "shadow-lg ring-1 ring-border/40",
