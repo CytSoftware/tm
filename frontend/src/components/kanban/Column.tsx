@@ -2,6 +2,7 @@
 
 import { KeyboardEvent, ReactNode, Ref, useEffect, useRef, useState } from "react";
 import {
+  ArrowDownWideNarrow,
   ArrowLeft,
   ArrowRight,
   Check,
@@ -176,6 +177,25 @@ export function KanbanColumn({
               <span className="text-[11px] text-muted-foreground tabular-nums">
                 {displayCount}
               </span>
+              {/* Done columns auto-sort by most recently completed (like
+                  Linear), so manual drag order doesn't apply — surface that
+                  with a subtle chip. Mirrors the SortPopover's descending
+                  arrow. */}
+              {column.is_done && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="shrink-0 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground bg-muted/60">
+                        <ArrowDownWideNarrow className="size-2.5" />
+                        Recency
+                      </span>
+                    }
+                  />
+                  <TooltipContent>
+                    Sorted by most recently completed
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </>
           )}
         </div>
