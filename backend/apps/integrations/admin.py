@@ -50,9 +50,10 @@ class TaskPullRequestAdmin(admin.ModelAdmin):
         "state",
         "merged",
         "is_draft",
+        "reviewer_login",
         "updated_at",
     )
     list_filter = ("state", "merged", "is_draft", "repository")
-    search_fields = ("task__key", "pr_title", "author_login")
+    search_fields = ("task__key", "pr_title", "author_login", "reviewer_login")
     autocomplete_fields = ("task", "repository")
     readonly_fields = ("updated_at",)

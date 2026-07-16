@@ -35,6 +35,7 @@ class LinkedPRSerializer(serializers.ModelSerializer):
             "base_ref",
             "html_url",
             "author_login",
+            "reviewer_login",
             "repository",
             "opened_at",
             "merged_at",
