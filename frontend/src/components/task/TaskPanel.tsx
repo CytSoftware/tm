@@ -60,6 +60,18 @@ import type {
 import { PRIORITY_LABELS, PRIORITY_ORDER } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+// TAS-057: the panel mounts bottom-anchored directly under wherever the
+// mouse was when the triggering card was clicked. Its entry animation
+// (`slide-in-from-bottom duration-300`) is purely visual — hit-testing sees
+// the panel at its final position basically immediately, so the second
+// pointerdown of a double-click on the card lands on whatever panel element
+// is now under the cursor: a sidebar Select trigger (opens its dropdown) or
+// the backdrop (closes the panel right after it opened). Guard against this
+// with a plain timestamp ref rather than an `animationend` listener —
+// reduced-motion users can skip/shorten the animation, which would leave an
+// animationend-gated panel permanently inert.
+const CLICK_THROUGH_GUARD_MS = 400;
+
 type Props = {
   projects: Project[];
   /** Pre-selected project for "create" mode. Null means "start in Inbox". */
@@ -91,6 +103,21 @@ export function TaskPanel(props: Props) {
   const queryClient = useQueryClient();
   const usersQuery = useUsersQuery();
   const users = usersQuery.data ?? [];
+
+  // TAS-057 click-through guard: see comment above CLICK_THROUGH_GUARD_MS.
+  // Initializing at first render (rather than in an effect) means the guard
+  // is active from the very first paint, before any effect could run.
+  const openedAtRef = useRef(performance.now());
+  const withinClickThroughGuard = () =>
+    performance.now() - openedAtRef.current < CLICK_THROUGH_GUARD_MS;
+  const clickThroughGuard = (e: {
+    preventDefault: () => void;
+    stopPropagation: () => void;
+  }) => {
+    if (!withinClickThroughGuard()) return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
 
   // projectId === null means "Inbox" (projectless task). Templates always
   // have a project — they can't live in the Inbox.
@@ -482,13 +509,22 @@ export function TaskPanel(props: Props) {
       {/* Backdrop */}
       <div
         className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[2px]"
-        onClick={onClose}
+        onClick={() => {
+          // TAS-057: swallow the close if we're still inside the
+          // click-through guard window — see CLICK_THROUGH_GUARD_MS.
+          if (withinClickThroughGuard()) return;
+          onClose();
+        }}
       />
 
       {/* Panel — bottom-anchored */}
       <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
       <div
         className="pointer-events-auto w-full max-w-5xl h-[88vh] flex flex-col rounded-t-xl border border-b-0 border-border bg-card shadow-2xl animate-in slide-in-from-bottom duration-300"
+        onPointerDownCapture={clickThroughGuard}
+        onMouseDownCapture={clickThroughGuard}
+        onClickCapture={clickThroughGuard}
+        onDoubleClickCapture={clickThroughGuard}
       >
         {/* Header */}
         <div className="shrink-0 flex items-center justify-between px-6 py-3 border-b border-border/60">
