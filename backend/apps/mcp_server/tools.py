@@ -207,6 +207,7 @@ def _task_dict(t: Task, *, include_description: bool = True) -> dict[str, Any]:
         "priority": t.priority,
         "story_points": t.story_points,
         "assignees": [u.username for u in t.assignees.all()],
+        "reviewer": t.reviewer.username if t.reviewer_id else None,
         "labels": [label.name for label in t.labels.all()],
         "bet": t.bet.name if t.bet_id else None,
         "bet_id": t.bet_id,
@@ -235,6 +236,7 @@ def _linked_pr_dict(link) -> dict[str, Any]:
         "base_ref": link.base_ref,
         "html_url": link.html_url,
         "author_login": link.author_login,
+        "reviewer_login": link.reviewer_login,
         "repository": (
             link.repository.repo_full_name if link.repository_id else None
         ),
