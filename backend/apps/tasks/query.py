@@ -100,6 +100,8 @@ def base_task_queryset() -> QuerySet[Task]:
             "column",
             "reporter",
             "reporter__profile",
+            "reviewer",
+            "reviewer__profile",
             "recurrence_template",
             "bet",
         )

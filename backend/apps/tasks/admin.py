@@ -122,10 +122,14 @@ class UserProfileInline(admin.StackedInline):
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    """Standalone UserProfile admin for bulk browsing and direct edits."""
+    """Standalone UserProfile admin for bulk browsing and direct edits.
 
-    list_display = ("user", "avatar_image", "avatar_url")
-    search_fields = ("user__username", "user__email")
+    ``github_username`` is the v1 mapping UI for TAS-011: set it here to let
+    the GitHub PR-review rule engine resolve a reviewer login to this user.
+    """
+
+    list_display = ("user", "github_username", "avatar_image", "avatar_url")
+    search_fields = ("user__username", "user__email", "github_username")
     autocomplete_fields = ("user",)
 
 
