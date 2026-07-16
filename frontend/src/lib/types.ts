@@ -229,6 +229,9 @@ export type LinkedPR = {
   base_ref: string;
   html_url: string;
   author_login: string;
+  /** GitHub login of the current requested/actual reviewer, or "" when none
+   *  is tracked (v1: latest review event wins a single value). */
+  reviewer_login: string;
   repository: LinkedPRRepository | null;
   opened_at: string | null;
   merged_at: string | null;
@@ -249,6 +252,10 @@ export type Task = {
   position: number;
   assignees: User[];
   reporter: User | null;
+  /** Resolved from the GitHub reviewer login (TAS-011 rule engine). Null
+   *  when no PR review is in flight, or the login has no mapped user —
+   *  see `LinkedPR.reviewer_login` for the raw login in that case. */
+  reviewer: User | null;
   labels: Label[];
   /** The bet this task serves (Cyt OS), or null when unlinked. */
   bet: BetRef | null;
@@ -276,7 +283,7 @@ export type StateTransition = {
   to_column: Column | null;
   at: string;
   triggered_by: User | null;
-  source: "user" | "mcp" | "recurring" | "backfill";
+  source: "user" | "mcp" | "recurring" | "backfill" | "github";
 };
 
 export type StalenessSettings = {
