@@ -31,6 +31,10 @@ export const taskKey = (key: string) => ["task", key] as const;
  *  ["tasks"] namespace so existing mutation/WS invalidations refresh it. */
 export const myTasksKey = () => ["tasks", "mine"] as const;
 
+/** Cross-project "to review" page (reviewer=me). Lives under the ["tasks"]
+ *  namespace so existing mutation/WS invalidations refresh it. */
+export const toReviewKey = () => ["tasks", "to-review"] as const;
+
 export const viewsKey = () => ["views"] as const;
 
 export const usersKey = () => ["users"] as const;

@@ -132,6 +132,7 @@ def _me_payload(user, request):
                 clean[k] = int(v)
             except (TypeError, ValueError):
                 continue
+    data["github_username"] = profile.github_username or ""
     data["preferences"] = {
         "assign_hotkey_bindings": clean,
         "board_column_prefs": _clean_board_column_prefs(profile.board_column_prefs),
@@ -1131,6 +1132,10 @@ def _extract_ad_hoc_filters(params) -> dict:
     assignees = [a for a in params.getlist("assignee") if a]
     if assignees:
         filters["assignee"] = assignees
+
+    reviewers = [r for r in params.getlist("reviewer") if r]
+    if reviewers:
+        filters["reviewer"] = reviewers
 
     labels = [l for l in params.getlist("label") if l]
     if labels:

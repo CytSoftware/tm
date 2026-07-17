@@ -56,6 +56,9 @@ export type MePreferences = {
 };
 
 export type Me = User & {
+  /** GitHub login mapped to this user (UserProfile.github_username). Empty
+   *  string when unset — PR review requests can't be routed to them. */
+  github_username: string;
   preferences: MePreferences;
 };
 
