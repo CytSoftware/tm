@@ -68,9 +68,12 @@ export function LinkedPRBadge({ pr }: Props) {
   const style = STATE_STYLES[state];
   const Icon = style.icon;
   const repoLabel = pr.repository?.repo_full_name ?? "";
-  const title = repoLabel
+  let title = repoLabel
     ? `${repoLabel} #${pr.pr_number} — ${pr.pr_title}`
     : `#${pr.pr_number} — ${pr.pr_title}`;
+  if (pr.reviewer_login) {
+    title += ` — review: ${pr.reviewer_login}`;
+  }
 
   return (
     <a

@@ -113,6 +113,17 @@ class TaskPullRequest(models.Model):
     base_ref = models.CharField(max_length=200)
     html_url = models.URLField()
     author_login = models.CharField(max_length=200, blank=True, default="")
+    reviewer_login = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        help_text=(
+            "GitHub login of the current requested/actual reviewer. Latest-"
+            "event-wins single value (v1) — set by "
+            "apps.integrations.rules.set_reviewer, cleared by "
+            "clear_reviewer_if_matches on review_request_removed."
+        ),
+    )
     opened_at = models.DateTimeField()
     merged_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)

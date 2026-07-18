@@ -36,6 +36,7 @@ import {
   type RecurrenceState,
 } from "./RecurrencePicker";
 import { TimeInColumn, formatDuration } from "./TimeInColumn";
+import { UserAvatar } from "@/components/UserAvatar";
 import { useBetsQuery } from "@/hooks/use-bets";
 import { useCreateTask, useUpdateTask, useDeleteTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
@@ -694,6 +695,19 @@ export function TaskPanel(props: Props) {
               </div>
             </div>
 
+            {mode === "edit" && task?.reviewer && (
+              <PropRow label="Reviewer">
+                <div className="flex items-center gap-1.5 h-7 px-1.5 text-[12px]">
+                  <UserAvatar
+                    username={task.reviewer.username}
+                    avatarUrl={task.reviewer.avatar_url}
+                    size="size-5"
+                  />
+                  <span className="truncate">{task.reviewer.username}</span>
+                </div>
+              </PropRow>
+            )}
+
             <PropRow label="Points">
               <Input
                 type="number"
@@ -951,7 +965,9 @@ function TransitionRow({ transition }: { transition: StateTransition }) {
         ? "backfill"
         : transition.source === "mcp"
           ? "agent"
-          : "system");
+          : transition.source === "github"
+            ? "GitHub"
+            : "system");
   const when = formatDuration(transition.at);
   return (
     <div className="flex items-start gap-1.5 text-[11px] leading-tight">

@@ -1,4 +1,4 @@
-"""GitHub webhook → task-tracker glue (P0 scope).
+"""GitHub webhook → task-tracker glue.
 
 Responsibilities:
 
@@ -6,9 +6,12 @@ Responsibilities:
   belonging to a specific project. Case-insensitive, robust to unpadded
   digits, filtered against actual task existence.
 * :func:`apply_pull_request_event` — turn a parsed ``pull_request`` payload
-  into ``TaskPullRequest`` upserts and broadcast ``task.updated`` so
-  connected browsers refetch. P0 does not move tasks between columns; the
-  P1 rule engine will plug in after the upsert step.
+  into ``TaskPullRequest`` upserts, apply the TAS-011 rule engine
+  (:mod:`apps.integrations.rules`) so review-lifecycle actions move the
+  linked task, and broadcast ``task.updated`` so connected browsers refetch.
+* :func:`apply_pull_request_review_event` — the ``pull_request_review``
+  sibling: no upsert (the review payload's PR object lacks ``merged``),
+  just rule application against the already-linked ``TaskPullRequest`` rows.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from django.utils.dateparse import parse_datetime
 from apps.tasks.broadcast import broadcast_task_event
 from apps.tasks.models import Project, Task
 
+from . import rules
 from .models import ProjectRepository, TaskPullRequest
 
 logger = logging.getLogger(__name__)
@@ -79,10 +83,13 @@ class PullRequestEventResult:
     projects_matched: int = 0
     tasks_linked: int = 0
     tasks_unlinked: int = 0
+    tasks_moved: int = 0
     broadcasted_project_ids: set[int] = field(default_factory=set)
 
 
-def apply_pull_request_event(payload: dict[str, Any]) -> PullRequestEventResult:
+def apply_pull_request_event(
+    payload: dict[str, Any], action: str = ""
+) -> PullRequestEventResult:
     """Apply a parsed ``pull_request`` webhook event to the DB.
 
     Pipeline per matching ``ProjectRepository``:
@@ -92,7 +99,10 @@ def apply_pull_request_event(payload: dict[str, Any]) -> PullRequestEventResult:
     3. Upsert a ``TaskPullRequest`` row for every matched task.
     4. Reconcile: delete links for this ``(repo, pr_number)`` that no longer
        match any key (handles a PR whose title was edited to remove a key).
-    5. Broadcast ``task.updated`` once per project so clients refetch.
+    5. Apply the TAS-011 rule engine (:mod:`apps.integrations.rules`) per
+       matched task — reviewer bookkeeping + column move for
+       ``review_requested`` / ``review_request_removed`` / merged-``closed``.
+    6. Broadcast ``task.updated`` once per project so clients refetch.
     """
     pr = payload.get("pull_request") or {}
     repo = payload.get("repository") or {}
@@ -140,9 +150,10 @@ def apply_pull_request_event(payload: dict[str, Any]) -> PullRequestEventResult:
         )
         matched_ids = {t.id for t in matched_tasks}
 
+        task_prs: dict[int, TaskPullRequest] = {}
         with transaction.atomic():
             for task in matched_tasks:
-                _upsert_task_pr(task, link, pr, pr_number)
+                task_prs[task.id] = _upsert_task_pr(task, link, pr, pr_number)
 
             stale_qs = TaskPullRequest.objects.filter(
                 repository=link, pr_number=pr_number
@@ -156,7 +167,13 @@ def apply_pull_request_event(payload: dict[str, Any]) -> PullRequestEventResult:
             result.tasks_linked += len(matched_tasks)
         result.tasks_unlinked += stale_count
 
-        if (matched_tasks or stale_count) and project.id is not None:
+        moved_count = 0
+        for task in matched_tasks:
+            if rules.apply_pr_action_rules(task, task_prs[task.id], action, payload):
+                moved_count += 1
+        result.tasks_moved += moved_count
+
+        if (matched_tasks or stale_count or moved_count) and project.id is not None:
             # One broadcast per project is enough — the frontend invalidates
             # the whole per-project task list on any event.
             anchor_task = matched_tasks[0] if matched_tasks else None
@@ -169,6 +186,76 @@ def apply_pull_request_event(payload: dict[str, Any]) -> PullRequestEventResult:
                 },
             )
             result.broadcasted_project_ids.add(project.id)
+
+    return result
+
+
+@dataclass
+class PullRequestReviewEventResult:
+    tasks_matched: int = 0
+    tasks_moved: int = 0
+    broadcasted_project_ids: set[int] = field(default_factory=set)
+
+
+def apply_pull_request_review_event(payload: dict[str, Any]) -> PullRequestReviewEventResult:
+    """Apply a parsed ``pull_request_review`` webhook event to the DB.
+
+    Only ``action == "submitted"`` carries a meaningful ``review.state``
+    (``edited``/``dismissed`` re-fire with a state that's already been acted
+    on, or one we don't move on). Unlike :func:`apply_pull_request_event`,
+    this does **not** call ``_upsert_task_pr`` — the review event's nested
+    ``pull_request`` object lacks a ``merged`` field, and running the P0
+    upsert with that payload would clobber the real value cached from the
+    last ``pull_request`` event. Instead it looks up already-linked
+    ``TaskPullRequest`` rows by ``(repository.repo_id, pr_number)`` — a
+    review on a PR the webhook never saw a matching ``pull_request`` event
+    for is a no-op.
+    """
+    if (payload.get("action") or "") != "submitted":
+        return PullRequestReviewEventResult()
+
+    review = payload.get("review") or {}
+    pr = payload.get("pull_request") or {}
+    repo = payload.get("repository") or {}
+    repo_id = repo.get("id")
+    pr_number = pr.get("number")
+    if not isinstance(repo_id, int) or not isinstance(pr_number, int):
+        logger.debug("github webhook: review event missing repo_id/pr_number, dropping")
+        return PullRequestReviewEventResult()
+
+    links = list(
+        TaskPullRequest.objects.filter(
+            repository__repo_id=repo_id, pr_number=pr_number
+        ).select_related("task", "task__project", "repository")
+    )
+    if not links:
+        logger.debug(
+            "github webhook: no TaskPullRequest for repo_id=%s pr_number=%s",
+            repo_id,
+            pr_number,
+        )
+        return PullRequestReviewEventResult()
+
+    result = PullRequestReviewEventResult()
+    result.tasks_matched = len(links)
+    moved_project_ids: dict[int, Task] = {}
+
+    for tpr in links:
+        task = tpr.task
+        if task is None:
+            continue
+        if rules.apply_review_rules(task, tpr, review):
+            result.tasks_moved += 1
+            if task.project_id is not None:
+                moved_project_ids[task.project_id] = task
+
+    for project_id, anchor_task in moved_project_ids.items():
+        broadcast_task_event(
+            project_id,
+            "task.updated",
+            {"key": anchor_task.key, "id": anchor_task.id},
+        )
+        result.broadcasted_project_ids.add(project_id)
 
     return result
 

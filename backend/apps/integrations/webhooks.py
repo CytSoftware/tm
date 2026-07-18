@@ -75,12 +75,21 @@ def dispatch_event(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     if event_type == "ping":
         return {"ok": True, "pong": True}
     if event_type == "pull_request":
-        result = services.apply_pull_request_event(payload)
+        action = str(payload.get("action") or "")
+        result = services.apply_pull_request_event(payload, action=action)
         return {
             "ok": True,
             "projects_matched": result.projects_matched,
             "tasks_linked": result.tasks_linked,
             "tasks_unlinked": result.tasks_unlinked,
+            "tasks_moved": result.tasks_moved,
+        }
+    if event_type == "pull_request_review":
+        review_result = services.apply_pull_request_review_event(payload)
+        return {
+            "ok": True,
+            "tasks_matched": review_result.tasks_matched,
+            "tasks_moved": review_result.tasks_moved,
         }
     return {"ok": True, "ignored": event_type}
 

@@ -248,6 +248,19 @@ class Task(TimestampedModel):
         on_delete=models.CASCADE,
         related_name="reported_tasks",
     )
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewing_tasks",
+        help_text=(
+            "The user reviewing this task's linked PR, resolved from the "
+            "GitHub reviewer login via UserProfile.github_username "
+            "(apps.integrations.rules). Webhook-owned — set/cleared by the "
+            "TAS-011 rule engine, not the task write serializer."
+        ),
+    )
 
     recurrence_template = models.ForeignKey(
         "RecurringTaskTemplate",
@@ -486,6 +499,17 @@ class UserProfile(models.Model):
             "project ids are stored as string keys (JSON object keys) and "
             "column ids as ints. Purely personal display state; doesn't "
             "affect teammates or the shared board layout."
+        ),
+    )
+    github_username = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text=(
+            "GitHub login used to map PR review events to this user (case-"
+            "insensitive). Set by hand via the admin in v1 — see "
+            "apps.integrations.rules.find_user_by_github_login. No "
+            "uniqueness constraint; the lookup warns on duplicates."
         ),
     )
 

@@ -335,6 +335,7 @@ class BetRefSerializer(serializers.ModelSerializer):
 class TaskReadSerializer(serializers.ModelSerializer):
     assignees = UserSerializer(many=True, read_only=True)
     reporter = UserSerializer(read_only=True)
+    reviewer = UserSerializer(read_only=True)
     labels = LabelSerializer(many=True, read_only=True)
     column = ColumnSerializer(read_only=True)
     project = serializers.PrimaryKeyRelatedField(read_only=True)
@@ -371,6 +372,7 @@ class TaskReadSerializer(serializers.ModelSerializer):
             "position",
             "assignees",
             "reporter",
+            "reviewer",
             "labels",
             "bet",
             "priority",
