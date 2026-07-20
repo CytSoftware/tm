@@ -30,6 +30,7 @@ import {
   BookText,
   ChevronRight,
   ChevronsLeft,
+  GitPullRequest,
   HardDrive,
   Home,
   LayoutDashboard,
@@ -80,6 +81,7 @@ import {
   useUpdateProject,
   useReorderProjects,
 } from "@/hooks/use-projects";
+import { useToReviewQuery } from "@/hooks/use-tasks";
 import type { Me, Project, User } from "@/lib/types";
 
 type ProjectSection = "favorites" | "projects";
@@ -129,6 +131,7 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
 
   const projectsQuery = useProjectsQuery();
   const reorderProjects = useReorderProjects();
+  const toReviewCount = useToReviewQuery().data?.length ?? 0;
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [archivedOpen, setArchivedOpen] = useState(false);
 
@@ -299,6 +302,25 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           collapsed={isCollapsed}
           onNavigate={() => {
             router.push("/board");
+            onClose?.();
+          }}
+        />
+        <NavLink
+          icon={
+            <GitPullRequest
+              className={
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground"
+              }
+            />
+          }
+          label="To Review"
+          active={pathname.startsWith("/reviews")}
+          collapsed={isCollapsed}
+          badge={toReviewCount > 0 ? toReviewCount : undefined}
+          onNavigate={() => {
+            router.push("/reviews");
             onClose?.();
           }}
         />
@@ -766,12 +788,15 @@ function NavLink({
   active,
   collapsed,
   onNavigate,
+  badge,
 }: {
   icon: React.ReactNode;
   label: string;
   active: boolean;
   collapsed: boolean;
   onNavigate: () => void;
+  /** Optional count rendered after the label (expanded mode only). */
+  badge?: React.ReactNode;
 }) {
   if (collapsed) {
     return (
@@ -810,6 +835,11 @@ function NavLink({
     >
       {icon}
       <span className="truncate">{label}</span>
+      {badge != null && (
+        <span className="ml-auto shrink-0 rounded-full bg-sidebar-accent px-1.5 text-[10.5px] tabular-nums text-sidebar-foreground/70">
+          {badge}
+        </span>
+      )}
     </button>
   );
 }

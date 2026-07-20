@@ -75,6 +75,7 @@ async def list_projects() -> list[dict[str, Any]]:
 async def list_tasks(
     project: str | int | None = None,
     assignee: str | None = None,
+    reviewer: str | None = None,
     priority: list[str] | None = None,
     labels: list[str] | None = None,
     column: str | None = None,
@@ -86,7 +87,9 @@ async def list_tasks(
 
     Arguments are all optional. ``project`` accepts a prefix like ``"CYT"`` or
     a numeric id. ``assignee`` accepts a username (matches tasks where that
-    user is one of the assignees). ``priority`` is a list like ``["P1", "P2"]``
+    user is one of the assignees). ``reviewer`` accepts a username or user id
+    (tasks where that user is the reviewer), or ``"none"`` for tasks with no
+    reviewer. ``priority`` is a list like ``["P1", "P2"]``
     (P1 is highest). ``labels`` and ``column`` accept names. ``bet`` accepts a
     bet id or name, or ``"none"`` for tasks not linked to any bet. ``done``
     filters by completion: ``true`` keeps only tasks in a done column,
@@ -95,6 +98,7 @@ async def list_tasks(
     return await _async(tools.list_tasks)(
         project=project,
         assignee=assignee,
+        reviewer=reviewer,
         priority=priority,
         labels=labels,
         column=column,

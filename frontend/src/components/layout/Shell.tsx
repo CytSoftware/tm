@@ -8,7 +8,7 @@ import { Menu, Search as SearchIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CommandPalette } from "@/components/CommandPalette";
 import { GlobalShortcuts } from "@/components/GlobalShortcuts";
-import { meKey, myTasksKey } from "@/lib/query-keys";
+import { meKey, myTasksKey, toReviewKey } from "@/lib/query-keys";
 import { fetchMe } from "@/lib/auth";
 import { ensureCsrfCookie } from "@/lib/api";
 import { connectNotificationSocket } from "@/lib/ws";
@@ -119,8 +119,12 @@ export function Shell({ children }: { children: ReactNode }) {
         prependNotification(queryClient, event);
         // A notification addressed to me almost always means my task list
         // changed (assigned/moved/completed/deleted) — refresh the
-        // dashboard inbox, which has no project socket of its own.
+        // dashboard inbox and the To Review page, which have no project
+        // socket of their own. Caveat: notify_task_event recipients default
+        // to assignees, so a reviewer who isn't also an assignee gets no
+        // notification and relies on the queries' 60s poll instead.
         queryClient.invalidateQueries({ queryKey: myTasksKey() });
+        queryClient.invalidateQueries({ queryKey: toReviewKey() });
       },
     });
   }, [needsLogin, userId, queryClient]);
