@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { withAlpha } from "@/lib/colors";
 import { currentPeriodStart } from "@/lib/periods";
 import { PRIORITY_DOT } from "@/lib/types";
-import type { Bet, BetRef, Task, Priority, CardField } from "@/lib/types";
+import type { Bet, BetRef, Task, Priority, CardField, User } from "@/lib/types";
 
 const PRIORITY_BADGE: Record<
   Priority,
@@ -113,6 +113,8 @@ export function KanbanCard({
     showProject && isVisible("project", visibleFields);
   const showLinkedPRs =
     isVisible("linked_pr", visibleFields) && task.linked_prs?.length > 0;
+  const showReviewer =
+    isVisible("reviewer", visibleFields) && task.reviewer != null;
 
   const pri = task.priority ? PRIORITY_BADGE[task.priority] : null;
 
@@ -142,6 +144,7 @@ export function KanbanCard({
     task.is_recurring_instance ||
     showPriority ||
     showAssignee ||
+    showReviewer ||
     (showPoints && task.story_points != null) ||
     task.current_column_since != null;
 
@@ -253,10 +256,10 @@ export function KanbanCard({
           reads at a glance instead of hiding in the footer. */}
       {showDueDate && task.due_at && <DueBadge due={task.due_at} />}
 
-      {/* Single metadata footer: key · priority · points · assignees · time.
-          Each item collapses out individually; the row hides entirely when
-          empty (unless priority/assignee hover placeholders keep it around —
-          see `hasFooter` above). */}
+      {/* Single metadata footer: key · priority · points · assignees ·
+          reviewer · time. Each item collapses out individually; the row
+          hides entirely when empty (unless priority/assignee hover
+          placeholders keep it around — see `hasFooter` above). */}
       {hasFooter && (
         <div className="flex items-center gap-2 px-3 py-1.5 border-t border-border/50 text-[11px] text-muted-foreground">
           {showKey && (
@@ -318,6 +321,9 @@ export function KanbanCard({
               task={task}
               onOpenRequest={() => onEditorOpenRequest?.("assignee")}
             />
+          )}
+          {showReviewer && task.reviewer && (
+            <ReviewerAvatar reviewer={task.reviewer} />
           )}
           {task.current_column_since && (
             <span className="shrink-0 text-muted-foreground/70">
@@ -557,5 +563,28 @@ function AssigneeStack({
         </span>
       )}
     </button>
+  );
+}
+
+/** Reviewer avatar — resolved from the GitHub PR review webhook (see
+ *  `Task.reviewer`). Rendered next to the assignee stack but ringed in the
+ *  same emerald tone `LinkedPRBadge` uses for an "open" PR, so it doesn't
+ *  get mistaken for another assignee at a glance. */
+function ReviewerAvatar({ reviewer }: { reviewer: User }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div className="shrink-0 rounded-full ring-1 ring-emerald-500/60">
+            <UserAvatar
+              username={reviewer.username}
+              avatarUrl={reviewer.avatar_url}
+              size="size-5"
+            />
+          </div>
+        }
+      />
+      <TooltipContent>Reviewer: {reviewer.username}</TooltipContent>
+    </Tooltip>
   );
 }

@@ -94,6 +94,11 @@ export function LinkedPRBadge({ pr }: Props) {
       <Icon className="size-3" aria-hidden />
       <span className="font-mono">#{pr.pr_number}</span>
       <span className="opacity-80">{style.label}</span>
+      {pr.reviewer_login && (
+        <span className="opacity-60 max-w-[6rem] truncate">
+          · {pr.reviewer_login}
+        </span>
+      )}
     </a>
   );
 }

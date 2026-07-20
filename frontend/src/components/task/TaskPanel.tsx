@@ -36,6 +36,7 @@ import {
   type RecurrenceState,
 } from "./RecurrencePicker";
 import { TimeInColumn, formatDuration } from "./TimeInColumn";
+import { LinkedPRBadge } from "@/components/integrations/LinkedPRBadge";
 import { UserAvatar } from "@/components/UserAvatar";
 import { useBetsQuery } from "@/hooks/use-bets";
 import { useCreateTask, useUpdateTask, useDeleteTask } from "@/hooks/use-tasks";
@@ -695,7 +696,7 @@ export function TaskPanel(props: Props) {
               </div>
             </div>
 
-            {mode === "edit" && task?.reviewer && (
+            {task?.reviewer && (
               <PropRow label="Reviewer">
                 <div className="flex items-center gap-1.5 h-7 px-1.5 text-[12px]">
                   <UserAvatar
@@ -779,6 +780,38 @@ export function TaskPanel(props: Props) {
                 />
               </div>
             </div>
+
+            {task && task.linked_prs.length > 0 && (
+              <div className="pt-2 mt-2 border-t border-border/40">
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground px-1">
+                  Pull requests
+                </span>
+                <div className="mt-1 space-y-1">
+                  {task.linked_prs.map((pr) => (
+                    <div
+                      key={pr.id}
+                      className="flex items-center gap-1.5 px-1 text-[11px]"
+                    >
+                      <LinkedPRBadge pr={pr} />
+                      {pr.repository?.repo_full_name && (
+                        <span className="shrink-0 text-muted-foreground">
+                          {pr.repository.repo_full_name}
+                        </span>
+                      )}
+                      <span className="flex-1 min-w-0 truncate">
+                        {pr.pr_title}
+                      </span>
+                      {/* Reviewer is already shown inline on the badge. */}
+                      {pr.author_login && (
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          by {pr.author_login}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {mode === "create" && (
               <div className="pt-2 mt-2 border-t border-border/40">
