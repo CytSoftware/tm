@@ -526,6 +526,7 @@ def get_weekly_completions(
 def list_tasks(
     project: str | int | None = None,
     assignee: str | None = None,
+    reviewer: str | None = None,
     priority: list[str] | None = None,
     labels: list[str] | None = None,
     column: str | None = None,
@@ -538,6 +539,8 @@ def list_tasks(
         filters["project"] = project
     if assignee:
         filters["assignee"] = [assignee]
+    if reviewer:
+        filters["reviewer"] = [reviewer]
     if priority:
         filters["priority"] = priority
     if labels:

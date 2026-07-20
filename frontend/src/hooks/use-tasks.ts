@@ -13,6 +13,7 @@ import { apiFetch } from "@/lib/api";
 import {
   myTasksKey,
   taskInfiniteKey,
+  toReviewKey,
   viewsKey,
 } from "@/lib/query-keys";
 import type {
@@ -145,6 +146,24 @@ export function useMyTasksQuery() {
     queryFn: () =>
       apiFetch<TaskListResponse>(
         "/api/tasks/?assignee=me&done=false&include_archived=false&sort_field=due_at&sort_dir=asc&limit=100",
+      ).then((r) => r.results),
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  });
+}
+
+/** Open tasks across all projects where I'm the reviewer (the "To Review"
+ *  page). `done=false` drops approved tasks that already landed in Done —
+ *  their reviewer stays set as a "reviewed by" record. Sorted by recency:
+ *  the TAS-011 rule engine bumps `updated_at` on every reviewer/column
+ *  change, so active review requests float to the top. Polls every 60s —
+ *  the page sits outside any project socket. */
+export function useToReviewQuery() {
+  return useQuery({
+    queryKey: toReviewKey(),
+    queryFn: () =>
+      apiFetch<TaskListResponse>(
+        "/api/tasks/?reviewer=me&done=false&include_archived=false&sort_field=updated_at&sort_dir=desc&limit=100",
       ).then((r) => r.results),
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,

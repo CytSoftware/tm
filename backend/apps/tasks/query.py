@@ -10,6 +10,7 @@ saved ``View`` stores in its JSON fields:
 
     filters = {
         "assignee": [1, 2],            # user ids OR usernames OR "me"
+        "reviewer": ["me"],            # user ids OR usernames OR "me"/"none"
         "priority": ["P1", "P2"],      # P1 = highest, P4 = lowest
         "labels": [3],                 # label ids OR names
         "column": 7,                   # column id OR name
@@ -246,6 +247,24 @@ def apply_task_filters(
             qs = qs.filter(assignees__isnull=True)
         elif ids:
             qs = qs.filter(assignees__id__in=ids).distinct()
+        else:
+            qs = qs.none()
+
+    # Reviewer — same value handling as assignee, but ``Task.reviewer`` is a
+    # single FK so no ``.distinct()`` is needed. ``"none"`` matches tasks with
+    # no reviewer set.
+    if reviewer_values := filters.get("reviewer"):
+        if not isinstance(reviewer_values, (list, tuple)):
+            reviewer_values = [reviewer_values]
+        include_none = "none" in reviewer_values
+        real_values = [v for v in reviewer_values if v != "none"]
+        ids = _resolve_user_ids(real_values, requesting_user) if real_values else []
+        if include_none and ids:
+            qs = qs.filter(Q(reviewer_id__in=ids) | Q(reviewer__isnull=True))
+        elif include_none:
+            qs = qs.filter(reviewer__isnull=True)
+        elif ids:
+            qs = qs.filter(reviewer_id__in=ids)
         else:
             qs = qs.none()
 
