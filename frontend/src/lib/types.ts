@@ -416,7 +416,8 @@ export type CardField =
   | "points"
   | "due_date"
   | "project"
-  | "linked_pr";
+  | "linked_pr"
+  | "reviewer";
 
 export const ALL_CARD_FIELDS: CardField[] = [
   "key",
@@ -429,6 +430,7 @@ export const ALL_CARD_FIELDS: CardField[] = [
   "due_date",
   "project",
   "linked_pr",
+  "reviewer",
 ];
 
 export const CARD_FIELD_LABELS: Record<CardField, string> = {
@@ -442,6 +444,7 @@ export const CARD_FIELD_LABELS: Record<CardField, string> = {
   due_date: "Due date",
   project: "Project prefix",
   linked_pr: "Linked PRs",
+  reviewer: "Reviewer",
 };
 
 export type SavedView = {
