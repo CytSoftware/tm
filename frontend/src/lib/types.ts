@@ -43,6 +43,30 @@ export type User = {
  *  STANDARD_COLUMNS — the backend accepts any ints. */
 export type BoardColumnPrefs = Record<string, { hidden_columns: number[] }>;
 
+export type QuickActionIcon =
+  | "bell"
+  | "board"
+  | "book"
+  | "bolt"
+  | "chart"
+  | "home"
+  | "link"
+  | "project"
+  | "star"
+  | "tasks"
+  | "user";
+
+type QuickActionBase = {
+  id: string;
+  label: string;
+  icon: QuickActionIcon;
+};
+
+export type QuickAction =
+  | (QuickActionBase & { kind: "page"; url: string })
+  | (QuickActionBase & { kind: "project"; project_id: number })
+  | (QuickActionBase & { kind: "assignee"; user_id: number });
+
 /** User-private preferences — only returned by ``/api/auth/me/``. Not
  *  exposed on the shared ``/api/users/`` listing. */
 export type MePreferences = {
@@ -53,6 +77,8 @@ export type MePreferences = {
   assign_hotkey_bindings: Record<string, number>;
   /** Collapsed/hidden kanban columns per project — see ``BoardColumnPrefs``. */
   board_column_prefs: BoardColumnPrefs;
+  /** Ordered personal shortcuts rendered at the top of the sidebar. */
+  quick_actions: QuickAction[];
 };
 
 export type Me = User & {

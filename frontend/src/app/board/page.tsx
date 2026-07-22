@@ -3,6 +3,7 @@
 import {
   Fragment,
   ReactNode,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -14,7 +15,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
 import {
   draggable,
@@ -294,7 +295,32 @@ function DroppableColumn({
 }
 
 export default function BoardPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="h-full grid place-items-center">
+          <div className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
+        </div>
+      }
+    >
+      <BoardPageContent />
+    </Suspense>
+  );
+}
+
+function positiveIntegerParam(value: string | null): number | null {
+  if (!value || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function BoardPageContent() {
   const { projectId, setProjectId, viewId, setViewId } = useActiveProject();
+  const searchParams = useSearchParams();
+  const requestedProjectId = positiveIntegerParam(searchParams.get("project"));
+  const requestedAssigneeId = positiveIntegerParam(
+    searchParams.get("assignee"),
+  );
   const queryClient = useQueryClient();
 
   const projectsQuery = useProjectsQuery();
@@ -305,6 +331,29 @@ export default function BoardPage() {
     () => projects.find((p) => p.id === projectId),
     [projects, projectId],
   );
+
+  useEffect(() => {
+    if (
+      requestedProjectId !== null &&
+      projects.some((item) => item.id === requestedProjectId)
+    ) {
+      if (projectId !== requestedProjectId) setProjectId(requestedProjectId);
+      else if (viewId !== null) setViewId(null);
+      return;
+    }
+    if (requestedAssigneeId !== null) {
+      if (projectId !== null) setProjectId(null);
+      else if (viewId !== null) setViewId(null);
+    }
+  }, [
+    projectId,
+    projects,
+    requestedAssigneeId,
+    requestedProjectId,
+    setProjectId,
+    setViewId,
+    viewId,
+  ]);
 
   // Fetch active view to determine kind + card_display
   const viewsQuery = useQuery({
@@ -330,11 +379,13 @@ export default function BoardPage() {
   // the underlying View — the user has to explicitly "Save to view" to
   // push changes back.
   const [boardFilters, setBoardFilters] = useState<BoardFilters>(
-    () => ({ ...EMPTY_BOARD_FILTERS }),
+    () => ({
+      ...EMPTY_BOARD_FILTERS,
+      assigneeIds:
+        requestedAssigneeId !== null ? [requestedAssigneeId] : [],
+    }),
   );
-  const [seededForViewId, setSeededForViewId] = useState<
-    number | null | "unset"
-  >("unset");
+  const [seededForTarget, setSeededForTarget] = useState<string | null>(null);
 
   // Fetch all labels for the command palette + filter bar
   const labelsQuery = useQuery({
@@ -354,15 +405,24 @@ export default function BoardPage() {
   //
   // Wait until the views query has actually resolved before seeding: if we
   // seed on first render while ``activeView`` is still undefined (because
-  // viewsQuery hasn't returned), ``seededForViewId`` ratchets forward and
+  // viewsQuery hasn't returned), ``seededForTarget`` ratchets forward and
   // the view's filters never get applied — every column fires with empty
   // filters and fetches the full unfiltered dataset.
   const viewsLoaded = viewsQuery.data !== undefined;
   const canSeedForView = viewId == null || viewsLoaded;
-  if (canSeedForView && seededForViewId !== viewId) {
-    setSeededForViewId(viewId);
+  const boardTarget =
+    requestedAssigneeId !== null
+      ? `assignee:${requestedAssigneeId}`
+      : `view:${viewId ?? "none"}`;
+  if (canSeedForView && seededForTarget !== boardTarget) {
+    setSeededForTarget(boardTarget);
     setBoardFilters(
-      activeView
+      requestedAssigneeId !== null
+        ? {
+            ...EMPTY_BOARD_FILTERS,
+            assigneeIds: [requestedAssigneeId],
+          }
+        : activeView
         ? boardFiltersFromSavedView(activeView, allLabels, allUsers)
         : { ...EMPTY_BOARD_FILTERS },
     );

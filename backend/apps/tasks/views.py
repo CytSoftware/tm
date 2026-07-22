@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.db import models, transaction
 from django.db.models import Max, Min
@@ -112,15 +114,155 @@ class LogoutView(APIView):
 # rejected at bind-time so users can't stomp on skip/close.
 _RESERVED_HOTKEYS: set[str] = {"ArrowDown", "Escape"}
 
+_QUICK_ACTION_KINDS = {"page", "project", "assignee"}
+_QUICK_ACTION_ICONS = {
+    "bell",
+    "board",
+    "book",
+    "bolt",
+    "chart",
+    "home",
+    "link",
+    "project",
+    "star",
+    "tasks",
+    "user",
+}
 
-def _me_payload(user, request):
+
+def _quick_action_error(index: int, message: str) -> ValidationError:
+    return ValidationError(
+        {"preferences.quick_actions": f"Action {index + 1}: {message}"}
+    )
+
+
+def _parse_quick_action(raw, index: int) -> dict:
+    if not isinstance(raw, dict):
+        raise _quick_action_error(index, "Must be an object.")
+
+    action_id = raw.get("id")
+    if not isinstance(action_id, str) or not action_id.strip():
+        raise _quick_action_error(index, "`id` must be a non-empty string.")
+    action_id = action_id.strip()
+    if len(action_id) > 64:
+        raise _quick_action_error(index, "`id` must be 64 characters or fewer.")
+
+    label = raw.get("label")
+    if not isinstance(label, str) or not label.strip():
+        raise _quick_action_error(index, "`label` is required.")
+    label = label.strip()
+    if len(label) > 80:
+        raise _quick_action_error(index, "`label` must be 80 characters or fewer.")
+
+    kind = raw.get("kind")
+    if kind not in _QUICK_ACTION_KINDS:
+        raise _quick_action_error(index, "Unknown action type.")
+
+    icon = raw.get("icon", "link")
+    if icon not in _QUICK_ACTION_ICONS:
+        raise _quick_action_error(index, "Unknown icon.")
+
+    action = {"id": action_id, "label": label, "kind": kind, "icon": icon}
+    if kind == "page":
+        url = raw.get("url")
+        if not isinstance(url, str) or not url.strip():
+            raise _quick_action_error(index, "`url` is required for page actions.")
+        url = url.strip()
+        if len(url) > 2048:
+            raise _quick_action_error(index, "`url` is too long.")
+        parsed = urlparse(url)
+        is_internal = url.startswith("/") and not url.startswith("//")
+        is_external = parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+        if not is_internal and not is_external:
+            raise _quick_action_error(
+                index, "`url` must be an app path or an http(s) URL."
+            )
+        action["url"] = url
+    elif kind == "project":
+        project_id = raw.get("project_id")
+        if isinstance(project_id, bool) or not isinstance(project_id, int):
+            raise _quick_action_error(
+                index, "`project_id` must be an integer for project actions."
+            )
+        action["project_id"] = project_id
+    else:
+        user_id = raw.get("user_id")
+        if isinstance(user_id, bool) or not isinstance(user_id, int):
+            raise _quick_action_error(
+                index, "`user_id` must be an integer for person actions."
+            )
+        action["user_id"] = user_id
+    return action
+
+
+def _normalize_quick_actions(raw, *, strict: bool) -> list[dict]:
+    if not isinstance(raw, list):
+        if strict:
+            raise ValidationError({"preferences.quick_actions": "Must be a list."})
+        return []
+
+    actions: list[dict] = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(raw):
+        try:
+            action = _parse_quick_action(item, index)
+        except ValidationError:
+            if strict:
+                raise
+            continue
+        if action["id"] in seen_ids:
+            if strict:
+                raise _quick_action_error(index, "`id` must be unique.")
+            continue
+        seen_ids.add(action["id"])
+        actions.append(action)
+
+    project_ids = {
+        action["project_id"] for action in actions if action["kind"] == "project"
+    }
+    user_ids = {
+        action["user_id"] for action in actions if action["kind"] == "assignee"
+    }
+    existing_projects = set(
+        Project.objects.filter(id__in=project_ids, archived=False).values_list(
+            "id", flat=True
+        )
+    )
+    existing_users = set(
+        User.objects.filter(id__in=user_ids, is_active=True).values_list(
+            "id", flat=True
+        )
+    )
+
+    normalized: list[dict] = []
+    for index, action in enumerate(actions):
+        if (
+            action["kind"] == "project"
+            and action["project_id"] not in existing_projects
+        ):
+            if strict:
+                raise _quick_action_error(index, "Project does not exist.")
+            continue
+        if action["kind"] == "assignee" and action["user_id"] not in existing_users:
+            if strict:
+                raise _quick_action_error(index, "User does not exist.")
+            continue
+        normalized.append(action)
+    return normalized
+
+
+def _me_payload(user, request, *, profile=None):
     """Flat dict for /api/auth/me/ — UserSerializer fields plus a
     ``preferences`` object. Preferences live only on this endpoint; the
     shared ``/api/users/`` list intentionally stays lean."""
     from .models import UserProfile
 
+    profile = profile or UserProfile.objects.get_or_create(user=user)[0]
+    # Keep the reverse OneToOne cache coherent during PATCH responses. Without
+    # this, an earlier ``user.profile`` access can make both avatar and
+    # preference fields serialize their pre-update values until the next GET.
+    user._state.fields_cache["profile"] = profile
     data = dict(UserSerializer(user, context={"request": request}).data)
-    profile = getattr(user, "profile", None) or UserProfile.objects.get_or_create(user=user)[0]
     raw = profile.assign_hotkey_bindings or {}
     # Defensive filter so a hand-edited column can't crash the frontend.
     clean: dict[str, int] = {}
@@ -136,6 +278,9 @@ def _me_payload(user, request):
     data["preferences"] = {
         "assign_hotkey_bindings": clean,
         "board_column_prefs": _clean_board_column_prefs(profile.board_column_prefs),
+        "quick_actions": _normalize_quick_actions(
+            profile.quick_actions, strict=False
+        ),
     }
     return data
 
@@ -260,6 +405,10 @@ class MeView(APIView):
                                     },
                                 },
                             },
+                            "quick_actions": {
+                                "type": "array",
+                                "items": {"type": "object"},
+                            },
                         },
                     },
                 },
@@ -339,7 +488,13 @@ class MeView(APIView):
             )
             profile.save(update_fields=["board_column_prefs"])
 
-        return Response(_me_payload(request.user, request))
+        if isinstance(prefs, dict) and "quick_actions" in prefs:
+            profile.quick_actions = _normalize_quick_actions(
+                prefs.get("quick_actions"), strict=True
+            )
+            profile.save(update_fields=["quick_actions"])
+
+        return Response(_me_payload(request.user, request, profile=profile))
 
 
 # ---------------------------------------------------------------------------

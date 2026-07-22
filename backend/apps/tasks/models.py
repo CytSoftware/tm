@@ -501,6 +501,14 @@ class UserProfile(models.Model):
             "affect teammates or the shared board layout."
         ),
     )
+    quick_actions = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Ordered personal sidebar shortcuts. Each action opens an app/external "
+            "page, a project board, or an all-projects board filtered to one user."
+        ),
+    )
     github_username = models.CharField(
         max_length=100,
         blank=True,

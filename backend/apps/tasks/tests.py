@@ -42,6 +42,97 @@ def _dt(y, m, d, hh=12, mm=0, tz=UTC):
     return datetime(y, m, d, hh, mm, tzinfo=tz)
 
 
+class QuickActionPreferenceTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("ali", "ali@example.com", "x")
+        self.teammate = User.objects.create_user(
+            "sam", "sam@example.com", "x"
+        )
+        self.project = Project.objects.create(name="Cyt", prefix="CYT")
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_quick_actions_default_to_empty(self):
+        response = self.client.get("/api/auth/me/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["preferences"]["quick_actions"], [])
+
+    def test_quick_actions_round_trip_in_order(self):
+        actions = [
+            {
+                "id": "docs",
+                "label": "Docs",
+                "kind": "page",
+                "icon": "book",
+                "url": "/wiki",
+            },
+            {
+                "id": "cyt-board",
+                "label": "Cyt board",
+                "kind": "project",
+                "icon": "project",
+                "project_id": self.project.id,
+            },
+            {
+                "id": "sam-tasks",
+                "label": "Sam's tasks",
+                "kind": "assignee",
+                "icon": "user",
+                "user_id": self.teammate.id,
+            },
+        ]
+        response = self.client.patch(
+            "/api/auth/me/",
+            {"preferences": {"quick_actions": actions}},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["preferences"]["quick_actions"], actions)
+        self.user.profile.refresh_from_db()
+        self.assertEqual(self.user.profile.quick_actions, actions)
+
+    def test_quick_actions_reject_unsafe_urls(self):
+        response = self.client.patch(
+            "/api/auth/me/",
+            {
+                "preferences": {
+                    "quick_actions": [
+                        {
+                            "id": "bad",
+                            "label": "Bad",
+                            "kind": "page",
+                            "icon": "link",
+                            "url": "javascript:alert(1)",
+                        }
+                    ]
+                }
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.user.profile.quick_actions, [])
+
+    def test_quick_actions_reject_missing_targets(self):
+        response = self.client.patch(
+            "/api/auth/me/",
+            {
+                "preferences": {
+                    "quick_actions": [
+                        {
+                            "id": "gone",
+                            "label": "Gone project",
+                            "kind": "project",
+                            "icon": "project",
+                            "project_id": 999999,
+                        }
+                    ]
+                }
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+
 class ColumnKindMirrorTests(TestCase):
     """``is_done`` is a derived mirror of ``kind`` — kept in lockstep on save."""
 

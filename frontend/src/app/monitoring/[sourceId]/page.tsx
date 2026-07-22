@@ -103,7 +103,7 @@ export default function MonitoringPage() {
           <Button
             size="sm"
             variant="outline"
-            render={<a href="/settings/monitoring" />}
+            render={<a href="/settings/incoming-webhooks" />}
           >
             Monitoring settings
           </Button>
@@ -133,7 +133,7 @@ export default function MonitoringPage() {
           <Button
             variant="outline"
             size="sm"
-            render={<a href="/settings/monitoring" />}
+            render={<a href="/settings/incoming-webhooks" />}
           >
             <Settings2 /> Configure
           </Button>
