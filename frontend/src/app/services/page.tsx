@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { Boxes, ExternalLink, Settings2 } from "lucide-react";
+import { Boxes, Settings2 } from "lucide-react";
 
 import { ServiceLogo } from "@/components/services/ServiceLogo";
 import { Button } from "@/components/ui/button";
@@ -81,7 +81,7 @@ export default function ServicesPage() {
             </div>
           </div>
         ) : (
-          <div className="max-w-6xl mx-auto px-6 py-6 space-y-8">
+          <div className="max-w-7xl mx-auto px-6 py-7 space-y-9">
             {groups.map(([category, categoryServices]) => (
               <section key={category}>
                 <div className="mb-3 flex items-center gap-2">
@@ -92,38 +92,24 @@ export default function ServicesPage() {
                     {categoryServices.length}
                   </span>
                 </div>
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-x-3 gap-y-6">
                   {categoryServices.map((service) => (
                     <a
                       key={service.id}
                       href={service.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="group min-h-36 rounded-xl border border-border bg-card p-4 flex flex-col transition-colors hover:border-foreground/20 hover:bg-muted/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="group min-w-0 rounded-xl px-2 py-3 flex flex-col items-center gap-3 transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      <div className="flex items-start gap-3">
-                        <ServiceLogo
-                          name={service.name}
-                          logoUrl={service.logo_url}
-                          className="size-11 rounded-lg shrink-0"
-                        />
-                        <div className="flex-1 min-w-0 pt-0.5">
-                          <div className="flex items-start gap-2">
-                            <h3 className="flex-1 min-w-0 text-[14px] font-semibold truncate">
-                              {service.name}
-                            </h3>
-                            <ExternalLink className="size-3.5 mt-0.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
-                          </div>
-                          <p className="mt-0.5 text-[10px] text-muted-foreground truncate">
-                            {hostname(service.url)}
-                          </p>
-                        </div>
-                      </div>
-                      {service.description && (
-                        <p className="mt-auto pt-4 text-[12px] leading-relaxed text-muted-foreground line-clamp-2">
-                          {service.description}
-                        </p>
-                      )}
+                      <ServiceLogo
+                        name={service.name}
+                        logoUrl={service.logo_url}
+                        serviceUrl={service.url}
+                        className="size-24 rounded-[22%] shrink-0 text-xl transition-transform group-hover:scale-[1.03]"
+                      />
+                      <h3 className="max-w-28 text-center text-[13px] leading-tight font-medium line-clamp-2">
+                        {service.name}
+                      </h3>
                     </a>
                   ))}
                 </div>
@@ -134,12 +120,4 @@ export default function ServicesPage() {
       </main>
     </div>
   );
-}
-
-function hostname(url: string) {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
 }

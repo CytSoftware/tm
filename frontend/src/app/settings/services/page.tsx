@@ -106,6 +106,7 @@ export default function ServiceSettingsPage() {
                   <ServiceLogo
                     name={service.name}
                     logoUrl={service.logo_url}
+                    serviceUrl={service.url}
                     className="size-10 rounded-lg shrink-0"
                   />
                   <div className="flex-1 min-w-0">
@@ -239,6 +240,7 @@ function ServiceEditorDialog({
               <ServiceLogo
                 name={name || "Service"}
                 logoUrl={shownLogo}
+                serviceUrl={url}
                 className="size-16 rounded-xl shrink-0"
               />
               <div className="space-y-2">
