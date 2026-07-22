@@ -36,7 +36,7 @@ A self-hosted, Linear-style task tracker for Cyt Software's internal work — wi
 - **Recurring task templates** driven by RFC-5545 RRULEs (`daily`, `weekdays`, `weekly:mon,wed,fri`, `monthly:15`, or a raw `FREQ=…` string). A generator materializes missed occurrences safely, with a per-run catch-up cap.
 - **Rich task descriptions** via a TipTap editor stored as JSON.
 - **Real-time sync** — every write (from DRF, from MCP, from the recurring generator) fans out to connected browsers through Django Channels; TanStack Query invalidates and refetches automatically.
-- **Inbound event inbox** — create tokenized webhook sources for Sentry, Uptime Kuma, or generic JSON; triage normalized items in a customizable payload-aware table.
+- **Monitoring pages** — create tokenized webhook sources for Sentry, Uptime Kuma, or generic JSON; each source gets its own named/iconed sidebar page and persisted payload-aware columns.
 - **MCP server** exposing the tracker to AI agents over Streamable HTTP (Bearer token / OAuth 2.0) or stdio (Claude Desktop).
 - **OAuth 2.0** with dynamic client registration (RFC 7591) and discovery metadata (RFC 8414) so MCP clients can self-provision credentials.
 
@@ -208,7 +208,7 @@ Resources (all standard DRF CRUD):
 /api/recurring-tasks/<id>/resume/
 /api/recurring-tasks/<id>/preview/   # {count}
 /api/users/
-/api/integrations/event-sources/              # manage inbound webhook URLs
+/api/integrations/event-sources/              # manage monitoring pages, columns, and webhook URLs
 /api/integrations/events/                     # list and update event workflow status
 /api/integrations/events/summary/             # status counts for the event inbox
 ```

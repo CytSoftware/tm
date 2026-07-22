@@ -55,12 +55,41 @@ class EventSourceSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "provider",
+            "icon",
+            "columns",
             "active",
             "webhook_url",
             "created_at",
             "updated_at",
         )
         read_only_fields = ("id", "webhook_url", "created_at", "updated_at")
+
+    def validate_columns(self, value: list) -> list:
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Columns must be a list.")
+        if len(value) > 100:
+            raise serializers.ValidationError("At most 100 columns are allowed.")
+        cleaned: list[dict] = []
+        seen: set[str] = set()
+        for column in value:
+            if not isinstance(column, dict):
+                raise serializers.ValidationError("Every column must be an object.")
+            column_id = column.get("id")
+            label = column.get("label")
+            visible = column.get("visible")
+            if not isinstance(column_id, str) or not column_id or len(column_id) > 255:
+                raise serializers.ValidationError("Every column needs a valid id.")
+            if column_id in seen:
+                raise serializers.ValidationError(f"Duplicate column id: {column_id}")
+            if not isinstance(label, str) or not label.strip() or len(label) > 100:
+                raise serializers.ValidationError("Every column needs a valid label.")
+            if not isinstance(visible, bool):
+                raise serializers.ValidationError("Column visibility must be true or false.")
+            seen.add(column_id)
+            cleaned.append(
+                {"id": column_id, "label": label.strip(), "visible": visible}
+            )
+        return cleaned
 
     def get_webhook_url(self, obj: EventSource) -> str:
         path = reverse("event-source-ingest", kwargs={"token": obj.token})

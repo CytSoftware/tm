@@ -325,8 +325,38 @@ class EventInboxTests(TestCase):
     def test_source_create_returns_public_webhook_url(self):
         source, body = self.create_source()
         self.assertEqual(source.user, self.user)
+        self.assertEqual(body["icon"], "activity")
+        self.assertEqual(body["columns"], [])
         self.assertIn(str(source.token), body["webhook_url"])
         self.assertTrue(body["webhook_url"].endswith("/ingest/"))
+
+    def test_source_page_configuration_is_persisted_and_validated(self):
+        source, _ = self.create_source()
+        columns = [
+            {"id": "workflow_status", "label": "Status", "visible": True},
+            {"id": "payload:monitor.url", "label": "URL", "visible": True},
+        ]
+        response = self.client.patch(
+            f"/api/integrations/event-sources/{source.pk}/",
+            data=json.dumps(
+                {"name": "Website uptime", "icon": "globe", "columns": columns}
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        source.refresh_from_db()
+        self.assertEqual(source.name, "Website uptime")
+        self.assertEqual(source.icon, "globe")
+        self.assertEqual(source.columns, columns)
+
+        invalid = self.client.patch(
+            f"/api/integrations/event-sources/{source.pk}/",
+            data=json.dumps(
+                {"columns": [{"id": "title", "label": "Title", "visible": "yes"}]}
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(invalid.status_code, 400)
 
     def test_generic_event_is_created_and_upserted(self):
         source, _ = self.create_source()

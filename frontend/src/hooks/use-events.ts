@@ -10,12 +10,14 @@ import {
 } from "@/lib/query-keys";
 import type {
   EventProvider,
+  EventPageIcon,
   EventSource,
   EventSourceListResponse,
   EventSummary,
   EventWorkflowStatus,
   ExternalEvent,
   ExternalEventListResponse,
+  MonitoringColumn,
 } from "@/lib/types";
 
 export function useEventSourcesQuery() {
@@ -29,7 +31,11 @@ export function useEventSourcesQuery() {
 export function useCreateEventSource() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { name: string; provider: EventProvider }) =>
+    mutationFn: (payload: {
+      name: string;
+      provider: EventProvider;
+      icon: EventPageIcon;
+    }) =>
       apiFetch<EventSource>("/api/integrations/event-sources/", {
         method: "POST",
         body: payload,
@@ -41,7 +47,11 @@ export function useCreateEventSource() {
 export function useUpdateEventSource(id: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload: Partial<Pick<EventSource, "name" | "provider" | "active">>) =>
+    mutationFn: (
+      payload: Partial<
+        Pick<EventSource, "name" | "provider" | "icon" | "columns" | "active">
+      > & { columns?: MonitoringColumn[] },
+    ) =>
       apiFetch<EventSource>(`/api/integrations/event-sources/${id}/`, {
         method: "PATCH",
         body: payload,
@@ -70,24 +80,26 @@ export type EventFilters = {
   search?: string;
 };
 
-export function useEventsQuery(filters: EventFilters) {
+export function useEventsQuery(filters: EventFilters, enabled = true) {
   return useQuery({
     queryKey: externalEventsKey(filters),
     queryFn: () =>
       apiFetch<ExternalEventListResponse>("/api/integrations/events/", {
         query: filters,
       }),
+    enabled,
     refetchInterval: 10_000,
   });
 }
 
-export function useEventSummaryQuery(source?: number) {
+export function useEventSummaryQuery(source?: number, enabled = true) {
   return useQuery({
     queryKey: externalEventSummaryKey(source),
     queryFn: () =>
       apiFetch<EventSummary>("/api/integrations/events/summary/", {
         query: { source },
       }),
+    enabled,
     refetchInterval: 10_000,
   });
 }

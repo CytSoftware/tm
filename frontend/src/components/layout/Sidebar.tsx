@@ -83,6 +83,8 @@ import {
   useReorderProjects,
 } from "@/hooks/use-projects";
 import { useToReviewQuery } from "@/hooks/use-tasks";
+import { useEventSourcesQuery } from "@/hooks/use-events";
+import { MonitoringIcon } from "@/lib/monitoring";
 import type { Me, Project, User } from "@/lib/types";
 
 type ProjectSection = "favorites" | "projects";
@@ -131,6 +133,7 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
   const isCollapsed = mobile ? false : collapsed;
 
   const projectsQuery = useProjectsQuery();
+  const eventSourcesQuery = useEventSourcesQuery();
   const reorderProjects = useReorderProjects();
   const toReviewCount = useToReviewQuery().data?.length ?? 0;
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
@@ -139,6 +142,10 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
   const allProjects = useMemo(
     () => projectsQuery.data?.results ?? [],
     [projectsQuery.data],
+  );
+  const monitoringSources = useMemo(
+    () => eventSourcesQuery.data?.results ?? [],
+    [eventSourcesQuery.data],
   );
   const favorites = useMemo(
     () => sortForSidebar(allProjects.filter((p) => p.is_starred && !p.archived)),
@@ -327,24 +334,6 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
         />
         <NavLink
           icon={
-            <Activity
-              className={
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground"
-              }
-            />
-          }
-          label="Events"
-          active={pathname.startsWith("/events")}
-          collapsed={isCollapsed}
-          onNavigate={() => {
-            router.push("/events");
-            onClose?.();
-          }}
-        />
-        <NavLink
-          icon={
             <Target
               className={
                 isCollapsed
@@ -415,6 +404,51 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
             onClose?.();
           }}
         />
+
+        {monitoringSources.length > 0 && (
+          <ProjectGroup
+            title="Monitoring"
+            collapsed={isCollapsed}
+            action={
+              !isCollapsed && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    router.push("/settings/monitoring");
+                    onClose?.();
+                  }}
+                  className="size-5 grid place-items-center rounded text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground transition-colors"
+                  aria-label="Monitoring settings"
+                >
+                  <Settings className="size-3" />
+                </button>
+              )
+            }
+          >
+            {monitoringSources.map((source) => (
+              <NavLink
+                key={source.id}
+                icon={
+                  <MonitoringIcon
+                    name={source.icon}
+                    className={
+                      isCollapsed
+                        ? "size-4"
+                        : "size-3.5 shrink-0 text-muted-foreground"
+                    }
+                  />
+                }
+                label={source.name}
+                active={pathname === `/monitoring/${source.id}`}
+                collapsed={isCollapsed}
+                onNavigate={() => {
+                  router.push(`/monitoring/${source.id}`);
+                  onClose?.();
+                }}
+              />
+            ))}
+          </ProjectGroup>
+        )}
 
         {/* ── Projects ────────────────────────────────────────────── */}
         {favorites.length > 0 && (
@@ -1048,6 +1082,22 @@ function UserFooter({
           }
         />
         <TooltipContent>Webhooks</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={() => router.push("/settings/monitoring")}
+              aria-label="Monitoring settings"
+            >
+              <Activity className="size-3.5" />
+            </Button>
+          }
+        />
+        <TooltipContent>Monitoring settings</TooltipContent>
       </Tooltip>
       <ModeToggle />
       <Button

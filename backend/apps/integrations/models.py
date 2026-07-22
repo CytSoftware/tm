@@ -159,6 +159,17 @@ class EventWorkflowStatus(models.TextChoices):
     IGNORED = "ignored", "Ignored"
 
 
+class EventPageIcon(models.TextChoices):
+    ACTIVITY = "activity", "Activity"
+    BUG = "bug", "Bug"
+    GLOBE = "globe", "Globe"
+    SERVER = "server", "Server"
+    SHIELD = "shield", "Shield"
+    BELL = "bell", "Bell"
+    HEART = "heart", "Heart"
+    RADAR = "radar", "Radar"
+
+
 class EventSource(models.Model):
     """A user-owned URL that accepts inbound webhook events.
 
@@ -178,6 +189,19 @@ class EventSource(models.Model):
         max_length=32,
         choices=EventProvider.choices,
         default=EventProvider.GENERIC,
+    )
+    icon = models.CharField(
+        max_length=32,
+        choices=EventPageIcon.choices,
+        default=EventPageIcon.ACTIVITY,
+    )
+    columns = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Ordered monitoring-page column definitions. Empty means the "
+            "frontend's normalized defaults."
+        ),
     )
     token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     active = models.BooleanField(default=True)

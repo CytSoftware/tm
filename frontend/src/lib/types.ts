@@ -746,11 +746,28 @@ export type WeeklyCompletionsResponse = {
 
 export type EventProvider = "generic" | "sentry" | "uptime_kuma";
 export type EventWorkflowStatus = "new" | "in_progress" | "fixed" | "ignored";
+export type EventPageIcon =
+  | "activity"
+  | "bug"
+  | "globe"
+  | "server"
+  | "shield"
+  | "bell"
+  | "heart"
+  | "radar";
+
+export type MonitoringColumn = {
+  id: string;
+  label: string;
+  visible: boolean;
+};
 
 export type EventSource = {
   id: number;
   name: string;
   provider: EventProvider;
+  icon: EventPageIcon;
+  columns: MonitoringColumn[];
   active: boolean;
   webhook_url: string;
   created_at: string;
