@@ -292,6 +292,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
               onClose?.();
             }}
           />
+          <NavLink
+            icon={
+              <Boxes
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="Services"
+            active={pathname.startsWith("/services")}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/services");
+              onClose?.();
+            }}
+          />
         </SidebarGroup>
 
         <SidebarGroup title="Knowledge" collapsed={isCollapsed}>
@@ -346,27 +364,6 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
             collapsed={isCollapsed}
             onNavigate={() => {
               router.push("/llm-wiki");
-              onClose?.();
-            }}
-          />
-        </SidebarGroup>
-
-        <SidebarGroup title="Operations" collapsed={isCollapsed}>
-          <NavLink
-            icon={
-              <Boxes
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="Services"
-            active={pathname.startsWith("/services")}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/services");
               onClose?.();
             }}
           />
