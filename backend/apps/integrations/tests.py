@@ -5,15 +5,21 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import base64
+import shutil
+import tempfile
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
+from rest_framework.test import APIClient
 
 from apps.integrations.models import (
     EventSource,
     EventWorkflowStatus,
     ExternalEvent,
+    InfrastructureService,
     ProjectRepository,
     TaskPullRequest,
 )
@@ -25,11 +31,92 @@ from apps.tasks.models import Project, Task
 
 User = get_user_model()
 
+_ONE_PIXEL_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUB"
+    "AScY42YAAAAASUVORK5CYII="
+)
+
 
 def _sign(body: bytes, secret: str) -> str:
     return "sha256=" + hmac.new(
         secret.encode("utf-8"), body, hashlib.sha256
     ).hexdigest()
+
+
+class InfrastructureServiceApiTests(TestCase):
+    def setUp(self):
+        self.media_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.media_dir, True)
+        self.media_override = override_settings(MEDIA_ROOT=self.media_dir)
+        self.media_override.enable()
+        self.addCleanup(self.media_override.disable)
+
+        self.user = User.objects.create_user("ali", password="x")
+        self.other_user = User.objects.create_user("sam", password="x")
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def _logo(self):
+        return SimpleUploadedFile(
+            "uptime.png", _ONE_PIXEL_PNG, content_type="image/png"
+        )
+
+    def test_create_service_with_logo_and_list_workspace_wide(self):
+        response = self.client.post(
+            "/api/integrations/services/",
+            {
+                "name": "Uptime Kuma",
+                "url": "https://uptime.example.com",
+                "category": "Monitoring",
+                "description": "Public uptime and incident dashboard",
+                "logo": self._logo(),
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["name"], "Uptime Kuma")
+        self.assertTrue(response.data["logo_url"].startswith("http://testserver/media/"))
+
+        other_client = APIClient()
+        other_client.force_authenticate(self.other_user)
+        listed = other_client.get("/api/integrations/services/")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual([item["name"] for item in listed.data["results"]], ["Uptime Kuma"])
+
+    def test_logo_can_be_removed(self):
+        service = InfrastructureService.objects.create(
+            name="UseSend",
+            url="https://app.usesend.com",
+            category="Email",
+            logo=self._logo(),
+            created_by=self.user,
+        )
+        old_name = service.logo.name
+        storage = service.logo.storage
+        response = self.client.patch(
+            f"/api/integrations/services/{service.id}/",
+            {"remove_logo": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["logo_url"], "")
+        service.refresh_from_db()
+        self.assertFalse(service.logo)
+        self.assertFalse(storage.exists(old_name))
+
+    def test_delete_removes_logo_file(self):
+        service = InfrastructureService.objects.create(
+            name="Sentry",
+            url="https://sentry.io",
+            category="Monitoring",
+            logo=self._logo(),
+            created_by=self.user,
+        )
+        logo_name = service.logo.name
+        storage = service.logo.storage
+        response = self.client.delete(f"/api/integrations/services/{service.id}/")
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(storage.exists(logo_name))
 
 
 def _pr_payload(

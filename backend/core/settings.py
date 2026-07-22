@@ -152,9 +152,9 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# Uploaded media (currently just user profile pictures). Daphne serves
-# these directly via the /media/ route in core/urls.py — fine for the
-# low-volume avatar use case. MEDIA_DIR lets the deploy point a Dokploy
+# Uploaded media (profile pictures and service-directory logos). Daphne serves
+# these directly via the /media/ route in core/urls.py — fine for these
+# low-volume image uploads. MEDIA_DIR lets the deploy point a Dokploy
 # volume at the upload directory so files survive redeploys (same pattern
 # as DB_DIR for the SQLite file).
 _media_dir = _os_early.environ.get("MEDIA_DIR", "")

@@ -1,6 +1,13 @@
 "use client";
 
-import { Activity, Columns3, Send, Settings, Zap } from "lucide-react";
+import {
+  Activity,
+  Columns3,
+  Grid2X2,
+  Send,
+  Settings,
+  Zap,
+} from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
@@ -29,6 +36,12 @@ const SETTINGS_NAV = [
     label: "Incoming webhooks",
     description: "Services send monitoring events",
     icon: Activity,
+  },
+  {
+    href: "/settings/services",
+    label: "Services",
+    description: "Infrastructure directory",
+    icon: Grid2X2,
   },
 ] as const;
 

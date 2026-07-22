@@ -272,3 +272,38 @@ class ExternalEvent(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.source.name}: {self.title}"
+
+
+class InfrastructureService(models.Model):
+    """A shared shortcut to an external service used by the workspace.
+
+    Categories are deliberately free-form: the directory is fully configured
+    by users rather than constrained to a hard-coded infrastructure taxonomy.
+    """
+
+    name = models.CharField(max_length=120)
+    url = models.URLField(max_length=1000)
+    category = models.CharField(max_length=80)
+    description = models.CharField(max_length=300, blank=True, default="")
+    logo = models.ImageField(upload_to="service-logos/", null=True, blank=True)
+    position = models.PositiveIntegerField(default=0)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="infrastructure_services_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["category", "position", "name", "id"]
+        indexes = [
+            models.Index(
+                fields=["category", "position"], name="infra_service_cat_pos_idx"
+            )
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return self.name

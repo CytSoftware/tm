@@ -172,8 +172,8 @@ urlpatterns = [
     path("oauth/", include("oauth2_provider.urls", namespace="oauth2_provider")),
 ]
 
-# Serve MEDIA_ROOT through Daphne in both dev and prod. Avatars are the only
-# upload today, so the throughput is trivial — not worth standing up a
+# Serve MEDIA_ROOT through Daphne in both dev and prod. These uploads are
+# low-volume, so they are not worth standing up a
 # separate static-file proxy. If that changes, move this to Traefik/nginx.
 from django.conf import settings as _settings
 from django.urls import re_path as _re_path

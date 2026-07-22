@@ -800,6 +800,26 @@ export type EventSource = {
   updated_at: string;
 };
 
+export type InfrastructureService = {
+  id: number;
+  name: string;
+  url: string;
+  category: string;
+  description: string;
+  logo_url: string;
+  position: number;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InfrastructureServiceListResponse = {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: InfrastructureService[];
+};
+
 export type ExternalEvent = {
   id: number;
   source: number;

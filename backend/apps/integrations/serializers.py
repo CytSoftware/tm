@@ -10,7 +10,13 @@ from __future__ import annotations
 from django.urls import reverse
 from rest_framework import serializers
 
-from .models import EventSource, ExternalEvent, ProjectRepository, TaskPullRequest
+from .models import (
+    EventSource,
+    ExternalEvent,
+    InfrastructureService,
+    ProjectRepository,
+    TaskPullRequest,
+)
 
 
 class ProjectRepositoryNestedSerializer(serializers.ModelSerializer):
@@ -138,3 +144,83 @@ class ExternalEventSerializer(serializers.ModelSerializer):
             "received_at",
             "last_received_at",
         )
+
+
+class InfrastructureServiceSerializer(serializers.ModelSerializer):
+    logo = serializers.ImageField(write_only=True, required=False, allow_null=True)
+    logo_url = serializers.SerializerMethodField()
+    remove_logo = serializers.BooleanField(
+        write_only=True, required=False, default=False
+    )
+
+    class Meta:
+        model = InfrastructureService
+        fields = (
+            "id",
+            "name",
+            "url",
+            "category",
+            "description",
+            "logo",
+            "logo_url",
+            "remove_logo",
+            "position",
+            "created_by",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "logo_url",
+            "position",
+            "created_by",
+            "created_at",
+            "updated_at",
+        )
+
+    def validate_logo(self, value):
+        if value is None:
+            return value
+        if value.size > 2 * 1024 * 1024:
+            raise serializers.ValidationError("Logo must be 2 MB or smaller.")
+        content_type = (getattr(value, "content_type", "") or "").lower()
+        if content_type and not content_type.startswith("image/"):
+            raise serializers.ValidationError("Logo must be an image.")
+        return value
+
+    def validate(self, attrs):
+        if attrs.get("remove_logo") and attrs.get("logo") is not None:
+            raise serializers.ValidationError(
+                {"logo": "Upload a logo or remove the current one, not both."}
+            )
+        return attrs
+
+    def create(self, validated_data):
+        validated_data.pop("remove_logo", None)
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        remove_logo = validated_data.pop("remove_logo", False)
+        replacing_logo = "logo" in validated_data
+        old_name = instance.logo.name if instance.logo else ""
+        old_storage = instance.logo.storage if instance.logo else None
+
+        updated = super().update(instance, validated_data)
+        if remove_logo:
+            updated.logo = None
+            updated.save(update_fields=["logo", "updated_at"])
+        if old_name and (remove_logo or replacing_logo):
+            new_name = updated.logo.name if updated.logo else ""
+            if old_name != new_name and old_storage is not None:
+                old_storage.delete(old_name)
+        return updated
+
+    def get_logo_url(self, obj: InfrastructureService) -> str:
+        if not obj.logo:
+            return ""
+        try:
+            path = obj.logo.url
+        except ValueError:
+            return ""
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request else path

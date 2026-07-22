@@ -11,6 +11,7 @@ from .models import (
     EventSource,
     ExternalEvent,
     GitHubInstallation,
+    InfrastructureService,
     ProjectRepository,
     TaskPullRequest,
 )
@@ -87,3 +88,11 @@ class ExternalEventAdmin(admin.ModelAdmin):
     list_filter = ("workflow_status", "severity", "source__provider")
     search_fields = ("title", "external_id", "source__name")
     readonly_fields = ("received_at", "last_received_at")
+
+
+@admin.register(InfrastructureService)
+class InfrastructureServiceAdmin(admin.ModelAdmin):
+    list_display = ("name", "category", "url", "position", "updated_at")
+    list_filter = ("category",)
+    search_fields = ("name", "category", "description", "url")
+    readonly_fields = ("created_at", "updated_at")

@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
-from django.db.models import Count, Q
+from django.db.models import Count, Max, Q
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import EventSource, EventWorkflowStatus, ExternalEvent
-from .serializers import EventSourceSerializer, ExternalEventSerializer
+from .models import (
+    EventSource,
+    EventWorkflowStatus,
+    ExternalEvent,
+    InfrastructureService,
+)
+from .serializers import (
+    EventSourceSerializer,
+    ExternalEventSerializer,
+    InfrastructureServiceSerializer,
+)
 
 
 class EventSourceViewSet(viewsets.ModelViewSet):
@@ -69,3 +78,26 @@ class ExternalEventViewSet(
                 **{status: counts.get(status, 0) for status in EventWorkflowStatus.values},
             }
         )
+
+
+class InfrastructureServiceViewSet(viewsets.ModelViewSet):
+    """Workspace-wide, user-configured external service directory."""
+
+    queryset = InfrastructureService.objects.all()
+    serializer_class = InfrastructureServiceSerializer
+
+    def perform_create(self, serializer):
+        last_position = InfrastructureService.objects.aggregate(Max("position"))[
+            "position__max"
+        ]
+        serializer.save(
+            created_by=self.request.user,
+            position=(last_position if last_position is not None else -1) + 1,
+        )
+
+    def perform_destroy(self, instance):
+        logo_name = instance.logo.name if instance.logo else ""
+        logo_storage = instance.logo.storage if instance.logo else None
+        super().perform_destroy(instance)
+        if logo_name and logo_storage is not None:
+            logo_storage.delete(logo_name)

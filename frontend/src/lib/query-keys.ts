@@ -103,3 +103,7 @@ export const externalEventsKey = (filters: {
 }) => ["external-events", "list", filters] as const;
 export const externalEventSummaryKey = (source?: number) =>
   ["external-events", "summary", source ?? "all"] as const;
+
+// Workspace-wide external service directory.
+export const infrastructureServicesKey = () =>
+  ["infrastructure-services"] as const;
