@@ -216,134 +216,139 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
             ))}
           </SidebarGroup>
         )}
-        <NotificationInbox collapsed={isCollapsed} onNavigate={onClose} />
-        <NavLink
-          icon={
-            <Home
-              className={
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground"
-              }
-            />
-          }
-          label="Home"
-          active={pathname === "/"}
-          collapsed={isCollapsed}
-          onNavigate={() => {
-            router.push("/");
-            onClose?.();
-          }}
-        />
-        <NavLink
-          icon={
-            <LayoutDashboard
-              className={
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground"
-              }
-            />
-          }
-          label="Tasks"
-          active={pathname.startsWith("/board")}
-          collapsed={isCollapsed}
-          onNavigate={() => {
-            router.push("/board");
-            onClose?.();
-          }}
-        />
-        <NavLink
-          icon={
-            <GitPullRequest
-              className={
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground"
-              }
-            />
-          }
-          label="To Review"
-          active={pathname.startsWith("/reviews")}
-          collapsed={isCollapsed}
-          badge={toReviewCount > 0 ? toReviewCount : undefined}
-          onNavigate={() => {
-            router.push("/reviews");
-            onClose?.();
-          }}
-        />
-        <NavLink
-          icon={
-            <Target
-              className={
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground"
-              }
-            />
-          }
-          label="Bets"
-          active={pathname.startsWith("/bets")}
-          collapsed={isCollapsed}
-          onNavigate={() => {
-            router.push("/bets");
-            onClose?.();
-          }}
-        />
-        <NavLink
-          icon={
-            <BookText
-              className={
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground"
-              }
-            />
-          }
-          label="Wiki"
-          active={pathname.startsWith("/wiki")}
-          collapsed={isCollapsed}
-          onNavigate={() => {
-            router.push("/wiki");
-            onClose?.();
-          }}
-        />
-        <NavLink
-          icon={
-            <HardDrive
-              className={
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground"
-              }
-            />
-          }
-          label="Drive"
-          active={pathname.startsWith("/drive")}
-          collapsed={isCollapsed}
-          onNavigate={() => {
-            router.push("/drive");
-            onClose?.();
-          }}
-        />
-        <NavLink
-          icon={
-            <Sparkles
-              className={
-                isCollapsed
-                  ? "size-4"
-                  : "size-3.5 shrink-0 text-muted-foreground"
-              }
-            />
-          }
-          label="LLM Wiki"
-          active={pathname.startsWith("/llm-wiki")}
-          collapsed={isCollapsed}
-          onNavigate={() => {
-            router.push("/llm-wiki");
-            onClose?.();
-          }}
-        />
+        <SidebarGroup title="Workspace" collapsed={isCollapsed}>
+          <NotificationInbox collapsed={isCollapsed} onNavigate={onClose} />
+          <NavLink
+            icon={
+              <Home
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="Home"
+            active={pathname === "/"}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/");
+              onClose?.();
+            }}
+          />
+          <NavLink
+            icon={
+              <LayoutDashboard
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="Tasks"
+            active={pathname.startsWith("/board")}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/board");
+              onClose?.();
+            }}
+          />
+          <NavLink
+            icon={
+              <GitPullRequest
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="To Review"
+            active={pathname.startsWith("/reviews")}
+            collapsed={isCollapsed}
+            badge={toReviewCount > 0 ? toReviewCount : undefined}
+            onNavigate={() => {
+              router.push("/reviews");
+              onClose?.();
+            }}
+          />
+          <NavLink
+            icon={
+              <Target
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="Bets"
+            active={pathname.startsWith("/bets")}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/bets");
+              onClose?.();
+            }}
+          />
+        </SidebarGroup>
+
+        <SidebarGroup title="Knowledge" collapsed={isCollapsed}>
+          <NavLink
+            icon={
+              <BookText
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="Wiki"
+            active={pathname.startsWith("/wiki")}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/wiki");
+              onClose?.();
+            }}
+          />
+          <NavLink
+            icon={
+              <HardDrive
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="Drive"
+            active={pathname.startsWith("/drive")}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/drive");
+              onClose?.();
+            }}
+          />
+          <NavLink
+            icon={
+              <Sparkles
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="LLM Wiki"
+            active={pathname.startsWith("/llm-wiki")}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/llm-wiki");
+              onClose?.();
+            }}
+          />
+        </SidebarGroup>
 
         {monitoringSources.length > 0 && (
           <SidebarGroup
