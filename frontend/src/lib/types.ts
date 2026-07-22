@@ -738,3 +738,58 @@ export type WeeklyCompletionsResponse = {
   per_person: CompletionsPerson[];
   trend: CompletionsTrendWeek[];
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Inbound event inbox — webhook sources owned by the current user and the
+// normalized, trackable external items received through them.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type EventProvider = "generic" | "sentry" | "uptime_kuma";
+export type EventWorkflowStatus = "new" | "in_progress" | "fixed" | "ignored";
+
+export type EventSource = {
+  id: number;
+  name: string;
+  provider: EventProvider;
+  active: boolean;
+  webhook_url: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExternalEvent = {
+  id: number;
+  source: number;
+  source_name: string;
+  provider: EventProvider;
+  external_id: string;
+  event_type: string;
+  title: string;
+  severity: string;
+  provider_status: string;
+  workflow_status: EventWorkflowStatus;
+  target_url: string;
+  occurred_at: string | null;
+  payload: Record<string, unknown>;
+  occurrence_count: number;
+  received_at: string;
+  last_received_at: string;
+};
+
+export type EventSourceListResponse = {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: EventSource[];
+};
+
+export type ExternalEventListResponse = {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: ExternalEvent[];
+};
+
+export type EventSummary = Record<EventWorkflowStatus, number> & {
+  total: number;
+};

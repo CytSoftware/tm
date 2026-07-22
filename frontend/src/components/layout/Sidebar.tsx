@@ -24,6 +24,7 @@ import {
   extractClosestEdge,
 } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 import {
+  Activity,
   Archive,
   ArchiveRestore,
   BarChart3,
@@ -321,6 +322,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           badge={toReviewCount > 0 ? toReviewCount : undefined}
           onNavigate={() => {
             router.push("/reviews");
+            onClose?.();
+          }}
+        />
+        <NavLink
+          icon={
+            <Activity
+              className={
+                isCollapsed
+                  ? "size-4"
+                  : "size-3.5 shrink-0 text-muted-foreground"
+              }
+            />
+          }
+          label="Events"
+          active={pathname.startsWith("/events")}
+          collapsed={isCollapsed}
+          onNavigate={() => {
+            router.push("/events");
             onClose?.();
           }}
         />

@@ -10,7 +10,13 @@ from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import Client, TestCase, override_settings
 
-from apps.integrations.models import ProjectRepository, TaskPullRequest
+from apps.integrations.models import (
+    EventSource,
+    EventWorkflowStatus,
+    ExternalEvent,
+    ProjectRepository,
+    TaskPullRequest,
+)
 from apps.integrations.services import (
     apply_pull_request_event,
     extract_task_keys,
@@ -292,3 +298,151 @@ class ApplyPullRequestEventUnitTests(TestCase):
         apply_pull_request_event(payload)
         repo = ProjectRepository.objects.get(repo_id=999)
         self.assertEqual(repo.repo_full_name, "owner/renamed")
+
+
+class EventInboxTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="event-owner", password="pw")
+        self.other = User.objects.create_user(username="other-owner", password="pw")
+        self.client.force_login(self.user)
+
+    def create_source(self, *, provider="generic", name="Alerts"):
+        response = self.client.post(
+            "/api/integrations/event-sources/",
+            data=json.dumps({"name": name, "provider": provider}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        return EventSource.objects.get(pk=response.json()["id"]), response.json()
+
+    def ingest(self, source, payload):
+        return self.client.post(
+            f"/api/integrations/event-sources/{source.token}/ingest/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+    def test_source_create_returns_public_webhook_url(self):
+        source, body = self.create_source()
+        self.assertEqual(source.user, self.user)
+        self.assertIn(str(source.token), body["webhook_url"])
+        self.assertTrue(body["webhook_url"].endswith("/ingest/"))
+
+    def test_generic_event_is_created_and_upserted(self):
+        source, _ = self.create_source()
+        first = self.ingest(
+            source,
+            {
+                "id": "incident-1",
+                "title": "Checkout failed",
+                "severity": "critical",
+                "status": "open",
+                "timestamp": "2026-07-22T10:00:00Z",
+                "details": {"region": "eu"},
+            },
+        )
+        self.assertEqual(first.status_code, 201, first.content)
+        event = ExternalEvent.objects.get(source=source)
+        self.assertEqual(event.title, "Checkout failed")
+        self.assertEqual(event.severity, "critical")
+        self.assertEqual(event.occurrence_count, 1)
+
+        event.workflow_status = EventWorkflowStatus.FIXED
+        event.save(update_fields=["workflow_status"])
+        second = self.ingest(
+            source,
+            {"id": "incident-1", "title": "Checkout still failing", "status": "open"},
+        )
+        self.assertEqual(second.status_code, 200, second.content)
+        event.refresh_from_db()
+        self.assertEqual(event.title, "Checkout still failing")
+        self.assertEqual(event.occurrence_count, 2)
+        self.assertEqual(event.workflow_status, EventWorkflowStatus.FIXED)
+
+    def test_sentry_issue_normalization(self):
+        source, _ = self.create_source(provider="sentry", name="Sentry")
+        response = self.ingest(
+            source,
+            {
+                "action": "created",
+                "data": {
+                    "issue": {
+                        "id": "9988",
+                        "shortId": "API-12",
+                        "title": "TypeError in checkout",
+                        "level": "error",
+                        "status": "unresolved",
+                        "permalink": "https://sentry.example/issues/9988",
+                        "lastSeen": "2026-07-22T11:00:00Z",
+                    }
+                },
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        event = ExternalEvent.objects.get(source=source)
+        self.assertEqual(event.external_id, "9988")
+        self.assertEqual(event.title, "TypeError in checkout")
+        self.assertEqual(event.severity, "error")
+        self.assertEqual(event.provider_status, "unresolved")
+
+    def test_uptime_kuma_monitor_is_one_trackable_row(self):
+        source, _ = self.create_source(provider="uptime_kuma", name="Uptime")
+        down = {
+            "heartbeat": {"status": 0, "time": "2026-07-22T11:00:00Z"},
+            "monitor": {"id": 7, "name": "Website", "url": "https://example.com"},
+            "msg": "Website is down",
+        }
+        up = {
+            "heartbeat": {"status": 1, "time": "2026-07-22T11:05:00Z"},
+            "monitor": {"id": 7, "name": "Website", "url": "https://example.com"},
+            "msg": "Website is up",
+        }
+        self.ingest(source, down)
+        response = self.ingest(source, up)
+        self.assertEqual(response.status_code, 200, response.content)
+        event = ExternalEvent.objects.get(source=source)
+        self.assertEqual(event.provider_status, "up")
+        self.assertEqual(event.severity, "info")
+        self.assertEqual(event.occurrence_count, 2)
+
+    def test_inactive_source_and_invalid_payload_are_rejected(self):
+        source, _ = self.create_source()
+        source.active = False
+        source.save(update_fields=["active"])
+        self.assertEqual(self.ingest(source, {"id": "x"}).status_code, 404)
+
+        source.active = True
+        source.save(update_fields=["active"])
+        response = self.client.post(
+            f"/api/integrations/event-sources/{source.token}/ingest/",
+            data="not-json",
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_event_list_update_summary_and_user_scope(self):
+        source, _ = self.create_source()
+        self.ingest(source, {"id": "a", "title": "One"})
+        self.ingest(source, {"id": "b", "title": "Two"})
+        event = ExternalEvent.objects.get(source=source, external_id="a")
+
+        patch = self.client.patch(
+            f"/api/integrations/events/{event.pk}/",
+            data=json.dumps({"workflow_status": "fixed"}),
+            content_type="application/json",
+        )
+        self.assertEqual(patch.status_code, 200, patch.content)
+        summary = self.client.get("/api/integrations/events/summary/")
+        self.assertEqual(summary.status_code, 200, summary.content)
+        self.assertEqual(summary.json()["total"], 2)
+        self.assertEqual(summary.json()["fixed"], 1)
+        self.assertEqual(summary.json()["new"], 1)
+
+        other_source = EventSource.objects.create(user=self.other, name="Private")
+        ExternalEvent.objects.create(
+            source=other_source, external_id="private", title="Private event"
+        )
+        listing = self.client.get("/api/integrations/events/")
+        self.assertEqual(listing.status_code, 200, listing.content)
+        self.assertEqual(listing.json()["count"], 2)
+        self.assertNotContains(listing, "Private event")

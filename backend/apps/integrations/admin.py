@@ -7,7 +7,13 @@ that's the intended P0 workflow before the P0.5 click-to-connect flow lands.
 
 from django.contrib import admin
 
-from .models import GitHubInstallation, ProjectRepository, TaskPullRequest
+from .models import (
+    EventSource,
+    ExternalEvent,
+    GitHubInstallation,
+    ProjectRepository,
+    TaskPullRequest,
+)
 
 
 @admin.register(GitHubInstallation)
@@ -57,3 +63,27 @@ class TaskPullRequestAdmin(admin.ModelAdmin):
     search_fields = ("task__key", "pr_title", "author_login", "reviewer_login")
     autocomplete_fields = ("task", "repository")
     readonly_fields = ("updated_at",)
+
+
+@admin.register(EventSource)
+class EventSourceAdmin(admin.ModelAdmin):
+    list_display = ("name", "user", "provider", "active", "created_at")
+    list_filter = ("provider", "active")
+    search_fields = ("name", "user__username")
+    readonly_fields = ("token", "created_at", "updated_at")
+
+
+@admin.register(ExternalEvent)
+class ExternalEventAdmin(admin.ModelAdmin):
+    list_display = (
+        "title",
+        "source",
+        "severity",
+        "provider_status",
+        "workflow_status",
+        "occurrence_count",
+        "last_received_at",
+    )
+    list_filter = ("workflow_status", "severity", "source__provider")
+    search_fields = ("title", "external_id", "source__name")
+    readonly_fields = ("received_at", "last_received_at")

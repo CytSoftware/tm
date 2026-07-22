@@ -29,11 +29,14 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from . import services
+from .event_ingest import record_event
+from .models import EventSource
 
 logger = logging.getLogger(__name__)
 
 _DELIVERY_CACHE_PREFIX = "github:delivery:"
 _DELIVERY_TTL_SECONDS = 24 * 60 * 60
+_MAX_EVENT_BODY_BYTES = 1_000_000
 
 
 def verify_signature(body: bytes, header: str | None) -> bool:
@@ -140,3 +143,36 @@ def github_webhook_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"detail": "internal error"}, status=500)
 
     return JsonResponse(result)
+
+
+@csrf_exempt
+@require_POST
+def event_source_ingest_view(request: HttpRequest, token) -> JsonResponse:
+    """Accept JSON for an active source identified by its unguessable URL."""
+    content_length = request.META.get("CONTENT_LENGTH")
+    try:
+        if content_length and int(content_length) > _MAX_EVENT_BODY_BYTES:
+            return JsonResponse({"detail": "payload too large"}, status=413)
+    except (TypeError, ValueError):
+        return JsonResponse({"detail": "invalid content length"}, status=400)
+
+    try:
+        source = EventSource.objects.get(token=token, active=True)
+    except EventSource.DoesNotExist:
+        return JsonResponse({"detail": "not found"}, status=404)
+
+    body = request.body or b""
+    if len(body) > _MAX_EVENT_BODY_BYTES:
+        return JsonResponse({"detail": "payload too large"}, status=413)
+    try:
+        payload = json.loads(body.decode("utf-8")) if body else {}
+    except (ValueError, UnicodeDecodeError):
+        return JsonResponse({"detail": "invalid json"}, status=400)
+    if not isinstance(payload, dict):
+        return JsonResponse({"detail": "payload must be a JSON object"}, status=400)
+
+    event, created = record_event(source, payload, request.headers)
+    return JsonResponse(
+        {"ok": True, "created": created, "event_id": event.pk},
+        status=201 if created else 200,
+    )

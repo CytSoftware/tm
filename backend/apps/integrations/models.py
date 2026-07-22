@@ -8,6 +8,8 @@ stays empty until the P0.5 click-to-connect flow ships.
 
 from __future__ import annotations
 
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -142,3 +144,107 @@ class TaskPullRequest(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.task.key} ↔ #{self.pr_number}"
+
+
+class EventProvider(models.TextChoices):
+    GENERIC = "generic", "Generic JSON"
+    SENTRY = "sentry", "Sentry"
+    UPTIME_KUMA = "uptime_kuma", "Uptime Kuma"
+
+
+class EventWorkflowStatus(models.TextChoices):
+    NEW = "new", "New"
+    IN_PROGRESS = "in_progress", "In progress"
+    FIXED = "fixed", "Fixed"
+    IGNORED = "ignored", "Ignored"
+
+
+class EventSource(models.Model):
+    """A user-owned URL that accepts inbound webhook events.
+
+    ``token`` is deliberately part of the generated URL: services such as
+    Uptime Kuma can call it without a session or custom authentication
+    header. It is a 128-bit unguessable capability and can be rotated by
+    deleting/recreating the source in this first, deliberately small slice.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="event_sources",
+    )
+    name = models.CharField(max_length=200)
+    provider = models.CharField(
+        max_length=32,
+        choices=EventProvider.choices,
+        default=EventProvider.GENERIC,
+    )
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+        indexes = [
+            models.Index(
+                fields=["user", "active"], name="eventsrc_user_active_idx"
+            )
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.name} ({self.get_provider_display()})"
+
+
+class ExternalEvent(models.Model):
+    """The current Cyt-side representation of one external item.
+
+    Providers often send the same issue repeatedly. ``(source, external_id)``
+    therefore identifies a trackable row and subsequent webhook deliveries
+    refresh its provider fields/payload. ``workflow_status`` is intentionally
+    excluded from that refresh so a user's local triage decision survives.
+    """
+
+    source = models.ForeignKey(
+        EventSource,
+        on_delete=models.CASCADE,
+        related_name="events",
+    )
+    external_id = models.CharField(max_length=255)
+    event_type = models.CharField(max_length=100, blank=True, default="")
+    title = models.CharField(max_length=500)
+    severity = models.CharField(max_length=50, blank=True, default="")
+    provider_status = models.CharField(max_length=100, blank=True, default="")
+    workflow_status = models.CharField(
+        max_length=20,
+        choices=EventWorkflowStatus.choices,
+        default=EventWorkflowStatus.NEW,
+    )
+    target_url = models.URLField(max_length=1000, blank=True, default="")
+    occurred_at = models.DateTimeField(null=True, blank=True)
+    payload = models.JSONField(default=dict)
+    occurrence_count = models.PositiveIntegerField(default=1)
+    received_at = models.DateTimeField(auto_now_add=True)
+    last_received_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-last_received_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "external_id"],
+                name="uniq_event_source_external_id",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["source", "last_received_at"],
+                name="extevent_source_seen_idx",
+            ),
+            models.Index(
+                fields=["workflow_status", "last_received_at"],
+                name="extevent_status_seen_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.source.name}: {self.title}"

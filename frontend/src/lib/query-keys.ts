@@ -93,3 +93,13 @@ export const weeklyCompletionsKey = (
   weeks: number,
   tz: string,
 ) => ["analytics", "completions", projectId, weekStart, weeks, tz] as const;
+
+// Inbound event inbox.
+export const eventSourcesKey = () => ["event-sources"] as const;
+export const externalEventsKey = (filters: {
+  source?: number;
+  workflow_status?: string;
+  search?: string;
+}) => ["external-events", "list", filters] as const;
+export const externalEventSummaryKey = (source?: number) =>
+  ["external-events", "summary", source ?? "all"] as const;
