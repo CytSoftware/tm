@@ -317,7 +317,10 @@ function positiveIntegerParam(value: string | null): number | null {
 function BoardPageContent() {
   const { projectId, setProjectId, viewId, setViewId } = useActiveProject();
   const searchParams = useSearchParams();
-  const requestedProjectId = positiveIntegerParam(searchParams.get("project"));
+  // Project selection is owned entirely by the active-project context
+  // (localStorage) — the board never reads ?project= from the URL, so a
+  // stale param can't lock the user onto one project (TAS-065). The assignee
+  // quick action still deep-links with ?assignee=<id> to seed the filter.
   const requestedAssigneeId = positiveIntegerParam(
     searchParams.get("assignee"),
   );
@@ -332,28 +335,22 @@ function BoardPageContent() {
     [projects, projectId],
   );
 
+  // Arriving via the "assignee" quick action means "show me everyone's work
+  // across all projects, filtered to this assignee" — so force the board to
+  // all-projects. This runs exactly ONCE (guarded by a ref) rather than
+  // syncing on every render: a continuous sync would snap the user back to
+  // all-projects the moment they picked a project from the dropdown, which is
+  // the same class of bug that ?project= caused (TAS-065). Later project
+  // switches are left untouched. The assignee filter itself is seeded from the
+  // URL param in the render-time block below.
+  const didSeedFromUrl = useRef(false);
   useEffect(() => {
-    if (
-      requestedProjectId !== null &&
-      projects.some((item) => item.id === requestedProjectId)
-    ) {
-      if (projectId !== requestedProjectId) setProjectId(requestedProjectId);
-      else if (viewId !== null) setViewId(null);
-      return;
+    if (didSeedFromUrl.current) return;
+    didSeedFromUrl.current = true;
+    if (requestedAssigneeId !== null && projectId !== null) {
+      setProjectId(null);
     }
-    if (requestedAssigneeId !== null) {
-      if (projectId !== null) setProjectId(null);
-      else if (viewId !== null) setViewId(null);
-    }
-  }, [
-    projectId,
-    projects,
-    requestedAssigneeId,
-    requestedProjectId,
-    setProjectId,
-    setViewId,
-    viewId,
-  ]);
+  }, [requestedAssigneeId, projectId, setProjectId]);
 
   // Fetch active view to determine kind + card_display
   const viewsQuery = useQuery({

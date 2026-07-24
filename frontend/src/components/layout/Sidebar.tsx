@@ -84,9 +84,16 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
   );
   function openQuickAction(action: QuickAction) {
     if (action.kind === "project") {
+      // Project selection lives in the active-project context (localStorage),
+      // NOT the URL. Pushing ?project=<id> made the param "sticky" — the board
+      // synced it back on every render and locked the user out of switching
+      // projects (TAS-065). Set the context and navigate to a bare /board.
       setProjectId(action.project_id);
-      router.push(`/board?project=${action.project_id}`);
+      router.push("/board");
     } else if (action.kind === "assignee") {
+      // The assignee filter has no home in the context, so it rides along in
+      // the URL to seed the board's filter state. The board applies it once
+      // and never syncs project state back from it (see BoardPageContent).
       setProjectId(null);
       router.push(`/board?assignee=${action.user_id}`);
     } else if (/^https?:\/\//i.test(action.url)) {
