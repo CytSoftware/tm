@@ -65,10 +65,17 @@ class EventSourceSerializer(serializers.ModelSerializer):
             "columns",
             "active",
             "webhook_url",
+            "created_by",
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "webhook_url", "created_at", "updated_at")
+        read_only_fields = (
+            "id",
+            "webhook_url",
+            "created_by",
+            "created_at",
+            "updated_at",
+        )
 
     def validate_columns(self, value: list) -> list:
         if not isinstance(value, list):

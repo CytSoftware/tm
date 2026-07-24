@@ -797,6 +797,8 @@ export type EventSource = {
   columns: MonitoringColumn[];
   active: boolean;
   webhook_url: string;
+  /** Attribution only — sources are shared workspace-wide, not owner-scoped. */
+  created_by: number | null;
   created_at: string;
   updated_at: string;
 };

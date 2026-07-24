@@ -21,15 +21,17 @@ from .serializers import (
 
 
 class EventSourceViewSet(viewsets.ModelViewSet):
+    """Workspace-wide monitoring pages.
+
+    Deliberately not owner-scoped: every authenticated user sees and manages
+    every source. ``created_by`` is attribution only.
+    """
+
+    queryset = EventSource.objects.all()
     serializer_class = EventSourceSerializer
 
-    def get_queryset(self):
-        if getattr(self, "swagger_fake_view", False):
-            return EventSource.objects.none()
-        return EventSource.objects.filter(user=self.request.user)
-
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(created_by=self.request.user)
 
 
 class ExternalEventViewSet(
@@ -44,9 +46,8 @@ class ExternalEventViewSet(
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return ExternalEvent.objects.none()
-        qs = ExternalEvent.objects.filter(source__user=self.request.user).select_related(
-            "source"
-        )
+        # Shared, like the sources they arrive on — no owner scoping.
+        qs = ExternalEvent.objects.select_related("source")
         source = self.request.query_params.get("source")
         if source:
             qs = qs.filter(source_id=source)
@@ -64,7 +65,7 @@ class ExternalEventViewSet(
 
     @action(detail=False, methods=["get"])
     def summary(self, request):
-        qs = ExternalEvent.objects.filter(source__user=request.user)
+        qs = ExternalEvent.objects.all()
         source = request.query_params.get("source")
         if source:
             qs = qs.filter(source_id=source)

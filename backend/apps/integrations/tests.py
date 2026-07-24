@@ -411,7 +411,7 @@ class EventInboxTests(TestCase):
 
     def test_source_create_returns_public_webhook_url(self):
         source, body = self.create_source()
-        self.assertEqual(source.user, self.user)
+        self.assertEqual(source.created_by, self.user)
         self.assertEqual(body["icon"], "activity")
         self.assertEqual(body["columns"], [])
         self.assertIn(str(source.token), body["webhook_url"])
@@ -537,7 +537,7 @@ class EventInboxTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    def test_event_list_update_summary_and_user_scope(self):
+    def test_event_list_update_and_summary(self):
         source, _ = self.create_source()
         self.ingest(source, {"id": "a", "title": "One"})
         self.ingest(source, {"id": "b", "title": "Two"})
@@ -555,11 +555,41 @@ class EventInboxTests(TestCase):
         self.assertEqual(summary.json()["fixed"], 1)
         self.assertEqual(summary.json()["new"], 1)
 
-        other_source = EventSource.objects.create(user=self.other, name="Private")
+    def test_sources_and_events_are_shared_workspace_wide(self):
+        """Sources someone else created are fully visible and manageable."""
+        theirs = EventSource.objects.create(created_by=self.other, name="Theirs")
         ExternalEvent.objects.create(
-            source=other_source, external_id="private", title="Private event"
+            source=theirs, external_id="shared", title="Shared event"
         )
+        mine, _ = self.create_source(name="Mine")
+        self.ingest(mine, {"id": "a", "title": "One"})
+
+        sources = self.client.get("/api/integrations/event-sources/")
+        self.assertEqual(sources.status_code, 200, sources.content)
+        self.assertEqual(
+            {row["name"] for row in sources.json()["results"]}, {"Mine", "Theirs"}
+        )
+
         listing = self.client.get("/api/integrations/events/")
-        self.assertEqual(listing.status_code, 200, listing.content)
         self.assertEqual(listing.json()["count"], 2)
-        self.assertNotContains(listing, "Private event")
+        self.assertContains(listing, "Shared event")
+        self.assertEqual(
+            self.client.get("/api/integrations/events/summary/").json()["total"], 2
+        )
+
+        # ...and editable, not just readable.
+        rename = self.client.patch(
+            f"/api/integrations/event-sources/{theirs.pk}/",
+            data=json.dumps({"name": "Renamed by someone else"}),
+            content_type="application/json",
+        )
+        self.assertEqual(rename.status_code, 200, rename.content)
+        theirs.refresh_from_db()
+        self.assertEqual(theirs.name, "Renamed by someone else")
+        self.assertEqual(theirs.created_by, self.other)
+
+    def test_deleting_creator_keeps_the_shared_source(self):
+        source = EventSource.objects.create(created_by=self.other, name="Orphan")
+        self.other.delete()
+        source.refresh_from_db()
+        self.assertIsNone(source.created_by)

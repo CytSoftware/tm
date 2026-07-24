@@ -171,18 +171,28 @@ class EventPageIcon(models.TextChoices):
 
 
 class EventSource(models.Model):
-    """A user-owned URL that accepts inbound webhook events.
+    """A workspace-wide URL that accepts inbound webhook events.
+
+    Sources are shared: every authenticated user sees, edits, and triages
+    every source and its events. ``created_by`` records who set it up and is
+    attribution only — it is never used to scope a queryset (same contract as
+    :class:`InfrastructureService`). Outgoing webhooks are the deliberate
+    exception and stay owner-scoped (see ``apps.webhooks``).
 
     ``token`` is deliberately part of the generated URL: services such as
     Uptime Kuma can call it without a session or custom authentication
     header. It is a 128-bit unguessable capability and can be rotated by
     deleting/recreating the source in this first, deliberately small slice.
+    Because sources are shared, that capability URL is visible to every
+    workspace member.
     """
 
-    user = models.ForeignKey(
+    created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="event_sources",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="event_sources_created",
     )
     name = models.CharField(max_length=200)
     provider = models.CharField(
@@ -210,11 +220,6 @@ class EventSource(models.Model):
 
     class Meta:
         ordering = ["name", "id"]
-        indexes = [
-            models.Index(
-                fields=["user", "active"], name="eventsrc_user_active_idx"
-            )
-        ]
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.name} ({self.get_provider_display()})"
@@ -226,7 +231,10 @@ class ExternalEvent(models.Model):
     Providers often send the same issue repeatedly. ``(source, external_id)``
     therefore identifies a trackable row and subsequent webhook deliveries
     refresh its provider fields/payload. ``workflow_status`` is intentionally
-    excluded from that refresh so a user's local triage decision survives.
+    excluded from that refresh so the triage decision survives.
+
+    Events inherit their source's visibility: shared workspace-wide, so
+    ``workflow_status`` is a single shared verdict rather than a per-user one.
     """
 
     source = models.ForeignKey(
