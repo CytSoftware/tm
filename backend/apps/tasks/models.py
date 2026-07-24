@@ -255,10 +255,12 @@ class Task(TimestampedModel):
         blank=True,
         related_name="reviewing_tasks",
         help_text=(
-            "The user reviewing this task's linked PR, resolved from the "
-            "GitHub reviewer login via UserProfile.github_username "
-            "(apps.integrations.rules). Webhook-owned — set/cleared by the "
-            "TAS-011 rule engine, not the task write serializer."
+            "The user reviewing this task's linked PR. Writable via the "
+            "API/UI/MCP like any other task field; also set/cleared by the "
+            "TAS-011 GitHub rule engine (apps.integrations.rules), which "
+            "resolves the GitHub reviewer login via UserProfile.github_username "
+            "and applies whichever event (rule engine or manual write) lands "
+            "last."
         ),
     )
 
@@ -820,6 +822,7 @@ class NotificationVerb(models.TextChoices):
     MOVED = "moved", "Moved"
     COMPLETED = "completed", "Completed"
     DELETED = "deleted", "Deleted"
+    REVIEW_REQUESTED = "review_requested", "Review requested"
 
 
 class Notification(models.Model):

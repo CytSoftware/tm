@@ -589,7 +589,8 @@ export type NotificationVerb =
   | "updated"
   | "moved"
   | "completed"
-  | "deleted";
+  | "deleted"
+  | "review_requested";
 
 /** Minimal actor shape the notification serializer embeds — not the full
  *  `User` (no email/avatar). `null` means a system-generated event (e.g. the

@@ -14,6 +14,8 @@ saved ``View`` stores in its JSON fields:
         "priority": ["P1", "P2"],      # P1 = highest, P4 = lowest
         "labels": [3],                 # label ids OR names
         "column": 7,                   # column id OR name
+        "column_kind": ["review"],     # ColumnKind value(s) — matches tasks
+                                       # whose column has that semantic kind
         "project": 1,                  # project id OR prefix
         "bet": 4,                      # bet id OR name, or "none" for unlinked
         "done": False,                 # True = in an is_done column, False = not
@@ -49,7 +51,16 @@ from django.db.models import (
     When,
 )
 
-from .models import Bet, Column, Label, Priority, Project, StateTransition, Task
+from .models import (
+    Bet,
+    Column,
+    ColumnKind,
+    Label,
+    Priority,
+    Project,
+    StateTransition,
+    Task,
+)
 
 User = get_user_model()
 
@@ -288,6 +299,23 @@ def apply_task_filters(
             qs = qs.filter(column_id=int(raw_column))
         elif isinstance(raw_column, str):
             qs = qs.filter(column__name__iexact=raw_column)
+
+    # Column kind — semantic filter across every column sharing a role (e.g.
+    # all "review"-kind columns, regardless of their display name or which
+    # project they belong to). Unlike unknown filter *keys*, an unknown
+    # ``column_kind`` *value* is not silently ignored: if the key is present
+    # but none of its values are valid ``ColumnKind``s, the filter is treated
+    # as "match nothing" rather than "no opinion".
+    if (raw_kinds := filters.get("column_kind")) not in (None, ""):
+        if not isinstance(raw_kinds, (list, tuple)):
+            raw_kinds = [raw_kinds]
+        valid_kinds = set(ColumnKind.values)
+        kinds = [
+            k.lower()
+            for k in raw_kinds
+            if isinstance(k, str) and k.lower() in valid_kinds
+        ]
+        qs = qs.filter(column__kind__in=kinds) if kinds else qs.none()
 
     # Bet — id, name (scoped to the project filter when one is set; bet names
     # can repeat across periods, so a name matches all of them), or the

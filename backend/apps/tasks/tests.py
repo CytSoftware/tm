@@ -26,6 +26,7 @@ from .analytics import throughput, weekly_completions
 from .models import (
     Column,
     ColumnKind,
+    Notification,
     Project,
     StateTransition,
     Task,
@@ -1275,3 +1276,191 @@ class WeeklyCompletionsMcpParityTests(WeeklyCompletionsTestBase):
     def test_mcp_bad_week_raises(self):
         with self.assertRaises(ValueError):
             mcp_tools.get_weekly_completions(week="not-a-date")
+
+
+# ---------------------------------------------------------------------------
+# TAS-064: reviewer as a writable field, claim-review, column_kind filter,
+# and the review_requested notification.
+# ---------------------------------------------------------------------------
+
+
+class ReviewerTestBase(TestCase):
+    def setUp(self):
+        self.alice = User.objects.create_user("alice", "alice@example.com", "x")
+        self.bob = User.objects.create_user("bob", "bob@example.com", "x")
+        self.project = Project.objects.create(name="Cyt", prefix="CYT")
+        cols = {c.kind: c for c in self.project.columns.all()}
+        self.backlog = cols[ColumnKind.BACKLOG]
+        self.review_col = cols[ColumnKind.REVIEW]
+
+    def _client(self, user):
+        client = APIClient()
+        client.force_authenticate(user=user)
+        return client
+
+    def _task(self, *, column=None, reporter=None, reviewer=None):
+        return Task.objects.create(
+            project=self.project,
+            column=column if column is not None else self.backlog,
+            title="t",
+            reporter=reporter or self.alice,
+            reviewer=reviewer,
+        )
+
+
+class ReviewerWriteTests(ReviewerTestBase):
+    def test_patch_sets_reviewer(self):
+        task = self._task()
+        resp = self._client(self.alice).patch(
+            f"/api/tasks/{task.key}/", {"reviewer_id": self.bob.id}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        task.refresh_from_db()
+        self.assertEqual(task.reviewer_id, self.bob.id)
+
+    def test_patch_clears_reviewer(self):
+        task = self._task(reviewer=self.bob)
+        resp = self._client(self.alice).patch(
+            f"/api/tasks/{task.key}/", {"reviewer_id": None}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        task.refresh_from_db()
+        self.assertIsNone(task.reviewer_id)
+
+    def test_patch_overwrites_existing_reviewer(self):
+        task = self._task(reviewer=self.bob)
+        resp = self._client(self.alice).patch(
+            f"/api/tasks/{task.key}/", {"reviewer_id": self.alice.id}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        task.refresh_from_db()
+        self.assertEqual(task.reviewer_id, self.alice.id)
+
+
+class ClaimReviewTests(ReviewerTestBase):
+    def test_claim_unclaimed_task_succeeds(self):
+        task = self._task()
+        resp = self._client(self.bob).post(f"/api/tasks/{task.key}/claim-review/")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        task.refresh_from_db()
+        self.assertEqual(task.reviewer_id, self.bob.id)
+
+    def test_second_claim_returns_409_and_leaves_reviewer_unchanged(self):
+        task = self._task()
+        first = self._client(self.bob).post(f"/api/tasks/{task.key}/claim-review/")
+        self.assertEqual(first.status_code, 200)
+
+        carol = User.objects.create_user("carol", "carol@example.com", "x")
+        second = self._client(carol).post(f"/api/tasks/{task.key}/claim-review/")
+        self.assertEqual(second.status_code, 409)
+        task.refresh_from_db()
+        self.assertEqual(task.reviewer_id, self.bob.id)
+
+    def test_unauthenticated_claim_returns_403(self):
+        task = self._task()
+        resp = APIClient().post(f"/api/tasks/{task.key}/claim-review/")
+        self.assertEqual(resp.status_code, 403)
+
+
+class ColumnKindFilterTests(ReviewerTestBase):
+    def setUp(self):
+        super().setUp()
+        self.review_task = self._task(column=self.review_col)
+        self.backlog_task = self._task(column=self.backlog)
+
+    def test_reviewer_none_and_column_kind_review(self):
+        resp = self._client(self.alice).get(
+            "/api/tasks/", {"reviewer": "none", "column_kind": "review"}
+        )
+        self.assertEqual(resp.status_code, 200)
+        keys = {t["key"] for t in resp.data["results"]}
+        self.assertEqual(keys, {self.review_task.key})
+
+    def test_unknown_column_kind_value_returns_empty(self):
+        resp = self._client(self.alice).get(
+            "/api/tasks/", {"column_kind": "bogus"}
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["results"], [])
+
+    def test_unknown_filter_key_is_ignored(self):
+        # Exercises apply_task_filters directly (rather than through the ad-hoc
+        # query-param extractor, which only recognizes known keys anyway) so
+        # this actually tests the "unknown keys in a filters dict are ignored"
+        # contract that saved Views rely on for forward-compatibility.
+        from .query import filter_and_sort_tasks
+
+        qs = filter_and_sort_tasks(
+            filters={"column_kind": ["review"], "totally_unknown_key": "x"}
+        )
+        self.assertEqual({t.key for t in qs}, {self.review_task.key})
+
+
+class ReviewRequestedNotificationTests(ReviewerTestBase):
+    def test_setting_reviewer_notifies_new_reviewer(self):
+        task = self._task()
+        resp = self._client(self.alice).patch(
+            f"/api/tasks/{task.key}/", {"reviewer_id": self.bob.id}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        notes = Notification.objects.filter(verb="review_requested")
+        self.assertEqual(notes.count(), 1)
+        note = notes.get()
+        self.assertEqual(note.recipient_id, self.bob.id)
+        self.assertEqual(note.actor_id, self.alice.id)
+
+    def test_self_setting_reviewer_does_not_notify(self):
+        task = self._task()
+        resp = self._client(self.alice).patch(
+            f"/api/tasks/{task.key}/", {"reviewer_id": self.alice.id}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(
+            Notification.objects.filter(verb="review_requested").count(), 0
+        )
+
+    def test_clearing_reviewer_does_not_notify(self):
+        task = self._task(reviewer=self.bob)
+        resp = self._client(self.alice).patch(
+            f"/api/tasks/{task.key}/", {"reviewer_id": None}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(
+            Notification.objects.filter(verb="review_requested").count(), 0
+        )
+
+    def test_resetting_same_reviewer_does_not_notify(self):
+        task = self._task(reviewer=self.bob)
+        resp = self._client(self.alice).patch(
+            f"/api/tasks/{task.key}/", {"reviewer_id": self.bob.id}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(
+            Notification.objects.filter(verb="review_requested").count(), 0
+        )
+
+    def test_claim_review_does_not_notify(self):
+        task = self._task()
+        resp = self._client(self.bob).post(f"/api/tasks/{task.key}/claim-review/")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(
+            Notification.objects.filter(verb="review_requested").count(), 0
+        )
+
+    def test_mcp_update_task_reviewer_notifies(self):
+        task = self._task()
+        mcp_tools.update_task(key=task.key, reviewer=self.bob.username, mcp_user=self.alice)
+        notes = Notification.objects.filter(verb="review_requested")
+        self.assertEqual(notes.count(), 1)
+        note = notes.get()
+        self.assertEqual(note.recipient_id, self.bob.id)
+        self.assertEqual(note.actor_id, self.alice.id)
+
+    def test_mcp_update_task_reviewer_none_clears_without_notifying(self):
+        task = self._task(reviewer=self.bob)
+        mcp_tools.update_task(key=task.key, reviewer="none", mcp_user=self.alice)
+        task.refresh_from_db()
+        self.assertIsNone(task.reviewer_id)
+        self.assertEqual(
+            Notification.objects.filter(verb="review_requested").count(), 0
+        )

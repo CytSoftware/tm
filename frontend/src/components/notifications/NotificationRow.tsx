@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import {
   Bell,
   CheckCircle2,
+  Eye,
   type LucideIcon,
   MoveRight,
   Pencil,
@@ -154,6 +155,17 @@ export function describeNotification(n: Notification): {
           <>
             <strong className="font-medium">{actorName}</strong> deleted{" "}
             {keyEl}
+            {n.task_title && <> · {n.task_title}</>}
+          </>
+        ),
+      };
+    case "review_requested":
+      return {
+        Icon: Eye,
+        text: (
+          <>
+            <strong className="font-medium">{actorName}</strong> requested
+            your review on {keyEl}
             {n.task_title && <> · {n.task_title}</>}
           </>
         ),
