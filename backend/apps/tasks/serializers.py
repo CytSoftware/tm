@@ -483,6 +483,13 @@ class TaskWriteSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True,
     )
+    reviewer_id = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        source="reviewer",
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = Task
@@ -497,6 +504,7 @@ class TaskWriteSerializer(serializers.ModelSerializer):
             "assignee_ids",
             "label_ids",
             "bet_id",
+            "reviewer_id",
             "priority",
             "story_points",
             "due_at",

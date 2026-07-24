@@ -4,24 +4,31 @@
  * /reviews — the user's personal "To Review" queue.
  *
  * Cross-project list of everything waiting on the current user's review,
- * split into two sections (each task appears in exactly one):
+ * split into three sections (each task appears in exactly one):
  *
  *  - "PRs awaiting your review" — tasks with at least one open linked PR
  *    whose GitHub reviewer is me. The PR badges link straight to GitHub.
  *  - "Tasks to review" — the rest of ``reviewer=me`` (manual reviewer
  *    assignments, or a reviewer left set after the PR closed).
+ *  - "Unclaimed reviews" (TAS-064) — tasks sitting in a review-kind column
+ *    with no reviewer claimed yet, across all projects. Anyone can claim one
+ *    to become its reviewer.
  *
  * Data comes from ``/api/tasks/?reviewer=me`` (TAS-011 rule engine sets
- * ``Task.reviewer`` on ``review_requested`` webhooks). Rows open the global
- * task overlay in place.
+ * ``Task.reviewer`` on ``review_requested`` webhooks) and, for unclaimed
+ * reviews, ``/api/tasks/?reviewer=none&column_kind=review``. Rows open the
+ * global task overlay in place.
  */
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { GitPullRequest } from "lucide-react";
+import { toast } from "sonner";
 
+import { Button } from "@/components/ui/button";
 import { LinkedPRBadge } from "@/components/integrations/LinkedPRBadge";
-import { useToReviewQuery } from "@/hooks/use-tasks";
+import { useClaimReview, useToReviewQuery, useUnclaimedReviewsQuery } from "@/hooks/use-tasks";
+import { ApiError } from "@/lib/api";
 import { fetchMe } from "@/lib/auth";
 import { meKey } from "@/lib/query-keys";
 import { useTaskDialog } from "@/lib/task-dialog";
@@ -35,9 +42,15 @@ function openPRs(task: Task): LinkedPR[] {
 
 export default function ReviewsPage() {
   const tasksQuery = useToReviewQuery();
+  const unclaimedQuery = useUnclaimedReviewsQuery();
   const meQuery = useQuery({ queryKey: meKey(), queryFn: fetchMe });
+  const claim = useClaimReview();
 
   const tasks = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data]);
+  const unclaimedTasks = useMemo(
+    () => unclaimedQuery.data ?? [],
+    [unclaimedQuery.data],
+  );
   const githubLogin = (meQuery.data?.github_username ?? "").toLowerCase();
 
   const { prTasks, otherTasks } = useMemo(() => {
@@ -56,13 +69,31 @@ export default function ReviewsPage() {
   const showGithubHint =
     meQuery.data != null && meQuery.data.github_username === "";
 
+  const isLoading = tasksQuery.isLoading || unclaimedQuery.isLoading;
+  const isEmpty =
+    !isLoading && tasks.length === 0 && unclaimedTasks.length === 0;
+
+  function handleClaim(task: Task) {
+    claim.mutate(task.key, {
+      onSuccess: () => toast.success(`You're reviewing ${task.key}`),
+      onError: (err) => {
+        if (err instanceof ApiError && err.status === 409) {
+          toast.error("Someone else already claimed this review.");
+        } else {
+          toast.error("Couldn't claim review.");
+        }
+      },
+    });
+  }
+
   return (
     <div className="h-full flex flex-col min-h-0">
       <header className="shrink-0 h-12 flex items-center gap-3 px-4 border-b border-border/80 bg-background">
         <GitPullRequest className="size-4 text-emerald-500" />
         <h1 className="text-[13px] font-semibold tracking-tight">To Review</h1>
         <span className="text-[11px] text-muted-foreground">
-          PRs and tasks waiting on your review, across all projects.
+          PRs and tasks waiting on your review, plus unclaimed reviews anyone
+          can pick up, across all projects.
         </span>
       </header>
 
@@ -76,11 +107,11 @@ export default function ReviewsPage() {
             </div>
           )}
 
-          {tasksQuery.isLoading ? (
+          {isLoading ? (
             <div className="grid place-items-center py-16">
               <div className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
             </div>
-          ) : tasks.length === 0 ? (
+          ) : isEmpty ? (
             <div className="rounded-lg border border-border/60 bg-card py-14 px-6 text-center text-[12.5px] text-muted-foreground">
               Nothing waiting on your review.
             </div>
@@ -91,6 +122,24 @@ export default function ReviewsPage() {
                 tasks={prTasks}
               />
               <ReviewSection title="Tasks to review" tasks={otherTasks} />
+              <ReviewSection
+                title="Unclaimed reviews"
+                tasks={unclaimedTasks}
+                renderAction={(task) => (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 px-2 text-[11px]"
+                    disabled={claim.isPending}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleClaim(task);
+                    }}
+                  >
+                    Claim
+                  </Button>
+                )}
+              />
             </>
           )}
         </div>
@@ -99,7 +148,17 @@ export default function ReviewsPage() {
   );
 }
 
-function ReviewSection({ title, tasks }: { title: string; tasks: Task[] }) {
+function ReviewSection({
+  title,
+  tasks,
+  renderAction,
+}: {
+  title: string;
+  tasks: Task[];
+  /** Optional per-row action (e.g. the "Claim" button for unclaimed
+   *  reviews), rendered at the end of each row. */
+  renderAction?: (task: Task) => React.ReactNode;
+}) {
   if (tasks.length === 0) return null;
   return (
     <section>
@@ -110,7 +169,11 @@ function ReviewSection({ title, tasks }: { title: string; tasks: Task[] }) {
       <div className="rounded-lg border border-border/60 bg-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
         <ul className="px-3 py-2">
           {tasks.map((t) => (
-            <ReviewRow key={t.id} task={t} />
+            <ReviewRow
+              key={t.id}
+              task={t}
+              action={renderAction?.(t)}
+            />
           ))}
         </ul>
       </div>
@@ -118,13 +181,14 @@ function ReviewSection({ title, tasks }: { title: string; tasks: Task[] }) {
   );
 }
 
-function ReviewRow({ task }: { task: Task }) {
+function ReviewRow({ task, action }: { task: Task; action?: React.ReactNode }) {
   const { openTaskByKey } = useTaskDialog();
   const prs = openPRs(task);
 
-  // The row is a clickable div, not a <button> — the PR badges inside are
-  // real <a> links (nesting <a> in <button> is invalid HTML). Badges call
-  // stopPropagation so GitHub clicks don't also open the task overlay.
+  // The row is a clickable div, not a <button> — the PR badges (and the
+  // optional action button) inside are real interactive elements (nesting
+  // <a>/<button> in <button> is invalid HTML). Both call stopPropagation so
+  // their clicks don't also open the task overlay.
   return (
     <li>
       <div
@@ -158,6 +222,7 @@ function ReviewRow({ task }: { task: Task }) {
             {task.column.name}
           </span>
         )}
+        {action}
       </div>
     </li>
   );

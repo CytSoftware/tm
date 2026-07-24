@@ -42,8 +42,9 @@ import { useBetsQuery } from "@/hooks/use-bets";
 import { useCreateTask, useUpdateTask, useDeleteTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import { apiFetch } from "@/lib/api";
+import { fetchMe } from "@/lib/auth";
 import { currentPeriodStart } from "@/lib/periods";
-import { projectsKey, taskListKey } from "@/lib/query-keys";
+import { meKey, projectsKey, taskListKey } from "@/lib/query-keys";
 import {
   copyTaskId,
   copyTaskPrompt,
@@ -105,6 +106,8 @@ export function TaskPanel(props: Props) {
   const queryClient = useQueryClient();
   const usersQuery = useUsersQuery();
   const users = usersQuery.data ?? [];
+  const meQuery = useQuery({ queryKey: meKey(), queryFn: fetchMe });
+  const me = meQuery.data ?? null;
 
   // TAS-057 click-through guard: see comment above CLICK_THROUGH_GUARD_MS.
   // Initializing at first render (rather than in an effect) means the guard
@@ -159,6 +162,11 @@ export function TaskPanel(props: Props) {
   );
   // Bet link (Cyt OS) — tasks only; recurring templates don't carry bets.
   const [betId, setBetId] = useState<number | null>(task?.bet?.id ?? null);
+  // Reviewer (TAS-064) — tasks only; recurring templates don't carry a
+  // reviewer. Always editable (unlike the old read-only display).
+  const [reviewerId, setReviewerId] = useState<number | null>(
+    task?.reviewer?.id ?? null,
+  );
   // Only meaningful in `edit-recurring` mode. Controls pause/resume.
   const [active, setActive] = useState<boolean>(template?.active ?? true);
 
@@ -431,6 +439,9 @@ export function TaskPanel(props: Props) {
       assignee_ids: assigneeIds,
       label_ids: labelIds,
       bet_id: selectedProject ? betId : null,
+      // Always sent (even when unchanged) so clearing the reviewer works —
+      // omitting the key entirely would look like "no change" to the PATCH.
+      reviewer_id: reviewerId,
     };
 
     if (mode === "create") {
@@ -696,17 +707,56 @@ export function TaskPanel(props: Props) {
               </div>
             </div>
 
-            {task?.reviewer && (
-              <PropRow label="Reviewer">
-                <div className="flex items-center gap-1.5 h-7 px-1.5 text-[12px]">
-                  <UserAvatar
-                    username={task.reviewer.username}
-                    avatarUrl={task.reviewer.avatar_url}
-                    size="size-5"
-                  />
-                  <span className="truncate">{task.reviewer.username}</span>
+            {mode !== "edit-recurring" && (
+              <div className="flex items-start min-h-[32px]">
+                <span className="w-[72px] shrink-0 text-[12px] text-muted-foreground pl-1 pt-1.5">
+                  Reviewer
+                </span>
+                <div className="w-[160px] shrink-0 space-y-0.5">
+                  <Select
+                    value={reviewerId != null ? String(reviewerId) : ""}
+                    onValueChange={(v) =>
+                      setReviewerId(v === "" ? null : Number(v))
+                    }
+                    items={
+                      {
+                        "": "No reviewer",
+                        ...Object.fromEntries(
+                          users.map((u) => [String(u.id), u.username]),
+                        ),
+                      } as Record<string, React.ReactNode>
+                    }
+                  >
+                    <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
+                      <SelectValue placeholder="No reviewer" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">No reviewer</SelectItem>
+                      {users.map((u) => (
+                        <SelectItem key={u.id} value={String(u.id)}>
+                          <span className="inline-flex items-center gap-2">
+                            <UserAvatar
+                              username={u.username}
+                              avatarUrl={u.avatar_url}
+                              size="size-5"
+                            />
+                            {u.username}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {me && reviewerId !== me.id && (
+                    <button
+                      type="button"
+                      onClick={() => setReviewerId(me.id)}
+                      className="w-full text-left px-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      Assign me
+                    </button>
+                  )}
                 </div>
-              </PropRow>
+              </div>
             )}
 
             <PropRow label="Points">

@@ -35,6 +35,10 @@ export const myTasksKey = () => ["tasks", "mine"] as const;
  *  namespace so existing mutation/WS invalidations refresh it. */
 export const toReviewKey = () => ["tasks", "to-review"] as const;
 
+/** Cross-project unclaimed reviews (reviewer=none in review-kind columns).
+ *  Lives under ["tasks"] so mutation invalidations refresh it. */
+export const unclaimedReviewsKey = () => ["tasks", "unclaimed-reviews"] as const;
+
 export const viewsKey = () => ["views"] as const;
 
 export const usersKey = () => ["users"] as const;

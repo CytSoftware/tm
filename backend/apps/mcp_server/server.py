@@ -79,6 +79,7 @@ async def list_tasks(
     priority: list[str] | None = None,
     labels: list[str] | None = None,
     column: str | None = None,
+    column_kind: str | None = None,
     bet: str | int | None = None,
     done: bool | None = None,
     limit: int = 200,
@@ -90,7 +91,11 @@ async def list_tasks(
     user is one of the assignees). ``reviewer`` accepts a username or user id
     (tasks where that user is the reviewer), or ``"none"`` for tasks with no
     reviewer. ``priority`` is a list like ``["P1", "P2"]``
-    (P1 is highest). ``labels`` and ``column`` accept names. ``bet`` accepts a
+    (P1 is highest). ``labels`` and ``column`` accept names. ``column_kind``
+    filters by a column's semantic role instead of its name/id — e.g.
+    ``"review"`` matches tasks sitting in any review-kind column across the
+    project, regardless of what that column is called (one of "backlog",
+    "todo", "in_progress", "review", "done", "other"). ``bet`` accepts a
     bet id or name, or ``"none"`` for tasks not linked to any bet. ``done``
     filters by completion: ``true`` keeps only tasks in a done column,
     ``false`` keeps open tasks.
@@ -102,6 +107,7 @@ async def list_tasks(
         priority=priority,
         labels=labels,
         column=column,
+        column_kind=column_kind,
         bet=bet,
         done=done,
         limit=limit,
@@ -159,13 +165,16 @@ async def update_task(
     labels: list[str] | None = None,
     story_points: int | None = None,
     bet: str | int | None = None,
+    reviewer: str | int | None = None,
 ) -> dict[str, Any]:
     """Update any subset of a task's fields. Omitted fields are left unchanged.
 
     ``assignees`` replaces the full assignee list (pass an empty list to
     unassign everyone). Priority values: ``P1`` (highest) … ``P4`` (lowest).
     ``bet`` links the task to a bet in its project (bet id or name); pass the
-    string ``"none"`` to unlink.
+    string ``"none"`` to unlink. ``reviewer`` accepts a username or user id
+    and sets who's reviewing this task's linked PR; pass the string
+    ``"none"`` to clear it.
     """
     return await _async(tools.update_task)(
         key=key,
@@ -176,6 +185,7 @@ async def update_task(
         labels=labels,
         story_points=story_points,
         bet=bet,
+        reviewer=reviewer,
         mcp_user=_get_mcp_user(),
     )
 

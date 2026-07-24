@@ -1292,6 +1292,10 @@ def _extract_ad_hoc_filters(params) -> dict:
     if reviewers:
         filters["reviewer"] = reviewers
 
+    column_kinds = [k for k in params.getlist("column_kind") if k]
+    if column_kinds:
+        filters["column_kind"] = column_kinds
+
     labels = [l for l in params.getlist("label") if l]
     if labels:
         filters["labels"] = labels
@@ -1382,7 +1386,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         return qs
 
     def get_serializer_class(self):
-        if self.action in {"list", "retrieve", "move"}:
+        if self.action in {"list", "retrieve", "move", "claim_review"}:
             return TaskReadSerializer
         return TaskWriteSerializer
 
@@ -1426,6 +1430,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         old_label_ids = (
             set(instance.labels.values_list("id", flat=True)) if instance else set()
         )
+        old_reviewer_id = instance.reviewer_id if instance else None
         old_values = (
             {f: getattr(instance, f) for f in _NOTIFY_TRACKED_SCALAR_FIELDS}
             if instance
@@ -1474,6 +1479,14 @@ class TaskViewSet(viewsets.ModelViewSet):
                 recipients=User.objects.filter(id__in=still_assigned_ids),
                 payload={"changed_fields": changed_fields},
             )
+
+        new_reviewer_id = task.reviewer_id
+        if (
+            new_reviewer_id is not None
+            and new_reviewer_id != old_reviewer_id
+            and new_reviewer_id != actor.id
+        ):
+            notify_task_event(task, actor, "review_requested", recipients=[task.reviewer])
 
     def perform_destroy(self, instance):
         project_id = instance.project_id
@@ -1569,6 +1582,26 @@ class TaskViewSet(viewsets.ModelViewSet):
         return Response(
             TaskReadSerializer(fresh, context=self.get_serializer_context()).data
         )
+
+    @action(detail=True, methods=["post"], url_path="claim-review")
+    def claim_review(self, request, key=None):
+        """Atomically claim review of an unclaimed task.
+
+        A single UPDATE guarded by reviewer__isnull=True so two users
+        racing on the same unclaimed task can't both win; loser gets 409.
+        """
+        task = self.get_object()
+        claimed = Task.objects.filter(pk=task.pk, reviewer__isnull=True).update(
+            reviewer=request.user, updated_at=timezone.now()
+        )
+        if not claimed:
+            return Response(
+                {"detail": "This task already has a reviewer."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        broadcast_task_event(task.project_id, "task.updated", {"key": task.key, "id": task.id})
+        fresh = self.get_queryset().get(pk=task.pk)
+        return Response(TaskReadSerializer(fresh, context=self.get_serializer_context()).data)
 
 
 def _compute_position(

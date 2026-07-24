@@ -75,6 +75,7 @@ const EVENT_TYPES: WebhookEventType[] = [
   "moved",
   "completed",
   "deleted",
+  "review_requested",
 ];
 
 const VERB_LABELS: Record<WebhookEventType, string> = {
@@ -84,6 +85,7 @@ const VERB_LABELS: Record<WebhookEventType, string> = {
   moved: "Moved",
   completed: "Completed",
   deleted: "Deleted",
+  review_requested: "Review requested",
 };
 
 const STATUS_DOT: Record<WebhookDeliveryStatus, string> = {

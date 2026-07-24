@@ -14,6 +14,7 @@ import {
   myTasksKey,
   taskInfiniteKey,
   toReviewKey,
+  unclaimedReviewsKey,
   viewsKey,
 } from "@/lib/query-keys";
 import type {
@@ -170,6 +171,22 @@ export function useToReviewQuery() {
   });
 }
 
+/** Open tasks across all projects sitting in a review-kind column with no
+ *  reviewer claimed yet — anyone can pick these up (the "Unclaimed reviews"
+ *  section on the To Review page). Same polling/exclusion rules as
+ *  `useToReviewQuery`. */
+export function useUnclaimedReviewsQuery() {
+  return useQuery({
+    queryKey: unclaimedReviewsKey(),
+    queryFn: () =>
+      apiFetch<TaskListResponse>(
+        "/api/tasks/?reviewer=none&column_kind=review&done=false&include_archived=false&sort_field=updated_at&sort_dir=desc&limit=100",
+      ).then((r) => r.results),
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  });
+}
+
 /** Flatten a TanStack infinite-query result into a plain Task list. */
 export function flattenInfinite(
   data: InfiniteData<TaskListResponse> | undefined,
@@ -228,6 +245,11 @@ type UpdateTaskPayload = Partial<CreateTaskPayload> & {
   /** Resolved BetRef for `bet_id` (or explicit null when unlinking) — same
    *  optimistic-hint idiom as `optimisticAssignees` above. */
   optimisticBet?: BetRef | null;
+  /** Reviewer assignment (TAS-064). `null` clears the reviewer. */
+  reviewer_id?: number | null;
+  /** Resolved User for `reviewer_id` (or explicit null when clearing) — same
+   *  optimistic-hint idiom as `optimisticBet` above. */
+  optimisticReviewer?: User | null;
 };
 
 /** Patch a task in place across every `tasks-infinite` cache entry that
@@ -273,6 +295,7 @@ export function useUpdateTask() {
       optimisticAssignees: _optimisticAssignees,
       optimisticLabels: _optimisticLabels,
       optimisticBet: _optimisticBet,
+      optimisticReviewer: _optimisticReviewer,
       ...payload
     }: UpdateTaskPayload) =>
       apiFetch<Task>(`/api/tasks/${key}/`, {
@@ -297,6 +320,8 @@ export function useUpdateTask() {
       optimisticLabels,
       bet_id,
       optimisticBet,
+      reviewer_id,
+      optimisticReviewer,
     }) => {
       qc.cancelQueries({ queryKey: ["tasks-infinite"] });
       const snapshots = qc.getQueriesData<InfiniteData<TaskListResponse>>({
@@ -309,13 +334,22 @@ export function useUpdateTask() {
       const patchesLabels =
         label_ids !== undefined && optimisticLabels !== undefined;
       const patchesBet = bet_id !== undefined && optimisticBet !== undefined;
-      if (patchesPriority || patchesAssignees || patchesLabels || patchesBet) {
+      const patchesReviewer =
+        reviewer_id !== undefined && optimisticReviewer !== undefined;
+      if (
+        patchesPriority ||
+        patchesAssignees ||
+        patchesLabels ||
+        patchesBet ||
+        patchesReviewer
+      ) {
         patchTaskInInfiniteCaches(qc, key, (t) => ({
           ...t,
           ...(patchesPriority ? { priority: priority ?? null } : {}),
           ...(patchesAssignees ? { assignees: optimisticAssignees! } : {}),
           ...(patchesLabels ? { labels: optimisticLabels! } : {}),
           ...(patchesBet ? { bet: optimisticBet ?? null } : {}),
+          ...(patchesReviewer ? { reviewer: optimisticReviewer ?? null } : {}),
         }));
       }
 
@@ -327,6 +361,20 @@ export function useUpdateTask() {
         qc.setQueryData(queryKey, data);
       }
     },
+    onSettled: () => invalidateAll(qc),
+  });
+}
+
+/** Claim an unclaimed review (TAS-064) — atomically sets reviewer = me if
+ *  currently null. Deliberately NOT built on `useUpdateTask`: the point is
+ *  the server-side "only if null" guard, which a plain PATCH can't express
+ *  (a PATCH would just overwrite whoever's already reviewing). The 409
+ *  "already claimed" case is handled by the caller via `onError`. */
+export function useClaimReview() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string) =>
+      apiFetch<Task>(`/api/tasks/${key}/claim-review/`, { method: "POST" }),
     onSettled: () => invalidateAll(qc),
   });
 }

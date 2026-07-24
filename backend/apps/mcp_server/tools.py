@@ -530,6 +530,7 @@ def list_tasks(
     priority: list[str] | None = None,
     labels: list[str] | None = None,
     column: str | None = None,
+    column_kind: str | None = None,
     bet: str | int | None = None,
     done: bool | None = None,
     limit: int = 200,
@@ -547,6 +548,8 @@ def list_tasks(
         filters["labels"] = labels
     if column:
         filters["column"] = column
+    if column_kind:
+        filters["column_kind"] = [column_kind]
     if bet is not None:
         filters["bet"] = bet
     if done is not None:
@@ -624,6 +627,7 @@ def update_task(
     labels: list[str | int] | None = None,
     story_points: int | None = None,
     bet: str | int | None = None,
+    reviewer: str | int | None = None,
     mcp_user=None,
 ) -> dict[str, Any]:
     task = base_task_queryset().get(key=key)
@@ -631,6 +635,7 @@ def update_task(
 
     old_assignee_ids = set(task.assignees.values_list("id", flat=True))
     old_label_ids = set(task.labels.values_list("id", flat=True))
+    old_reviewer_id = task.reviewer_id
     old_values = {
         f: getattr(task, f) for f in ("title", "description", "priority", "story_points")
     }
@@ -655,6 +660,10 @@ def update_task(
             if task.project_id is None:
                 raise ValueError("Projectless tasks cannot link to a bet.")
             task.bet = _resolve_bet(bet, project=task.project)
+        dirty = True
+    if reviewer is not None:
+        # ``"none"`` clears; anything else resolves to a user (username or id).
+        task.reviewer = None if reviewer == "none" else _resolve_user(reviewer)
         dirty = True
 
     if dirty:
@@ -693,6 +702,14 @@ def update_task(
             recipients=User.objects.filter(id__in=still_assigned_ids),
             payload={"changed_fields": changed_fields},
         )
+
+    new_reviewer_id = task.reviewer_id
+    if (
+        new_reviewer_id is not None
+        and new_reviewer_id != old_reviewer_id
+        and new_reviewer_id != getattr(mcp_user, "id", None)
+    ):
+        notify_task_event(task, mcp_user, "review_requested", recipients=[task.reviewer])
 
     return _task_dict(task)
 
