@@ -52,7 +52,7 @@ function ToolbarButton({
       aria-label={title}
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
-      className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+      className="grid size-7 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
     >
       {children}
     </button>
@@ -60,7 +60,7 @@ function ToolbarButton({
 }
 
 function Divider() {
-  return <span className="mx-1 h-5 w-px bg-border" />;
+  return <span className="mx-1 h-5 w-px shrink-0 bg-border" />;
 }
 
 export function WikiToolbar() {
@@ -97,7 +97,7 @@ export function WikiToolbar() {
   };
 
   return (
-    <div className="sticky top-0 z-20 flex shrink-0 items-center gap-0.5 border-b border-border bg-background/80 px-3 py-1.5 backdrop-blur">
+    <div className="sticky top-0 z-20 flex shrink-0 items-center gap-0.5 overflow-x-auto scrollbar-none border-b border-border bg-background/80 px-3 py-1.5 backdrop-blur">
       <ToolbarButton title="Bold" onClick={() => toggleMark(KEYS.bold)}>
         <Bold className="size-4" />
       </ToolbarButton>

@@ -34,6 +34,7 @@ import {
   MonitoringIcon,
   PROVIDER_LABELS,
 } from "@/lib/monitoring";
+import { MasterDetail } from "@/components/layout/MasterDetail";
 import { cn } from "@/lib/utils";
 import type {
   EventPageIcon,
@@ -71,7 +72,7 @@ export default function MonitoringSettingsPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <header className="shrink-0 h-14 px-4 border-b border-border/80 flex items-center gap-3">
+      <header className="shrink-0 min-h-14 px-4 max-lg:px-3 py-2 border-b border-border/80 flex flex-wrap items-center gap-x-3 gap-y-1">
         <div className="flex-1 min-w-0">
           <h1 className="text-[16px] font-semibold tracking-tight">
             Incoming webhooks
@@ -86,8 +87,14 @@ export default function MonitoringSettingsPage() {
         </Button>
       </header>
 
-      <div className="flex-1 min-h-0 flex">
-        <aside className="w-60 shrink-0 border-r border-border/80 p-2 overflow-y-auto">
+      <MasterDetail
+        className="flex-1"
+        railWidth="w-60"
+        hasSelection={selected != null}
+        onBack={() => setSelectedId(null)}
+        backLabel="Pages"
+        master={
+          <div className="flex-1 min-h-0 p-2 overflow-y-auto">
           {sources.length === 0 ? (
             <p className="px-2 py-4 text-[12px] text-muted-foreground text-center">
               No monitoring pages yet.
@@ -112,9 +119,10 @@ export default function MonitoringSettingsPage() {
               ))}
             </div>
           )}
-        </aside>
-
-        <main className="flex-1 min-w-0 min-h-0 overflow-y-auto">
+          </div>
+        }
+        detail={
+          <div className="flex-1 min-w-0 min-h-0 overflow-y-auto">
           {selected ? (
             <SourceEditor key={selected.id} source={selected} />
           ) : (
@@ -139,8 +147,9 @@ export default function MonitoringSettingsPage() {
               </div>
             </div>
           )}
-        </main>
-      </div>
+          </div>
+        }
+      />
 
       {createOpen && (
         <CreateSourceDialog
@@ -209,7 +218,7 @@ function SourceEditor({ source }: { source: EventSource }) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-6 space-y-5">
+    <div className="max-w-3xl mx-auto px-4 lg:px-6 py-6 space-y-5">
       <div className="flex items-start gap-3">
         <div className="size-9 rounded-lg bg-muted grid place-items-center shrink-0">
           <MonitoringIcon name={icon} className="size-4" />

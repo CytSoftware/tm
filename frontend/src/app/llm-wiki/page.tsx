@@ -16,6 +16,8 @@ import { useMemo, useState } from "react";
 import MarkdownIt from "markdown-it";
 import { ChevronRight, FileText, Folder, Sparkles } from "lucide-react";
 
+import { MasterDetail } from "@/components/layout/MasterDetail";
+
 import {
   type WikiPageMeta,
   useKnowledgeList,
@@ -182,9 +184,13 @@ export default function LlmWikiPage() {
   }, [page.data, slugSet, byLastSegment]);
 
   return (
-    <div className="h-full flex min-h-0">
-      {/* Tree */}
-      <aside className="w-72 shrink-0 border-r border-border/80 flex flex-col min-h-0">
+    <MasterDetail
+      railWidth="w-72"
+      hasSelection={slug != null}
+      onBack={() => setSlug(null)}
+      backLabel="LLM Wiki"
+      master={
+        <>
         <header className="shrink-0 h-12 flex items-center gap-2 px-4 border-b border-border/80">
           <Sparkles className="size-4 text-muted-foreground" />
           <span className="text-[13px] font-medium">LLM Wiki</span>
@@ -219,10 +225,10 @@ export default function LlmWikiPage() {
             ))
           )}
         </div>
-      </aside>
-
-      {/* Rendered page */}
-      <main className="flex-1 min-w-0 min-h-0 overflow-y-auto">
+        </>
+      }
+      detail={
+        <div className="flex-1 min-w-0 min-h-0 overflow-y-auto">
         {!slug ? (
           <div className="h-full grid place-items-center text-[13px] text-muted-foreground">
             Select a page.
@@ -234,20 +240,21 @@ export default function LlmWikiPage() {
             {(page.error as Error)?.message ?? "Failed to load page."}
           </div>
         ) : page.data ? (
-          <article className="mx-auto max-w-3xl px-8 py-8">
+          <article className="mx-auto max-w-3xl px-4 py-6 lg:px-8 lg:py-8">
             <div className="mb-1 text-[11px] text-muted-foreground/70 font-mono">
               {page.data.slug}
             </div>
             <MetaRow meta={page.data.meta} />
             <div
-              className="prose prose-sm dark:prose-invert max-w-none"
+              className="prose prose-sm dark:prose-invert max-w-none [&_pre]:overflow-x-auto [&_table]:block [&_table]:overflow-x-auto"
               onClick={onContentClick}
               dangerouslySetInnerHTML={{ __html: html }}
             />
           </article>
         ) : null}
-      </main>
-    </div>
+        </div>
+      }
+    />
   );
 }
 

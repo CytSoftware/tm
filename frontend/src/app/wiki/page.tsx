@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { MasterDetail } from "@/components/layout/MasterDetail";
 import { WikiTree } from "@/components/wiki/WikiTree";
 import { EditorSkeleton } from "@/components/wiki/EditorSkeleton";
 import { useCreateDoc, useDeleteDoc, useWikiTreeQuery } from "@/hooks/use-wiki";
@@ -44,8 +45,13 @@ export default function WikiPage() {
   }
 
   return (
-    <div className="h-full flex min-h-0">
-      <aside className="w-72 shrink-0 border-r border-border flex flex-col min-h-0">
+    <MasterDetail
+      railWidth="w-72"
+      hasSelection={selected != null}
+      onBack={() => setSelectedKey(null)}
+      backLabel="Wiki"
+      master={
+        <>
         <div className="flex items-center justify-between px-3 h-11 shrink-0 border-b border-border">
           <span className="text-[13px] font-medium">Wiki</span>
           <Button
@@ -73,9 +79,10 @@ export default function WikiPage() {
             />
           )}
         </div>
-      </aside>
-      <main className="flex-1 min-w-0 min-h-0 flex flex-col">
-        {selected ? (
+        </>
+      }
+      detail={
+        selected ? (
           <WikiEditor
             key={selected.key}
             doc={selected}
@@ -94,8 +101,8 @@ export default function WikiPage() {
               </Button>
             </div>
           </div>
-        )}
-      </main>
-    </div>
+        )
+      }
+    />
   );
 }

@@ -198,7 +198,7 @@ function WikiEditorContent({
           <SyncTracker syncedRef={syncedRef} />
           <WikiToolbar />
           <div className="flex-1 min-h-0 overflow-y-auto">
-            <PlateContainer className="relative mx-auto max-w-3xl px-12 py-8">
+            <PlateContainer className="relative mx-auto max-w-3xl px-4 py-6 lg:px-12 lg:py-8">
               <TitleHeader doc={doc} />
               <PlateContent
                 className="wiki-prose mt-4 min-h-[55vh] text-[15px] leading-7 outline-none"
@@ -249,7 +249,7 @@ function TitleHeader({ doc }: { doc: WikiDoc }) {
         }
       }}
       placeholder="Untitled"
-      className="w-full bg-transparent text-3xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground/40"
+      className="w-full bg-transparent text-2xl lg:text-3xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground/40"
     />
   );
 }
