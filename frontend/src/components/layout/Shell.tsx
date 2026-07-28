@@ -15,29 +15,24 @@ import { connectNotificationSocket } from "@/lib/ws";
 import { usePalette } from "@/lib/palette";
 import { useSidebar } from "@/lib/sidebar-state";
 import { TaskDialogProvider } from "@/lib/task-dialog";
-import { useMediaQuery } from "@/hooks/use-media-query";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { prependNotification } from "@/hooks/use-notifications";
 import { Sidebar } from "./Sidebar";
 
 /**
  * App shell.
  *
- * Layout:
- *   Desktop (≥1024px):
- *     <div class="h-screen flex">
- *       <Sidebar />                  ← inline, toggleable width
- *       <main class="flex-1 min-w-0">
+ * One DOM, switched by CSS at `lg` (1024px):
+ *   ≥lg   <Sidebar> inline (toggleable width), mobile top-bar hidden
+ *   <lg   top-bar with hamburger, <Sidebar> in a left Sheet
  *
- *   Mobile (<1024px):
- *     <div class="h-screen flex flex-col">
- *       <TopBar with hamburger />
- *       <main class="flex-1 min-h-0">
- *     Sidebar renders as overlay with backdrop when open.
+ * This used to branch in JS on `useMediaQuery("(min-width: 1024px)")`, which
+ * server-renders `false` — so *every* device, desktop included, painted the
+ * mobile layout and swapped on hydration. Keep it CSS-only (TAS-061).
  */
 export function Shell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const isDesktop = useMediaQuery("(min-width: 1024px)");
   const { toggle } = useSidebar();
   const queryClient = useQueryClient();
 
@@ -69,7 +64,9 @@ export function Shell({ children }: { children: ReactNode }) {
     (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
         e.preventDefault();
-        if (isDesktop) {
+        // Read the breakpoint at press time rather than holding it in state —
+        // the layout itself is CSS-only, so there's nothing to subscribe to.
+        if (window.matchMedia("(min-width: 1024px)").matches) {
           toggle();
         } else {
           setMobileOpen((v) => !v);
@@ -82,7 +79,7 @@ export function Shell({ children }: { children: ReactNode }) {
         return;
       }
     },
-    [isDesktop, toggle, paletteOpen, setPaletteOpen],
+    [toggle, paletteOpen, setPaletteOpen],
   );
 
   useEffect(() => {
@@ -133,7 +130,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
   if (meQuery.isLoading) {
     return (
-      <div className="h-screen flex items-center justify-center">
+      <div className="h-dvh flex items-center justify-center">
         <div className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
       </div>
     );
@@ -143,42 +140,29 @@ export function Shell({ children }: { children: ReactNode }) {
 
   const user = meQuery.data;
 
-  // ── Desktop layout ──────────────────────────────────────────────────
-  if (isDesktop) {
-    return (
-      <TaskDialogProvider>
-        <GlobalShortcuts />
-        <div className="h-screen flex overflow-hidden">
-          <Sidebar user={user} />
-          <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-background">
-            {children}
-          </main>
-        </div>
-        <CommandPalette
-          open={paletteOpen}
-          onClose={() => setPaletteOpen(false)}
-        />
-      </TaskDialogProvider>
-    );
-  }
-
-  // ── Mobile layout ───────────────────────────────────────────────────
   return (
     <TaskDialogProvider>
       <GlobalShortcuts />
-      <div className="h-screen flex flex-col overflow-hidden">
-        {/* Thin mobile top-bar with hamburger */}
-        <header className="shrink-0 h-11 flex items-center gap-2 px-3 border-b border-border/80 bg-background">
+      <div className="h-dvh flex flex-col lg:flex-row overflow-hidden">
+        {/* Inline sidebar — desktop only */}
+        <div className="hidden lg:flex shrink-0">
+          <Sidebar user={user} />
+        </div>
+
+        {/* Top-bar with hamburger — mobile only */}
+        {/* `min-h` + `pt-safe` rather than a fixed `h`: under viewport-fit=cover
+            the bar has to grow by the status-bar inset, not squash into it. */}
+        <header className="lg:hidden shrink-0 min-h-12 pt-safe flex items-center gap-2 px-2 border-b border-border/80 bg-background">
           <Button
             variant="ghost"
             size="icon"
-            className="size-8"
+            className="size-8 tap-target"
             onClick={() => setMobileOpen(true)}
             aria-label="Open sidebar"
           >
             <Menu className="size-4" />
           </Button>
-          <div className="flex items-center gap-1.5 flex-1">
+          <div className="flex items-center gap-1.5 flex-1 min-w-0">
             <div className="size-5 rounded-[4px] bg-foreground grid place-items-center text-background text-[9px] font-semibold">
               C
             </div>
@@ -189,7 +173,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <Button
             variant="ghost"
             size="icon"
-            className="size-8"
+            className="size-8 tap-target"
             onClick={() => setPaletteOpen(true)}
             aria-label="Search"
           >
@@ -197,29 +181,26 @@ export function Shell({ children }: { children: ReactNode }) {
           </Button>
         </header>
 
-        <main className="flex-1 min-h-0 flex flex-col overflow-hidden bg-background">
+        <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-background">
           {children}
         </main>
 
-        {/* Overlay sidebar */}
-        {mobileOpen && (
-          <>
-            {/* Backdrop */}
-            <div
-              className="fixed inset-0 z-40 bg-black/50 transition-opacity"
-              onClick={() => setMobileOpen(false)}
-              aria-hidden
+        {/* Nav drawer — mobile only. The Sheet brings the focus trap, scroll
+            lock and Escape handling the old hand-rolled overlay lacked. */}
+        <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+          <SheetContent
+            side="left"
+            className="w-60 bg-sidebar"
+            showHandle={false}
+          >
+            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <Sidebar
+              user={user}
+              mobile
+              onClose={() => setMobileOpen(false)}
             />
-            {/* Sidebar panel */}
-            <div className="fixed inset-y-0 left-0 z-50 w-60 animate-in slide-in-from-left duration-200">
-              <Sidebar
-                user={user}
-                mobile
-                onClose={() => setMobileOpen(false)}
-              />
-            </div>
-          </>
-        )}
+          </SheetContent>
+        </Sheet>
       </div>
       <CommandPalette
         open={paletteOpen}

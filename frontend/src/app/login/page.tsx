@@ -27,7 +27,7 @@ function LoginShell() {
   // Identical chrome to LoginForm's output so there's no layout shift while
   // the router suspends.
   return (
-    <div className="h-screen flex items-center justify-center bg-background">
+    <div className="h-dvh flex items-center justify-center px-4 bg-background">
       <div className="w-full max-w-[360px] space-y-5 rounded-xl border border-border/80 bg-card p-6" />
     </div>
   );
@@ -67,7 +67,7 @@ function LoginForm() {
   });
 
   return (
-    <div className="h-screen flex items-center justify-center bg-background">
+    <div className="h-dvh flex items-center justify-center px-4 bg-background">
       <form
         className="w-full max-w-[360px] space-y-5 rounded-xl border border-border/80 bg-card p-6"
         onSubmit={(e) => {

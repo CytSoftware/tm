@@ -59,17 +59,23 @@ export const viewport: Viewport = {
  * HARD INVARIANT: the page itself must NEVER scroll.
  *
  *   <html class="h-full overflow-hidden">
- *     <body class="h-full overflow-hidden">     ← no page scroll
- *       <div class="h-screen flex flex-col">    ← the shell
+ *     <body class="h-full overflow-hidden">          ← no page scroll
+ *       <div class="h-dvh flex flex-col lg:flex-row"> ← the shell
  *         ...fixed regions + min-h-0 scrollable children
  *
  * Every flex child that contains a scrollable descendant must carry `min-h-0`
  * (or `min-w-0` for horizontal). Without it, flex children refuse to shrink
  * below their content size and the page grows. This is the #1 source of
  * "why is my page scrolling" bugs. Do NOT remove the class without verifying
- * that every view still satisfies:
+ * that every view still satisfies, at every width:
  *
  *     document.documentElement.scrollHeight === window.innerHeight
+ *     document.body.scrollWidth <= window.innerWidth
+ *
+ * The shell is `h-dvh`, not `h-screen` — `100vh` on mobile is the height with
+ * browser chrome *retracted*, so a `h-screen` shell hides its own bottom edge
+ * behind the URL bar. Because the body can't scroll, that content is simply
+ * unreachable rather than scrolled-to (TAS-061).
  */
 export default function RootLayout({
   children,
