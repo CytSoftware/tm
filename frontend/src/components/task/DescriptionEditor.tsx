@@ -174,7 +174,7 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
   return (
     <div className="h-full flex flex-col rounded-md border border-border/80 overflow-hidden bg-background">
       {/* Toolbar */}
-      <div className="shrink-0 flex items-center gap-0.5 px-2 py-1.5 border-b border-border/60 bg-muted/30">
+      <div className="shrink-0 flex items-center gap-0.5 overflow-x-auto scrollbar-none px-2 py-1.5 border-b border-border/60 bg-muted/30">
         <ToolbarButton
           active={editor.isActive("bold")}
           onClick={() => editor.chain().focus().toggleBold().run()}
@@ -203,7 +203,7 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
         >
           <Code className="size-3.5" />
         </ToolbarButton>
-        <div className="w-px h-4 bg-border mx-1" />
+        <div className="w-px h-4 shrink-0 bg-border mx-1" />
         <ToolbarButton
           active={editor.isActive("heading", { level: 2 })}
           onClick={() =>
@@ -267,7 +267,7 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
           className="hidden"
           onChange={onPickFile}
         />
-        <div className="w-px h-4 bg-border mx-1" />
+        <div className="w-px h-4 shrink-0 bg-border mx-1" />
         <ToolbarButton
           onClick={() => editor.chain().focus().undo().run()}
           disabled={!editor.can().undo()}
@@ -340,7 +340,7 @@ function ToolbarButton({
       disabled={disabled}
       title={title}
       className={cn(
-        "size-7 grid place-items-center rounded transition-colors",
+        "size-7 shrink-0 grid place-items-center rounded transition-colors",
         active
           ? "bg-accent text-foreground"
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
