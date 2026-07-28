@@ -124,7 +124,25 @@ The wiki structure/metadata MCP tools (`create/update/delete/list/get_wiki_doc`)
 
 ### Frontend scroll invariant
 
-`frontend/src/app/layout.tsx` enforces a **hard invariant**: the page itself must never scroll. `<html>` and `<body>` are `h-full` and `body` has `overflow-hidden`; the shell is `h-screen flex flex-col`. Every flex child that contains a scrollable descendant must carry `min-h-0` (or `min-w-0` for horizontal), otherwise flex refuses to shrink below content size and the page grows. This is the single biggest source of "why is my page scrolling" bugs — do not remove these classes without verifying `document.documentElement.scrollHeight === window.innerHeight`.
+`frontend/src/app/layout.tsx` enforces a **hard invariant**: the page itself must never scroll. `<html>` and `<body>` are `h-full` and `body` has `overflow-hidden`; the shell is `h-dvh flex flex-col lg:flex-row`. Every flex child that contains a scrollable descendant must carry `min-h-0` (or `min-w-0` for horizontal), otherwise flex refuses to shrink below content size and the page grows. This is the single biggest source of "why is my page scrolling" bugs — do not remove these classes without verifying, at every width:
+
+```
+document.documentElement.scrollHeight === window.innerHeight
+document.body.scrollWidth <= window.innerWidth
+```
+
+Use `h-dvh`, never `h-screen`: `100vh` on mobile is the height with browser chrome *retracted*, so a `h-screen` shell hides its own bottom edge behind the URL bar — and because the body can't scroll, that content is unreachable rather than scrolled-to.
+
+### Responsive conventions (TAS-061)
+
+The breakpoint is `lg` (1024px); `max-lg:` is the mobile variant throughout. **Prefer CSS over JS branching** — `Shell.tsx` used to switch layouts on `useMediaQuery`, which server-renders `false`, so every device painted the mobile layout first and swapped on hydration. `useIsMobile()` (`hooks/use-media-query.ts`) exists for the few places the DOM must genuinely differ and returns a `hydrated` flag for exactly that reason.
+
+- **Density is preserved on mobile.** Don't inflate `h-7`/`size-6` controls; add the `tap-target` utility, which grows the *hit area* to 44px via a pseudo-element without changing the painted size.
+- **`hover-none:`** is a custom variant for `@media (hover: none)`. Every `opacity-0 group-hover:opacity-100` / `hidden group-hover:*` affordance needs a `hover-none:` counterpart or it is unreachable on touch.
+- **`pt-safe` / `pb-safe`** apply `env(safe-area-inset-*)`; anything anchored to a screen edge needs them because `viewportFit: "cover"` is set.
+- **Drag and drop does not work on touch.** `@atlaskit/pragmatic-drag-and-drop`'s element adapter is the native HTML5 drag API, which never fires from touch input. The board and `/focus` register `draggable()` only under `(pointer: fine)` and offer a long-press → bottom-sheet move instead (`components/kanban/MoveTaskSheet.tsx`, `hooks/use-long-press.ts`). Any new drag surface needs the same touch counterpart.
+- **`components/ui/sheet.tsx`** (Base UI, not Radix) is the primitive for edge-anchored overlays; **`components/layout/MasterDetail.tsx`** is the two-pane list⇄detail layout used by wiki, llm-wiki, drive, and both settings rails.
+- Toolbars that scroll horizontally need `shrink-0` on their buttons — `overflow-x-auto` alone just lets flex children compress.
 
 ## Environment variables
 
