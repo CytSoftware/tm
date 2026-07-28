@@ -59,7 +59,7 @@ export default function ServiceSettingsPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <header className="shrink-0 h-14 px-4 border-b border-border/80 flex items-center gap-3">
+      <header className="shrink-0 min-h-14 px-4 max-lg:px-3 py-2 border-b border-border/80 flex flex-wrap items-center gap-x-3 gap-y-1">
         <div className="flex-1 min-w-0">
           <h1 className="text-[16px] font-semibold tracking-tight">Services</h1>
           <p className="text-[11px] text-muted-foreground">
@@ -79,7 +79,7 @@ export default function ServiceSettingsPage() {
       </header>
 
       <main className="flex-1 min-h-0 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-6 py-6">
+        <div className="max-w-3xl mx-auto px-4 lg:px-6 py-6">
           {services.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border px-6 py-12 text-center">
               <ImagePlus className="size-7 mx-auto text-muted-foreground" />

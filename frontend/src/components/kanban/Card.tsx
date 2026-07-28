@@ -261,7 +261,7 @@ export function KanbanCard({
           hides entirely when empty (unless priority/assignee hover
           placeholders keep it around — see `hasFooter` above). */}
       {hasFooter && (
-        <div className="flex items-center gap-2 px-3 py-1.5 border-t border-border/50 text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 border-t border-border/50 text-[11px] text-muted-foreground">
           {showKey && (
             <span className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground/80 truncate">
               {task.key}
@@ -305,7 +305,7 @@ export function KanbanCard({
                 // reachable without cluttering the default view.
                 <span
                   aria-hidden
-                  className="block size-2.5 rounded-full border border-dashed border-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="block size-2.5 rounded-full border border-dashed border-muted-foreground/40 opacity-0 group-hover:opacity-100 hover-none:opacity-100 transition-opacity"
                 />
               )}
             </button>
@@ -529,7 +529,7 @@ function AssigneeStack({
       className="flex items-center gap-1.5 min-w-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
     >
       {users.length === 0 ? (
-        <span className="size-5 rounded-full border border-dashed border-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity grid place-items-center">
+        <span className="size-5 rounded-full border border-dashed border-muted-foreground/40 opacity-0 group-hover:opacity-100 hover-none:opacity-100 transition-opacity grid place-items-center">
           <UserPlus className="size-2.5 text-muted-foreground/60" />
         </span>
       ) : (

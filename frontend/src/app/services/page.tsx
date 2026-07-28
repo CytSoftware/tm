@@ -41,7 +41,7 @@ export default function ServicesPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <header className="shrink-0 h-14 px-5 border-b border-border/80 flex items-center gap-3">
+      <header className="shrink-0 min-h-14 px-3 lg:px-5 border-b border-border/80 flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
         <div className="flex-1 min-w-0">
           <h1 className="text-[16px] font-semibold tracking-tight">Services</h1>
           <p className="text-[11px] text-muted-foreground">
@@ -81,7 +81,7 @@ export default function ServicesPage() {
             </div>
           </div>
         ) : (
-          <div className="max-w-7xl mx-auto px-6 py-7 space-y-9">
+          <div className="max-w-7xl mx-auto px-4 lg:px-6 py-5 lg:py-7 space-y-9">
             {groups.map(([category, categoryServices]) => (
               <section key={category}>
                 <div className="mb-3 flex items-center gap-2">

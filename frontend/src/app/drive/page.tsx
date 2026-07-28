@@ -31,6 +31,7 @@ import {
   useDriveList,
   useUploadFile,
 } from "@/hooks/use-drive";
+import { MasterDetail } from "@/components/layout/MasterDetail";
 import { cn } from "@/lib/utils";
 
 const TEXT_CAP = 1_500_000; // 1.5 MB — inline-preview text under this
@@ -145,7 +146,7 @@ function FilePreview({ file }: { file: DriveFile }) {
   if (textQ.isError)
     return <Center className="text-destructive">Couldn&apos;t load file contents.</Center>;
   return (
-    <pre className="h-full overflow-auto p-6 text-[12px] leading-relaxed font-mono whitespace-pre-wrap break-words">
+    <pre className="h-full overflow-auto p-3 lg:p-6 text-[12px] leading-relaxed font-mono whitespace-pre-wrap break-words">
       {textQ.data}
     </pre>
   );
@@ -249,8 +250,13 @@ export default function DrivePage() {
       </header>
 
       {/* Body: file list (left) + preview (right) */}
-      <div className="flex-1 min-h-0 flex">
-        <aside className="w-80 shrink-0 border-r border-border/80 flex flex-col min-h-0">
+      <MasterDetail
+        className="flex-1"
+        railWidth="w-80"
+        hasSelection={selected != null}
+        onBack={() => setSelected(null)}
+        backLabel="Files"
+        master={
           <div className="flex-1 min-h-0 overflow-y-auto">
             {list.isLoading ? (
               <div className="p-4 text-[13px] text-muted-foreground">Loading…</div>
@@ -304,10 +310,9 @@ export default function DrivePage() {
               </div>
             )}
           </div>
-        </aside>
-
-        <main className="flex-1 min-w-0 min-h-0 flex flex-col">
-          {selected ? (
+        }
+        detail={
+          selected ? (
             <>
               <div className="shrink-0 h-12 flex items-center gap-2 px-4 border-b border-border/80">
                 <FileIcon className="size-4 text-muted-foreground shrink-0" />
@@ -353,9 +358,9 @@ export default function DrivePage() {
             <div className="h-full grid place-items-center text-[13px] text-muted-foreground">
               Select a file to preview.
             </div>
-          )}
-        </main>
-      </div>
+          )
+        }
+      />
     </div>
   );
 }

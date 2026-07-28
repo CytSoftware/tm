@@ -9,6 +9,9 @@ import {
   Zap,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
+
+import { MasterDetail } from "@/components/layout/MasterDetail";
 
 import { cn } from "@/lib/utils";
 
@@ -52,10 +55,19 @@ export default function SettingsLayout({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  // `/settings` redirects straight to a sub-page, so there is no "nothing
+  // selected" URL for the mobile list⇄detail swap to key off. Track it locally
+  // instead: the nav is a pane you can go back to, not a route (TAS-061).
+  const [navOpen, setNavOpen] = useState(false);
 
   return (
-    <div className="h-full min-h-0 flex">
-      <aside className="w-56 shrink-0 border-r border-border/80 bg-muted/10 flex flex-col min-h-0">
+    <MasterDetail
+      railWidth="w-56 bg-muted/10"
+      hasSelection={!navOpen}
+      onBack={() => setNavOpen(true)}
+      backLabel="Settings"
+      master={
+        <>
         <div className="shrink-0 h-14 px-4 border-b border-border/70 flex items-center gap-2">
           <Settings className="size-4 text-muted-foreground" />
           <span className="text-[14px] font-semibold tracking-tight">
@@ -70,7 +82,10 @@ export default function SettingsLayout({
               <button
                 key={item.href}
                 type="button"
-                onClick={() => router.push(item.href)}
+                onClick={() => {
+                  router.push(item.href);
+                  setNavOpen(false);
+                }}
                 className={cn(
                   "w-full rounded-md px-2.5 py-2 flex items-start gap-2.5 text-left transition-colors",
                   active
@@ -91,10 +106,13 @@ export default function SettingsLayout({
             );
           })}
         </nav>
-      </aside>
-      <section className="flex-1 min-w-0 min-h-0 overflow-hidden">
-        {children}
-      </section>
-    </div>
+        </>
+      }
+      detail={
+        <section className="flex-1 min-w-0 min-h-0 overflow-hidden">
+          {children}
+        </section>
+      }
+    />
   );
 }

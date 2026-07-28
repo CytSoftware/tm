@@ -88,10 +88,10 @@ export default function ReviewsPage() {
 
   return (
     <div className="h-full flex flex-col min-h-0">
-      <header className="shrink-0 h-12 flex items-center gap-3 px-4 border-b border-border/80 bg-background">
+      <header className="shrink-0 min-h-12 flex flex-wrap items-center gap-x-3 gap-y-1 px-4 max-lg:px-3 py-1.5 border-b border-border/80 bg-background">
         <GitPullRequest className="size-4 text-emerald-500" />
         <h1 className="text-[13px] font-semibold tracking-tight">To Review</h1>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="hidden md:inline text-[11px] text-muted-foreground">
           PRs and tasks waiting on your review, plus unclaimed reviews anyone
           can pick up, across all projects.
         </span>
@@ -201,7 +201,7 @@ function ReviewRow({ task, action }: { task: Task; action?: React.ReactNode }) {
             void openTaskByKey(task.key);
           }
         }}
-        className="w-full flex items-center gap-2 rounded-md px-1.5 py-1.5 cursor-pointer hover:bg-accent/50 transition-colors"
+        className="w-full flex flex-wrap items-center gap-2 rounded-md px-1.5 py-1.5 cursor-pointer hover:bg-accent/50 transition-colors"
       >
         <span
           className="size-2 rounded-full shrink-0"
@@ -211,7 +211,7 @@ function ReviewRow({ task, action }: { task: Task; action?: React.ReactNode }) {
         <span className="font-mono text-[11px] text-muted-foreground shrink-0">
           {task.key}
         </span>
-        <span className="min-w-0 flex-1 truncate text-[12.5px]">
+        <span className="min-w-0 flex-1 basis-40 truncate text-[12.5px]">
           {task.title}
         </span>
         {prs.map((pr) => (

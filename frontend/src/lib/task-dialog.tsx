@@ -14,7 +14,9 @@ import {
   ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -53,6 +55,42 @@ export function TaskDialogProvider({ children }: { children: ReactNode }) {
 
   const [state, setState] = useState<DialogState>(null);
 
+  /**
+   * Back-button close (TAS-061).
+   *
+   * The panel is an overlay, not a route, so without this the Android back
+   * gesture / browser Back navigates away from the board entirely rather than
+   * dismissing the panel — the single most jarring thing about the panel on a
+   * phone. We push one history entry per open panel and pop it on close.
+   *
+   * The pushed entry keeps the current URL and spreads the existing
+   * `history.state` so the App Router's own bookkeeping survives the round
+   * trip; only our marker is added.
+   */
+  const pushedRef = useRef(false);
+
+  useEffect(() => {
+    if (!state || pushedRef.current) return;
+    pushedRef.current = true;
+    window.history.pushState(
+      { ...window.history.state, cytTaskPanel: true },
+      "",
+      window.location.href,
+    );
+  }, [state]);
+
+  useEffect(() => {
+    function onPopState() {
+      // Only react to the pop of *our* entry. If we popped it ourselves from
+      // `close`, pushedRef is already false and this is a no-op.
+      if (!pushedRef.current) return;
+      pushedRef.current = false;
+      setState(null);
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
   const openTask = useCallback((task: Task) => {
     recordRecentTask(task);
     setState({ mode: "edit", task });
@@ -82,7 +120,15 @@ export function TaskDialogProvider({ children }: { children: ReactNode }) {
     [activeProjectId],
   );
 
-  const close = useCallback(() => setState(null), []);
+  const close = useCallback(() => {
+    setState(null);
+    if (pushedRef.current) {
+      pushedRef.current = false;
+      // Unwind the entry we pushed so Back doesn't need two presses to leave
+      // the page after the panel has been dismissed some other way.
+      window.history.back();
+    }
+  }, []);
 
   const value = useMemo<TaskDialogContextValue>(
     () => ({

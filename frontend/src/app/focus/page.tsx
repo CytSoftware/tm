@@ -31,6 +31,14 @@ import {
 } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 import { CalendarDays, Star } from "lucide-react";
 
+import { useLongPress } from "@/hooks/use-long-press";
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { KanbanCard } from "@/components/kanban/Card";
 import {
   useFocusQuery,
@@ -73,6 +81,8 @@ export default function FocusPage() {
   const focusQuery = useFocusQuery();
   const updateFocus = useUpdateFocus();
   const taskDialog = useTaskDialog();
+  // Focus item whose "move to bucket" sheet is open (mobile long-press).
+  const [moveTarget, setMoveTarget] = useState<FocusItem | null>(null);
 
   const items: FocusItem[] = useMemo(() => focusQuery.data ?? [], [focusQuery.data]);
 
@@ -134,31 +144,83 @@ export default function FocusPage() {
 
   return (
     <div className="h-full flex flex-col min-h-0">
-      <header className="shrink-0 h-12 flex items-center gap-3 px-4 border-b border-border/80 bg-background">
+      <header className="shrink-0 min-h-12 flex flex-wrap items-center gap-x-3 gap-y-1 px-4 max-lg:px-3 py-1.5 border-b border-border/80 bg-background">
         <Star className="size-4 fill-amber-500 text-amber-500" />
         <h1 className="text-[13px] font-semibold tracking-tight">My Focus</h1>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="hidden md:inline text-[11px] text-muted-foreground">
           Your personal priority queue. Drag between Today and This week to
           rebalance.
         </span>
       </header>
 
-      <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden bg-muted/40">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full px-4 py-3">
+      <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden max-md:overflow-y-auto bg-muted/40">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full max-md:h-auto max-md:min-h-full px-4 py-3">
           <FocusColumn
             period="day"
             items={today}
             onCardClick={(item) => taskDialog.openTask(item.task)}
+            onCardLongPress={setMoveTarget}
             isLoading={focusQuery.isLoading}
           />
           <FocusColumn
             period="week"
             items={thisWeek}
             onCardClick={(item) => taskDialog.openTask(item.task)}
+            onCardLongPress={setMoveTarget}
             isLoading={focusQuery.isLoading}
           />
         </div>
       </div>
+
+      {/* Touch counterpart to dragging between the two buckets. */}
+      <Sheet
+        open={moveTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setMoveTarget(null);
+        }}
+      >
+        <SheetContent side="bottom" className="lg:hidden">
+          <SheetHeader>
+            <SheetTitle className="truncate">
+              Move {moveTarget?.task.key ?? ""}
+            </SheetTitle>
+            <p className="text-[12px] text-muted-foreground truncate">
+              {moveTarget?.task.title}
+            </p>
+          </SheetHeader>
+          <SheetBody className="px-2 pb-2">
+            {(["day", "week"] as FocusPeriod[]).map((p) => {
+              const isCurrent = moveTarget?.period === p;
+              return (
+                <button
+                  key={p}
+                  disabled={isCurrent}
+                  onClick={() => {
+                    if (moveTarget) {
+                      updateFocus.mutate({
+                        taskKey: moveTarget.task.key,
+                        period: p,
+                      });
+                    }
+                    setMoveTarget(null);
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-2.5 rounded-md px-3 py-3 text-left text-[14px]",
+                    isCurrent
+                      ? "text-muted-foreground"
+                      : "hover:bg-accent active:bg-accent",
+                  )}
+                >
+                  <span className="flex-1">{PERIOD_META[p].title}</span>
+                  {isCurrent && (
+                    <span className="text-[11px] shrink-0">Current</span>
+                  )}
+                </button>
+              );
+            })}
+          </SheetBody>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
@@ -178,11 +240,13 @@ function FocusColumn({
   period,
   items,
   onCardClick,
+  onCardLongPress,
   isLoading,
 }: {
   period: FocusPeriod;
   items: FocusItem[];
   onCardClick: (item: FocusItem) => void;
+  onCardLongPress: (item: FocusItem) => void;
   isLoading: boolean;
 }) {
   const meta = PERIOD_META[period];
@@ -207,6 +271,7 @@ function FocusColumn({
     <section
       className={cn(
         "flex flex-col min-h-0 rounded-xl border border-border/60 bg-card",
+        "max-md:min-h-[50dvh]",
         "transition-colors",
         isOver && "border-primary/50 bg-primary/5",
       )}
@@ -237,7 +302,7 @@ function FocusColumn({
         ) : (
           items.map((item) => (
             <Fragment key={item.id}>
-              <DraggableFocusCard item={item}>
+              <DraggableFocusCard item={item} onLongPress={onCardLongPress}>
                 {({ isDragging }) => (
                   <KanbanCard
                     task={item.task}
@@ -257,17 +322,24 @@ function FocusColumn({
 
 function DraggableFocusCard({
   item,
+  onLongPress,
   children,
 }: {
+  onLongPress?: (item: FocusItem) => void;
   item: FocusItem;
   children: (state: { isDragging: boolean }) => ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const longPress = useLongPress(
+    onLongPress ? () => onLongPress(item) : undefined,
+  );
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // Native HTML5 drag never fires from touch — see MoveTaskSheet.
+    if (!window.matchMedia("(pointer: fine)").matches) return;
     return combine(
       draggable({
         element: el,
@@ -302,7 +374,11 @@ function DraggableFocusCard({
     );
   }, [item.id, item.task.key, item.period]);
 
-  return <div ref={ref}>{children({ isDragging })}</div>;
+  return (
+    <div ref={ref} {...longPress}>
+      {children({ isDragging })}
+    </div>
+  );
 }
 
 function EmptyState({ period }: { period: FocusPeriod }) {

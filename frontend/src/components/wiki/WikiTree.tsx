@@ -283,7 +283,7 @@ function TreeRow({
         <button
           type="button"
           aria-label="Add sub-page"
-          className="hidden group-hover:grid place-items-center size-5 shrink-0 rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="hidden group-hover:grid hover-none:grid place-items-center size-5 shrink-0 rounded text-muted-foreground hover:bg-accent hover:text-foreground"
           onClick={(e) => {
             e.stopPropagation();
             if (!isOpen) toggle(node.id);
@@ -295,7 +295,7 @@ function TreeRow({
         <button
           type="button"
           aria-label="Delete page"
-          className="hidden group-hover:grid place-items-center size-5 shrink-0 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          className="hidden group-hover:grid hover-none:grid place-items-center size-5 shrink-0 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
           onClick={(e) => {
             e.stopPropagation();
             const label = node.title || "Untitled";

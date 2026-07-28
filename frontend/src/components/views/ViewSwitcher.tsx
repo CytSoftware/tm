@@ -143,7 +143,7 @@ export function ViewSwitcher({ projectId, viewId, onViewChange }: Props) {
                   shared
                 </span>
               )}
-              <div className="flex items-center gap-0.5 opacity-0 group-hover/view:opacity-100 transition-opacity">
+              <div className="flex items-center gap-0.5 opacity-0 group-hover/view:opacity-100 hover-none:opacity-100 transition-opacity">
                 <button
                   type="button"
                   onClick={(e) => {
@@ -342,7 +342,7 @@ export function NewViewDialog({
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent
-        className="sm:max-w-4xl max-w-4xl w-[95vw] p-0 gap-0 flex flex-col overflow-hidden max-h-[85vh]"
+        className="sm:max-w-4xl max-w-4xl w-[95vw] p-0 gap-0 flex flex-col overflow-hidden max-h-[85dvh]"
         showCloseButton={false}
       >
         <div className="shrink-0 px-6 pt-5 pb-4 border-b border-border/60">
@@ -357,7 +357,7 @@ export function NewViewDialog({
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-6 py-5">
-          <div className="grid grid-cols-2 gap-x-8 gap-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5">
             {/* ── Left column: basics ── */}
             <div className="space-y-4">
               <Field label="Name">
@@ -370,7 +370,7 @@ export function NewViewDialog({
                 />
               </Field>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="View type">
                   <Select
                     value={viewKind}

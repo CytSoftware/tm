@@ -114,7 +114,7 @@ export default function BetsPage() {
 
   return (
     <div className="h-full flex flex-col min-h-0">
-      <header className="shrink-0 h-12 flex items-center gap-3 px-4 border-b border-border/80 bg-background">
+      <header className="shrink-0 min-h-12 flex flex-wrap items-center gap-x-3 gap-y-1 px-4 max-lg:px-3 py-1.5 border-b border-border/80 bg-background">
         <Target className="size-4 text-muted-foreground" />
         <h1 className="text-[13px] font-semibold tracking-tight">Bets</h1>
         <Select
@@ -135,7 +135,7 @@ export default function BetsPage() {
             } as Record<string, React.ReactNode>
           }
         >
-          <SelectTrigger className="h-7 w-44 text-[12px]">
+          <SelectTrigger className="h-7 w-44 max-lg:w-36 text-[12px]">
             <SelectValue placeholder="Pick a project" />
           </SelectTrigger>
           <SelectContent>
@@ -318,7 +318,7 @@ function BetCard({
         <h2 className="text-[15px] font-semibold tracking-tight truncate flex-1">
           {bet.name}
         </h2>
-        <div className="flex items-center opacity-0 group-hover/card:opacity-100 transition-opacity">
+        <div className="flex items-center opacity-0 group-hover/card:opacity-100 hover-none:opacity-100 transition-opacity">
           <Button
             variant="ghost"
             size="icon"
@@ -456,27 +456,27 @@ function AddMetricRow({
   }
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-1.5">
       <Input
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && submit()}
         placeholder="Metric name"
         autoFocus
-        className="h-6 flex-1 text-[11px] px-1.5"
+        className="h-6 flex-1 basis-32 text-[11px] px-1.5"
       />
       <Input
         type="number"
         value={target}
         onChange={(e) => setTarget(e.target.value)}
         placeholder="Target"
-        className="h-6 w-16 text-[11px] px-1.5"
+        className="h-6 w-16 max-lg:flex-1 text-[11px] px-1.5"
       />
       <Input
         value={unit}
         onChange={(e) => setUnit(e.target.value)}
         placeholder="Unit"
-        className="h-6 w-20 text-[11px] px-1.5"
+        className="h-6 w-20 max-lg:flex-1 text-[11px] px-1.5"
       />
       <Button
         size="sm"

@@ -113,7 +113,14 @@ export function TaskPanel(props: Props) {
   // Initializing at first render (rather than in an effect) means the guard
   // is active from the very first paint, before any effect could run.
   const openedAtRef = useRef(performance.now());
+  // Touch is exempt: the guard exists for the second pointerdown of a mouse
+  // double-click, and there is no double-click-to-open on touch. Leaving it
+  // armed there just swallowed the user's first real tap (TAS-061).
+  const guardApplies =
+    typeof window === "undefined" ||
+    window.matchMedia("(pointer: fine)").matches;
   const withinClickThroughGuard = () =>
+    guardApplies &&
     performance.now() - openedAtRef.current < CLICK_THROUGH_GUARD_MS;
   const clickThroughGuard = (e: {
     preventDefault: () => void;
@@ -533,22 +540,22 @@ export function TaskPanel(props: Props) {
       {/* Panel — bottom-anchored */}
       <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
       <div
-        className="pointer-events-auto w-full max-w-5xl h-[88vh] flex flex-col rounded-t-xl border border-b-0 border-border bg-card shadow-2xl animate-in slide-in-from-bottom duration-300"
+        className="pointer-events-auto w-full max-w-5xl h-[88dvh] flex flex-col rounded-t-xl border border-b-0 border-border bg-card shadow-2xl animate-in slide-in-from-bottom duration-300 max-lg:h-dvh max-lg:rounded-none max-lg:border-0"
         onPointerDownCapture={clickThroughGuard}
         onMouseDownCapture={clickThroughGuard}
         onClickCapture={clickThroughGuard}
         onDoubleClickCapture={clickThroughGuard}
       >
         {/* Header */}
-        <div className="shrink-0 flex items-center justify-between px-6 py-3 border-b border-border/60">
-          <h2 className="text-[15px] font-semibold tracking-tight">
+        <div className="shrink-0 flex items-center justify-between gap-2 px-6 py-3 border-b border-border/60 max-lg:px-3">
+          <h2 className="text-[15px] font-semibold tracking-tight truncate min-w-0">
             {mode === "create"
               ? "New task"
               : mode === "edit-recurring"
                 ? `Recurring — ${template?.title ?? ""}`
                 : `${task?.key} — ${task?.title}`}
           </h2>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {mode === "edit" && task && (
               <>
                 <Tooltip>
@@ -607,10 +614,16 @@ export function TaskPanel(props: Props) {
           </div>
         </div>
 
-        {/* Body — two columns: left properties sidebar, right title+description */}
-        <div className="flex-1 min-h-0 flex overflow-hidden">
+        {/* Body — two columns on desktop: left properties sidebar, right
+            title+description. On mobile the right pane becomes `display:
+            contents` so its two children join the sidebar as siblings of one
+            scrolling column, which lets `order` interleave them as
+            title → properties → description. Properties sit above the editor
+            because status/priority/assignee are the edits you actually make on
+            a phone, and the editor is tall enough to bury them (TAS-061). */}
+        <div className="flex-1 min-h-0 flex overflow-hidden max-lg:flex-col max-lg:overflow-y-auto">
           {/* Left: property sidebar */}
-          <div className="w-64 shrink-0 border-r border-border/60 overflow-y-auto scrollbar-none p-4 space-y-1">
+          <div className="w-64 shrink-0 border-r border-border/60 overflow-y-auto scrollbar-none p-4 space-y-1 max-lg:order-2 max-lg:w-full max-lg:border-r-0 max-lg:border-b max-lg:overflow-visible">
             <PropRow label="Project">
               <Select
                 value={projectId != null ? String(projectId) : ""}
@@ -665,7 +678,7 @@ export function TaskPanel(props: Props) {
 
             {mode === "edit" && task?.current_column_since && (
               <div className="flex items-start min-h-[22px]">
-                <span className="w-[72px] shrink-0 text-[12px] text-muted-foreground pl-1" />
+                <span className="w-[72px] shrink-0 max-lg:hidden text-[12px] text-muted-foreground pl-1" />
                 <div className="flex-1 min-w-0 pl-1.5">
                   <TimeInColumn task={task} size="sm" durationOnly />
                 </div>
@@ -694,8 +707,8 @@ export function TaskPanel(props: Props) {
               </Select>
             </PropRow>
 
-            <div className="flex items-start min-h-[32px]">
-              <span className="w-[72px] shrink-0 text-[12px] text-muted-foreground pl-1 pt-1.5">
+            <div className="flex items-start min-h-[32px] max-lg:flex-col max-lg:gap-0.5 max-lg:py-1">
+              <span className="w-[72px] shrink-0 max-lg:w-full text-[12px] text-muted-foreground pl-1 pt-1.5 max-lg:pt-0">
                 Assignees
               </span>
               <div className="flex-1 min-w-0">
@@ -708,11 +721,11 @@ export function TaskPanel(props: Props) {
             </div>
 
             {mode !== "edit-recurring" && (
-              <div className="flex items-start min-h-[32px]">
-                <span className="w-[72px] shrink-0 text-[12px] text-muted-foreground pl-1 pt-1.5">
+              <div className="flex items-start min-h-[32px] max-lg:flex-col max-lg:gap-0.5 max-lg:py-1">
+                <span className="w-[72px] shrink-0 max-lg:w-full text-[12px] text-muted-foreground pl-1 pt-1.5 max-lg:pt-0">
                   Reviewer
                 </span>
-                <div className="w-[160px] shrink-0 space-y-0.5">
+                <div className="w-[160px] shrink-0 max-lg:w-full space-y-0.5">
                   <Select
                     value={reviewerId != null ? String(reviewerId) : ""}
                     onValueChange={(v) =>
@@ -912,17 +925,21 @@ export function TaskPanel(props: Props) {
           </div>
 
           {/* Right: title + description */}
-          <div className="flex-1 min-h-0 flex flex-col min-w-0 overflow-hidden">
-            <div className="shrink-0 px-6 pt-4 pb-2">
+          <div className="flex-1 min-h-0 flex flex-col min-w-0 overflow-hidden max-lg:contents">
+            <div className="shrink-0 px-6 pt-4 pb-2 max-lg:order-1 max-lg:px-4">
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Task title"
-                autoFocus
+                autoFocus={
+                  mode === "create" ||
+                  typeof window === "undefined" ||
+                  window.matchMedia("(pointer: fine)").matches
+                }
                 className="text-[16px] font-medium border-0 bg-transparent px-0 h-auto focus-visible:ring-0 placeholder:text-muted-foreground/50"
               />
             </div>
-            <div className="flex-1 min-h-0 px-6 pb-4">
+            <div className="flex-1 min-h-0 px-6 pb-4 max-lg:order-3 max-lg:flex-none max-lg:min-h-[45dvh] max-lg:px-4 max-lg:pt-4">
               <DescriptionEditor
                 value={description}
                 onChange={setDescription}
@@ -935,7 +952,7 @@ export function TaskPanel(props: Props) {
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 px-6 py-3 border-t border-border/60 flex items-center justify-end gap-2">
+        <div className="shrink-0 px-6 py-3 pb-safe border-t border-border/60 flex items-center justify-end gap-2 max-lg:px-4">
           <Button variant="outline" size="sm" onClick={onClose}>
             Cancel
           </Button>
@@ -978,11 +995,11 @@ function PropRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center min-h-[32px]">
-      <span className="w-[72px] shrink-0 text-[12px] text-muted-foreground pl-1">
+    <div className="flex items-center min-h-[32px] max-lg:flex-col max-lg:items-stretch max-lg:gap-0.5 max-lg:py-1">
+      <span className="w-[72px] shrink-0 max-lg:w-full text-[12px] text-muted-foreground pl-1">
         {label}
       </span>
-      <div className="w-[160px] shrink-0">{children}</div>
+      <div className="w-[160px] shrink-0 max-lg:w-full">{children}</div>
     </div>
   );
 }

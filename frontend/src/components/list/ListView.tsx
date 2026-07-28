@@ -72,7 +72,7 @@ export function ListView({
   onLoadMore,
   isInitialLoading,
 }: Props) {
-  const sentinelRef = useRef<HTMLTableRowElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -104,9 +104,65 @@ export function ListView({
     }
   }
 
+  const isEmpty = tasks.length === 0;
+
   return (
     <div className="h-full overflow-y-auto">
-      <Table>
+      {/* Mobile: stacked rows. The 10-column table below is ~1000px wide
+          intrinsically, which at 360px is a nested horizontal scroll inside
+          the board's own — unreadable. Sorting stays a desktop affordance;
+          the board's saved views cover it on mobile (TAS-061). */}
+      <ul className="lg:hidden divide-y divide-border/60">
+        {tasks.map((task) => (
+          <li key={task.id}>
+            <button
+              type="button"
+              onClick={() => onTaskClick(task)}
+              className="w-full text-left px-4 py-3 active:bg-accent/60"
+            >
+              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="font-mono">{task.key}</span>
+                {showProject && task.project_prefix && (
+                  <span className="text-muted-foreground/60">
+                    {task.project_prefix}
+                  </span>
+                )}
+                {task.priority && (
+                  <span className="font-mono font-semibold text-foreground">
+                    {PRIORITY_LABELS[task.priority]}
+                  </span>
+                )}
+                <span className="ml-auto shrink-0">
+                  <TimeInColumn task={task} size="sm" durationOnly />
+                </span>
+              </div>
+              <div className="mt-0.5 text-[14px] font-medium">{task.title}</div>
+              <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="truncate">{task.column?.name ?? "—"}</span>
+                {task.assignees.length > 0 && (
+                  <span className="ml-auto flex items-center -space-x-1.5 shrink-0">
+                    {task.assignees.slice(0, 3).map((u) => (
+                      <span
+                        key={u.id}
+                        className="ring-2 ring-background rounded-full"
+                      >
+                        <UserAvatar
+                          username={u.username}
+                          avatarUrl={u.avatar_url}
+                          size="size-4"
+                        />
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </div>
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      <div className="max-lg:hidden">
+        <Table>
         <TableHeader>
           <TableRow className="text-[12px]">
             <SortableHead col="key" sort={sort} onClick={toggleSort}>
@@ -237,37 +293,28 @@ export function ListView({
               </TableCell>
             </TableRow>
           ))}
-          {tasks.length === 0 && isInitialLoading && (
-            <TableRow>
-              <TableCell colSpan={10} className="py-8">
-                <div className="flex justify-center">
-                  <div className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
-                </div>
-              </TableCell>
-            </TableRow>
-          )}
-          {tasks.length === 0 && !isLoadingMore && !isInitialLoading && (
-            <TableRow>
-              <TableCell
-                colSpan={10}
-                className="text-center text-muted-foreground py-8"
-              >
-                No tasks found.
-              </TableCell>
-            </TableRow>
-          )}
-          {hasMore && (
-            <TableRow ref={sentinelRef}>
-              <TableCell
-                colSpan={10}
-                className="text-center text-muted-foreground/70 py-3 text-[11px]"
-              >
-                {isLoadingMore ? "Loading…" : " "}
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+          </TableBody>
+        </Table>
+      </div>
+
+      {isEmpty && isInitialLoading && (
+        <div className="flex justify-center py-8">
+          <div className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
+        </div>
+      )}
+      {isEmpty && !isLoadingMore && !isInitialLoading && (
+        <div className="text-center text-muted-foreground py-8">
+          No tasks found.
+        </div>
+      )}
+      {hasMore && (
+        <div
+          ref={sentinelRef}
+          className="text-center text-muted-foreground/70 py-3 text-[11px]"
+        >
+          {isLoadingMore ? "Loading…" : " "}
+        </div>
+      )}
     </div>
   );
 }

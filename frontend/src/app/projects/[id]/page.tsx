@@ -121,7 +121,7 @@ function ProjectSettingsForm({ project }: { project: Project }) {
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
       {/* Page header */}
-      <header className="shrink-0 h-12 flex items-center gap-2 px-4 border-b border-border/80 bg-background">
+      <header className="shrink-0 min-h-12 flex flex-wrap items-center gap-x-2 gap-y-1 px-4 max-lg:px-3 py-1.5 border-b border-border/80 bg-background">
         <Button
           variant="ghost"
           size="sm"
@@ -129,9 +129,9 @@ function ProjectSettingsForm({ project }: { project: Project }) {
           onClick={handleBack}
         >
           <ArrowLeft className="size-3.5" />
-          Back to board
+          <span className="max-lg:sr-only">Back to board</span>
         </Button>
-        <div className="h-5 w-px bg-border mx-1" />
+        <div className="h-5 w-px bg-border mx-1 max-lg:hidden" />
         <div className="flex items-center gap-2 min-w-0">
           <span
             className="size-2.5 rounded-full shrink-0"
@@ -168,7 +168,7 @@ function ProjectSettingsForm({ project }: { project: Project }) {
 
       {/* Scrollable content */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="max-w-xl mx-auto px-6 py-8 space-y-6">
+        <div className="max-w-xl mx-auto px-4 lg:px-6 py-6 lg:py-8 space-y-6">
           {/* Name + icon */}
           <div className="space-y-4">
             <div className="grid grid-cols-[auto_1fr] gap-3 items-end">

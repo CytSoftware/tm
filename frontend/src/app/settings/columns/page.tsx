@@ -162,7 +162,7 @@ function StalenessForm({
         </header>
 
         <section className="rounded-lg border border-border bg-card">
-          <div className="grid grid-cols-[1fr_90px_90px] items-center gap-3 px-4 py-2.5 border-b border-border/60 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <div className="grid grid-cols-[1fr_90px_90px] max-lg:hidden items-center gap-3 px-4 py-2.5 border-b border-border/60 text-[11px] uppercase tracking-wide text-muted-foreground">
             <span>Column</span>
             <span>Yellow (days)</span>
             <span>Red (days)</span>
@@ -177,9 +177,9 @@ function StalenessForm({
             return (
               <div
                 key={name}
-                className="grid grid-cols-[1fr_90px_90px] items-center gap-3 px-4 py-2 border-b border-border/30 last:border-0"
+                className="grid grid-cols-[1fr_90px_90px] max-lg:grid-cols-2 items-center gap-3 px-4 py-2 border-b border-border/30 last:border-0"
               >
-                <span className="text-[13px] font-medium truncate">
+                <span className="text-[13px] font-medium truncate max-lg:col-span-2">
                   {name}
                 </span>
                 <Input
@@ -189,15 +189,17 @@ function StalenessForm({
                   onChange={(e) =>
                     setRow(name, "yellow_days", e.target.value)
                   }
-                  placeholder="—"
-                  className="h-8 text-[12px]"
+                  placeholder="Yellow"
+                  aria-label={`${name} — yellow after (days)`}
+                  className="h-8 text-[12px] max-lg:placeholder:text-muted-foreground/60"
                 />
                 <Input
                   type="number"
                   min={0}
                   value={row.red_days}
                   onChange={(e) => setRow(name, "red_days", e.target.value)}
-                  placeholder="—"
+                  placeholder="Red"
+                  aria-label={`${name} — red after (days)`}
                   className="h-8 text-[12px]"
                 />
               </div>
