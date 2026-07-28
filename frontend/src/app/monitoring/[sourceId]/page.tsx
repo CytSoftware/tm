@@ -160,7 +160,7 @@ export default function MonitoringPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-52 max-w-sm flex-1">
+          <div className="relative min-w-52 max-lg:min-w-0 max-w-sm flex-1">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input
               value={search}

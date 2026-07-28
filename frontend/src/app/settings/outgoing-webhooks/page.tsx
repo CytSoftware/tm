@@ -137,7 +137,7 @@ function WebhooksPageBody({ endpoints }: { endpoints: WebhookEndpoint[] }) {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
+      <div className="max-w-2xl mx-auto px-4 lg:px-6 py-8 space-y-6">
         <header className="flex items-center gap-3">
           <div className="flex-1 min-w-0">
             <h1 className="text-[18px] font-semibold tracking-tight">
@@ -552,7 +552,7 @@ function CreateWebhookDialog({
               <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
                 Events
               </Label>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
                 {EVENT_TYPES.map((verb) => (
                   <label
                     key={verb}

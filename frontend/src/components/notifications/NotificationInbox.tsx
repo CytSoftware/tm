@@ -87,7 +87,7 @@ export function NotificationInbox({ collapsed, onNavigate }: Props) {
         side="right"
         align="start"
         sideOffset={8}
-        className="w-[380px] max-h-[70vh] flex flex-col p-0 gap-0"
+        className="w-[min(380px,calc(100vw-1rem))] max-h-[70dvh] flex flex-col p-0 gap-0"
       >
         <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-border/60">
           <span className="text-[13px] font-semibold">Inbox</span>

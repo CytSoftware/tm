@@ -155,7 +155,7 @@ export default function QuickActionsSettingsPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <header className="shrink-0 h-14 px-4 border-b border-border/80 flex items-center gap-3">
+      <header className="shrink-0 min-h-14 px-4 max-lg:px-3 py-2 border-b border-border/80 flex flex-wrap items-center gap-x-3 gap-y-1">
         <div className="flex-1 min-w-0">
           <h1 className="text-[16px] font-semibold tracking-tight">
             Quick actions
@@ -170,7 +170,7 @@ export default function QuickActionsSettingsPage() {
       </header>
 
       <main className="flex-1 min-h-0 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-6 py-6 space-y-4">
+        <div className="max-w-3xl mx-auto px-4 lg:px-6 py-6 space-y-4">
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             {draft.length === 0 ? (
               <div className="px-6 py-12 text-center">

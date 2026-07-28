@@ -307,7 +307,7 @@ function EditableCheckinRow({ checkin }: { checkin: MetricCheckin }) {
           {formatDuration(checkin.created_at)} ago
         </div>
       </div>
-      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 hover-none:opacity-100 transition-opacity">
         <button
           type="button"
           onClick={() => setEditing(true)}
