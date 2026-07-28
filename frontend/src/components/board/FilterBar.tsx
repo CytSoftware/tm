@@ -105,11 +105,14 @@ export function FilterBar({
         showArchivedToggle={showArchivedToggle}
       />
 
-      {/* Sort popover */}
+      {/* Sort popover. Hidden on mobile — the header only has room for the
+          filter control there; sorting stays reachable on desktop and via a
+          saved view. */}
       <SortPopover sort={filters.sort} onSortChange={(s) => update("sort", s)} />
 
-      {/* Search — inline */}
-      <div className="relative w-44">
+      {/* Search — inline on desktop; on mobile the shell's ⌘K palette owns
+          search, so this would be a duplicate control competing for width. */}
+      <div className="relative w-44 max-lg:hidden">
         <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground/70 pointer-events-none" />
         <Input
           value={filters.search}
@@ -132,7 +135,7 @@ export function FilterBar({
         <Button
           variant="outline"
           size="sm"
-          className="h-7 text-[11px] shrink-0"
+          className="h-7 text-[11px] shrink-0 max-lg:hidden"
           onClick={onSaveToView}
         >
           Save to view
@@ -368,7 +371,7 @@ function FilterPopover({
             )}
           >
             <Filter className="size-3" />
-            Filter
+            <span className="max-lg:sr-only">Filter</span>
             {activeCount > 0 && (
               <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-foreground/15 text-[10px] font-medium tabular-nums">
                 {activeCount}
@@ -377,8 +380,11 @@ function FilterPopover({
           </Button>
         }
       />
-      <PopoverContent className="w-80 p-0" align="start">
-        <div className="max-h-[60vh] overflow-y-auto scrollbar-none p-3 space-y-3">
+      <PopoverContent
+        className="w-[min(20rem,calc(100vw-2rem))] p-0"
+        align="start"
+      >
+        <div className="max-h-[60dvh] overflow-y-auto scrollbar-none p-3 space-y-3">
           <Section label="Priority">
             <div className="flex flex-wrap gap-1">
               {PRIORITY_ORDER.map((p) => {
@@ -598,7 +604,7 @@ function SortPopover({
             variant="outline"
             size="sm"
             className={cn(
-              "h-7 text-[12px] shrink-0",
+              "h-7 text-[12px] shrink-0 max-lg:hidden",
               !isDefaultSort && "border-foreground/30 bg-accent/50",
             )}
           >

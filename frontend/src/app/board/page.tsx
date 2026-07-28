@@ -27,9 +27,11 @@ import {
   extractClosestEdge,
 } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 import {
+  Check,
   ChevronDown,
   GitBranch,
   Layers,
+  MoreHorizontal,
   Plus,
   Repeat,
   Settings,
@@ -96,6 +98,10 @@ import {
   useUpdateColumn,
 } from "@/hooks/use-columns";
 import { useBoardColumnPrefs } from "@/hooks/use-board-column-prefs";
+import { useIsMobile } from "@/hooks/use-media-query";
+import { useLongPress } from "@/hooks/use-long-press";
+import { ColumnPager } from "@/components/kanban/ColumnPager";
+import { MoveTaskSheet } from "@/components/kanban/MoveTaskSheet";
 import {
   copyTaskId,
   copyTaskPrompt,
@@ -116,6 +122,9 @@ import type {
   CardField,
 } from "@/lib/types";
 import { EMPTY_BOARD_FILTERS } from "@/lib/types";
+
+/** Stable empty set, so `collapsedColumns` keeps a referential identity. */
+const EMPTY_HIDDEN: ReadonlySet<number> = new Set<number>();
 
 /** Standard column names and their canonical order. */
 const STANDARD_COLUMNS = [
@@ -157,16 +166,30 @@ function isColumnData(
 type DraggableCardProps = {
   task: Task;
   columnId: number;
+  onLongPress?: (task: Task) => void;
   children: (state: { isDragging: boolean }) => ReactNode;
 };
 
-function DraggableCard({ task, columnId, children }: DraggableCardProps) {
+function DraggableCard({
+  task,
+  columnId,
+  onLongPress,
+  children,
+}: DraggableCardProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const longPress = useLongPress(
+    onLongPress ? () => onLongPress(task) : undefined,
+  );
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // Pragmatic DnD's element adapter is the native HTML5 drag API, which
+    // never fires from touch. Registering it anyway would still set
+    // `draggable="true"`, which on iOS arms the long-press callout and fights
+    // the move-sheet gesture — so skip it entirely on touch (TAS-061).
+    if (!window.matchMedia("(pointer: fine)").matches) return;
     return combine(
       draggable({
         element: el,
@@ -202,7 +225,11 @@ function DraggableCard({ task, columnId, children }: DraggableCardProps) {
     );
   }, [task.id, columnId]);
 
-  return <div ref={ref}>{children({ isDragging })}</div>;
+  return (
+    <div ref={ref} {...longPress}>
+      {children({ isDragging })}
+    </div>
+  );
 }
 
 type DroppableColumnProps = {
@@ -479,6 +506,18 @@ function BoardPageContent() {
   // the all-projects board — the hook maps that to the "0" prefs key.
   const { hiddenColumns, hideColumn, showColumn } =
     useBoardColumnPrefs(projectId);
+  const { isMobile } = useIsMobile();
+  // Hiding columns saves horizontal space on the desktop track. The mobile
+  // pager shows one column at a time, so there's no space to save — honouring
+  // the pref there would just make columns unreachable (TAS-061).
+  const collapsedColumns = isMobile ? EMPTY_HIDDEN : hiddenColumns;
+  // Resolved node, not a ref: the pager subscribes to its scroll events and
+  // the track isn't mounted yet on first render.
+  const [boardScroller, setBoardScroller] = useState<HTMLDivElement | null>(
+    null,
+  );
+  // Task whose "move to column" sheet is open (mobile long-press).
+  const [moveTarget, setMoveTarget] = useState<Task | null>(null);
 
   // Anticipated drop position, updated as the user drags. Drives the
   // in-list ghost preview: the source task gets filtered out of its
@@ -538,6 +577,49 @@ function BoardPageContent() {
   );
 
   const isAllProjects = !projectId;
+
+  // Loaded-card counts for the mobile pager pills.
+  const columnCounts = useMemo(() => {
+    const out = new Map<number, number>();
+    for (const [id, tasks] of tasksByColumn) out.set(id, tasks.length);
+    return out;
+  }, [tasksByColumn]);
+
+  /**
+   * Move a task to the end of a display column. The single move primitive
+   * shared by ⌘←/→ and the mobile move sheet — keep both on this so the
+   * virtual-column mapping and position estimate stay in one place.
+   *
+   * Display columns on the all-projects board are virtual (negative ids), so
+   * they resolve to the task's own project's column of the same name first.
+   */
+  const moveTaskToDisplayColumn = useCallback(
+    (task: Task, destDisplayCol: Column) => {
+      const targetColumn =
+        destDisplayCol.id > 0
+          ? destDisplayCol
+          : projects
+              .find((p) => p.id === task.project)
+              ?.columns.find((c) => c.name === destDisplayCol.name);
+      if (!targetColumn || targetColumn.id === task.column?.id) return;
+
+      // Append at the end — if the dest column's loaded list is empty both
+      // ids are null, same as dropping into an empty column body.
+      const destTasks = tasksByColumn.get(destDisplayCol.id) ?? [];
+      const tail = destTasks[destTasks.length - 1];
+      moveTask.mutate({
+        key: task.key,
+        column_id: targetColumn.id,
+        before_id: null,
+        after_id: tail?.id ?? null,
+        optimistic: {
+          destColumn: targetColumn,
+          estimatedPosition: tail ? tail.position + 1000 : 1000,
+        },
+      });
+    },
+    [projects, tasksByColumn, moveTask],
+  );
 
   // The currently selected task — pulled from whichever column's loaded
   // page happens to carry it.
@@ -622,30 +704,13 @@ function BoardPageContent() {
       while (
         ni >= 0 &&
         ni < displayColumns.length &&
-        hiddenColumns.has(displayColumns[ni].id)
+        collapsedColumns.has(displayColumns[ni].id)
       ) {
         ni += direction === "right" ? 1 : -1;
       }
       if (ni < 0 || ni >= displayColumns.length) return; // no visible column that way
 
-      const destDisplayCol = displayColumns[ni];
-      const targetColumn = resolveRealColumn(destDisplayCol, selectedTask);
-      if (!targetColumn) return;
-
-      // Append at the end — if the dest column's loaded list is empty both
-      // ids are null, same as dropping into an empty column body.
-      const destTasks = tasksByColumn.get(destDisplayCol.id) ?? [];
-      const tail = destTasks[destTasks.length - 1];
-      moveTask.mutate({
-        key: selectedTask.key,
-        column_id: targetColumn.id,
-        before_id: null,
-        after_id: tail?.id ?? null,
-        optimistic: {
-          destColumn: targetColumn,
-          estimatedPosition: tail ? tail.position + 1000 : 1000,
-        },
-      });
+      moveTaskToDisplayColumn(selectedTask, displayColumns[ni]);
     }
 
     /** Cmd/Alt+↑/↓ — swap the selected task with its neighbor within the
@@ -957,7 +1022,7 @@ function BoardPageContent() {
     selectedTask,
     displayColumns,
     tasksByColumn,
-    hiddenColumns,
+    collapsedColumns,
     projects,
     isAllProjects,
     moveTask,
@@ -1204,7 +1269,17 @@ function BoardPageContent() {
         users={allUsers}
         labels={allLabels}
       />
-      <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden bg-muted/40">
+      {viewKind !== "table" && (
+        <ColumnPager
+          columns={displayColumns}
+          counts={columnCounts}
+          scroller={boardScroller}
+        />
+      )}
+      <div
+        ref={setBoardScroller}
+        className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden bg-muted/40"
+      >
         {projects.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center gap-2 text-[13px] text-muted-foreground">
             <span>No projects yet.</span>
@@ -1234,7 +1309,9 @@ function BoardPageContent() {
             onTaskClick={(task) => taskDialog.openTask(task)}
           />
         ) : (
-          <div className="flex gap-3 h-full px-4 py-3">
+          <div
+            className="flex gap-3 h-full px-4 py-3 max-lg:gap-0 max-lg:px-0 max-lg:py-2 max-lg:snap-x max-lg:snap-mandatory"
+          >
             {displayColumns.map((col, idx) => (
               <ColumnContainer
                 key={col.id}
@@ -1254,9 +1331,10 @@ function BoardPageContent() {
                     : undefined
                 }
                 onEditTask={(task) => taskDialog.openTask(task)}
+                onLongPressTask={setMoveTarget}
                 onDeclutter={() => setDeclutterOpen(true)}
                 onAssign={() => setAssignOpen(true)}
-                isHidden={hiddenColumns.has(col.id)}
+                isHidden={collapsedColumns.has(col.id)}
                 onHide={() => hideColumn(col.id)}
                 onShow={() => showColumn(col.id)}
                 manageable={Boolean(project) && col.id > 0}
@@ -1379,6 +1457,12 @@ function BoardPageContent() {
         scopeProjectId={projectId}
       />
       <ShortcutsHelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
+      <MoveTaskSheet
+        task={moveTarget}
+        columns={displayColumns}
+        onMove={moveTaskToDisplayColumn}
+        onClose={() => setMoveTarget(null)}
+      />
     </div>
   );
 }
@@ -1467,6 +1551,8 @@ type ColumnContainerProps = {
   onTasksChange: (columnId: number, tasks: Task[]) => void;
   onAddTask?: () => void;
   onEditTask: (task: Task) => void;
+  /** Touch long-press on a card → open the "move to column" sheet. */
+  onLongPressTask?: (task: Task) => void;
   onDeclutter: () => void;
   onAssign: () => void;
   manageable?: boolean;
@@ -1501,6 +1587,7 @@ function ColumnContainer({
   onTasksChange,
   onAddTask,
   onEditTask,
+  onLongPressTask,
   onDeclutter,
   onAssign,
   manageable,
@@ -1612,7 +1699,11 @@ function ColumnContainer({
       {visibleTasks.map((task, idx) => (
         <Fragment key={task.id}>
           {isDest && idx === previewIdx && ghost}
-          <DraggableCard task={task} columnId={column.id}>
+          <DraggableCard
+            task={task}
+            columnId={column.id}
+            onLongPress={onLongPressTask}
+          >
             {({ isDragging }) => {
               const isSelected = task.id === selectedTaskId;
               return (
@@ -1724,7 +1815,11 @@ function BoardHeader({
   const router = useRouter();
 
   return (
-    <header className="shrink-0 h-12 flex items-center gap-1.5 px-4 border-b border-border/80 bg-background">
+    // The row is packed and non-wrapping by design. Below `lg` almost
+    // everything collapses into the overflow menu at the end, because the
+    // intrinsic width of the full set is ~900px and `main` clips the
+    // remainder rather than scrolling it (TAS-061).
+    <header className="shrink-0 h-12 flex items-center gap-1.5 px-4 max-lg:px-2 border-b border-border/80 bg-background">
       {/* Project dropdown — switch active project + jump to settings. */}
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -1818,7 +1913,7 @@ function BoardHeader({
                 href={`https://github.com/${project.github_repo}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="ml-1 size-7 grid place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors shrink-0"
+                className="ml-1 size-7 grid place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors shrink-0 max-lg:hidden"
                 aria-label={`Open ${project.github_repo} on GitHub`}
               >
                 <GitBranch className="size-3.5" />
@@ -1830,16 +1925,18 @@ function BoardHeader({
           </TooltipContent>
         </Tooltip>
       )}
-      <div className="h-5 w-px bg-border mx-0.5 shrink-0" />
+      <div className="h-5 w-px bg-border mx-0.5 shrink-0 max-lg:hidden" />
 
       {/* View switcher — saved filter+sort presets, lives next to the project. */}
-      <ViewSwitcher
-        projectId={projectId}
-        viewId={viewId}
-        onViewChange={onViewChange}
-      />
+      <div className="max-lg:hidden flex items-center">
+        <ViewSwitcher
+          projectId={projectId}
+          viewId={viewId}
+          onViewChange={onViewChange}
+        />
+      </div>
 
-      <div className="h-5 w-px bg-border mx-0.5 shrink-0" />
+      <div className="h-5 w-px bg-border mx-0.5 shrink-0 max-lg:hidden" />
 
       {/* Filter + sort + search inlined into the header row */}
       <FilterBar
@@ -1854,11 +1951,11 @@ function BoardHeader({
         showArchivedToggle={showArchivedToggle}
       />
 
-      <div className="h-5 w-px bg-border mx-0.5 shrink-0" />
+      <div className="h-5 w-px bg-border mx-0.5 shrink-0 max-lg:hidden" />
       <Button
         variant="outline"
         size="sm"
-        className="h-8 text-[13px] shrink-0"
+        className="h-8 text-[13px] shrink-0 max-lg:hidden"
         onClick={onManageLabels}
       >
         <Tag className="size-3.5" />
@@ -1867,19 +1964,70 @@ function BoardHeader({
       <Button
         variant="outline"
         size="sm"
-        className="h-8 text-[13px] shrink-0"
+        className="h-8 text-[13px] shrink-0 max-lg:hidden"
         onClick={onManageRecurring}
       >
         <Repeat className="size-3.5" />
         Recurring
       </Button>
+
+      {/* Everything hidden above, reachable from one menu on mobile. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0 tap-target lg:hidden"
+              aria-label="More board actions"
+            />
+          }
+        >
+          <MoreHorizontal className="size-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem onClick={onManageLabels}>
+            <Tag className="size-3.5" />
+            Labels
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onManageRecurring}>
+            <Repeat className="size-3.5" />
+            Recurring
+          </DropdownMenuItem>
+          {onSaveToView && (
+            <DropdownMenuItem onClick={onSaveToView}>
+              <Check className="size-3.5" />
+              Save to view
+            </DropdownMenuItem>
+          )}
+          {project?.github_repo && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() =>
+                  window.open(
+                    `https://github.com/${project.github_repo}`,
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
+              >
+                <GitBranch className="size-3.5" />
+                <span className="truncate">{project.github_repo}</span>
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       <Button
         size="sm"
-        className="h-8 text-[13px] shrink-0"
+        className="h-8 text-[13px] shrink-0 max-lg:size-8 max-lg:px-0 max-lg:tap-target"
         onClick={onNewTask}
+        aria-label="New task"
       >
         <Plus className="size-3.5" />
-        New task
+        <span className="max-lg:sr-only">New task</span>
       </Button>
     </header>
   );

@@ -49,7 +49,7 @@ const PLACEHOLDER: Record<EditorKind, string> = {
  *  have a digit hint. */
 function KbdHint({ children }: { children: React.ReactNode }) {
   return (
-    <CommandShortcut className="ml-0 flex size-5 shrink-0 items-center justify-center rounded border border-border/60 bg-muted font-mono text-[10px] tracking-normal text-muted-foreground">
+    <CommandShortcut className="ml-0 flex size-5 shrink-0 max-lg:hidden items-center justify-center rounded border border-border/60 bg-muted font-mono text-[10px] tracking-normal text-muted-foreground">
       {children}
     </CommandShortcut>
   );
@@ -144,8 +144,11 @@ export function PropertyPalette({ task, kind, onClose }: Props) {
         </div>
 
         <CommandInput
+          autoFocus={
+            typeof window === "undefined" ||
+            window.matchMedia("(pointer: fine)").matches
+          }
           placeholder={PLACEHOLDER[kind]}
-          autoFocus
           onKeyDown={handleInputKeyDown}
         />
 
