@@ -859,3 +859,61 @@ export type ExternalEventListResponse = {
 export type EventSummary = Record<EventWorkflowStatus, number> & {
   total: number;
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// MCP authentication. `OAuthConnection` is one client application holding
+// live tokens for the current user (many tokens collapse into one row —
+// every refresh mints a new access token). `McpToken` is a personal access
+// token for a headless client; its plaintext is reveal-once, so it appears
+// only on `McpTokenCreated`.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type OAuthScope = { name: string; description: string };
+
+export type OAuthConnection = {
+  application_id: number;
+  name: string;
+  client_id: string;
+  scopes: string[];
+  token_count: number;
+  first_authorized_at: string;
+  last_authorized_at: string;
+};
+
+export type OAuthConnectionListResponse = { results: OAuthConnection[] };
+
+export type McpToken = {
+  id: number;
+  name: string;
+  /** Public leading characters, for display only. */
+  token_prefix: string;
+  scopes: string[];
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  is_expired: boolean;
+};
+
+export type McpTokenCreated = McpToken & { token: string };
+
+export type McpTokenListResponse = {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: McpToken[];
+};
+
+/** Shape of `GET /api/oauth/authorize-request/` — the pending consent request. */
+export type OAuthConsentRequest = {
+  client_id: string;
+  client_name: string;
+  redirect_uri: string;
+  scopes: OAuthScope[];
+  previously_authorized: boolean;
+  account: { username: string; email: string; full_name: string };
+};
+
+export type OAuthConsentDecision = {
+  redirect_uri: string;
+  allowed: boolean;
+};

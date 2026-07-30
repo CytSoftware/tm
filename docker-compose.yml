@@ -15,7 +15,18 @@ services:
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-*}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
       - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS:-http://localhost:3000}
+      # Where the frontend lives, for the OAuth login/consent hand-off.
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      # This deployment's public origin. Named in OAuth metadata and the /mcp
+      # 401 challenge, which MCP clients follow literally — so it must be the
+      # externally reachable URL, not the container's.
+      - BACKEND_PUBLIC_URL=${BACKEND_PUBLIC_URL:-}
+      # Legacy shared MCP bearer. Prefer OAuth or a per-user personal access
+      # token; both attribute writes to a real user.
       - CYT_MCP_TOKEN=${CYT_MCP_TOKEN:-}
+      # /mcp rejects requests with no Authorization header unless this is true.
+      # Defaults to DEBUG, so leaving it unset keeps prod closed.
+      - MCP_ALLOW_ANONYMOUS=${MCP_ALLOW_ANONYMOUS:-}
       - CYT_BROADCAST_SECRET=${CYT_BROADCAST_SECRET:-dev-broadcast-secret}
     volumes:
       - db-data:/app/db.sqlite3

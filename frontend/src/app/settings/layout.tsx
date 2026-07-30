@@ -4,6 +4,7 @@ import {
   Activity,
   Columns3,
   Grid2X2,
+  Plug,
   Send,
   Settings,
   Zap,
@@ -45,6 +46,12 @@ const SETTINGS_NAV = [
     label: "Services",
     description: "Infrastructure directory",
     icon: Grid2X2,
+  },
+  {
+    href: "/settings/connections",
+    label: "Connections",
+    description: "MCP clients and tokens",
+    icon: Plug,
   },
 ] as const;
 

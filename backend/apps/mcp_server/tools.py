@@ -824,11 +824,7 @@ def list_focus(*, mcp_user) -> list[dict[str, Any]]:
     """List the calling user's personal focus items, ordered Today → This week."""
     from apps.tasks.models import FocusItem
 
-    if mcp_user is None:
-        raise ValueError(
-            "list_focus requires an authenticated MCP user — set "
-            "CYT_MCP_TOKEN as an OAuth bearer or run via stdio with a user."
-        )
+    _require_mcp_user(mcp_user, "list_focus")
     qs = (
         FocusItem.objects.filter(user=mcp_user)
         .select_related("task", "task__column", "task__project")
@@ -843,8 +839,7 @@ def add_focus(*, key: str, period: str = "week", mcp_user) -> dict[str, Any]:
     re-calling with a different ``period`` moves the pin between buckets."""
     from apps.tasks.focus import add_focus as _add
 
-    if mcp_user is None:
-        raise ValueError("add_focus requires an authenticated MCP user.")
+    _require_mcp_user(mcp_user, "add_focus")
     item = _add(user=mcp_user, task_key=key, period=period)
     return _focus_dict(item)
 
@@ -853,8 +848,7 @@ def remove_focus(*, key: str, mcp_user) -> dict[str, Any]:
     """Unpin a task from the caller's focus list. Returns ``{"removed": bool}``."""
     from apps.tasks.focus import remove_focus as _remove
 
-    if mcp_user is None:
-        raise ValueError("remove_focus requires an authenticated MCP user.")
+    _require_mcp_user(mcp_user, "remove_focus")
     removed = _remove(user=mcp_user, task_key=key)
     return {"removed": removed, "key": key}
 
@@ -918,11 +912,7 @@ def register_webhook(
 
     from apps.webhooks.models import WEBHOOK_EVENT_TYPES, WebhookEndpoint, WebhookScope
 
-    if mcp_user is None:
-        raise ValueError(
-            "register_webhook requires an authenticated MCP user — set "
-            "CYT_MCP_TOKEN as an OAuth bearer or run via stdio with a user."
-        )
+    _require_mcp_user(mcp_user, "register_webhook")
     if urlsplit(url).scheme.lower() not in ("http", "https"):
         raise ValueError("url must use http or https.")
     event_types = event_types or []
@@ -954,8 +944,7 @@ def list_webhooks(*, mcp_user) -> list[dict[str, Any]]:
     """List the calling user's webhook endpoints (secrets excluded)."""
     from apps.webhooks.models import WebhookEndpoint
 
-    if mcp_user is None:
-        raise ValueError("list_webhooks requires an authenticated MCP user.")
+    _require_mcp_user(mcp_user, "list_webhooks")
     qs = WebhookEndpoint.objects.filter(user=mcp_user)
     return [_webhook_dict(ep) for ep in qs]
 
@@ -964,8 +953,7 @@ def delete_webhook(*, webhook_id: int, mcp_user) -> dict[str, Any]:
     """Delete one of the calling user's webhook endpoints."""
     from apps.webhooks.models import WebhookEndpoint
 
-    if mcp_user is None:
-        raise ValueError("delete_webhook requires an authenticated MCP user.")
+    _require_mcp_user(mcp_user, "delete_webhook")
     deleted, _ = WebhookEndpoint.objects.filter(
         id=webhook_id, user=mcp_user
     ).delete()
@@ -978,10 +966,7 @@ def list_webhook_deliveries(
     """Recent webhook deliveries across the caller's endpoints, newest first."""
     from apps.webhooks.models import WebhookDelivery
 
-    if mcp_user is None:
-        raise ValueError(
-            "list_webhook_deliveries requires an authenticated MCP user."
-        )
+    _require_mcp_user(mcp_user, "list_webhook_deliveries")
     qs = WebhookDelivery.objects.filter(endpoint__user=mcp_user)
     if webhook_id is not None:
         qs = qs.filter(endpoint_id=webhook_id)
@@ -1525,12 +1510,35 @@ def _parse_iso_datetime(value: str) -> datetime:
     return parsed
 
 
-def _resolve_reporter_for_mcp(user=None):
-    """Return the user that MCP-created tasks should be reported by.
+def _require_mcp_user(mcp_user, tool_name: str):
+    """Return *mcp_user*, or raise with actionable guidance if it is ``None``.
 
-    When *user* is provided (e.g. from an OAuth-authenticated MCP session),
-    it is used directly. Otherwise we fall back to the heuristic chain:
+    Reached only when the caller authenticated with the legacy shared
+    ``CYT_MCP_TOKEN``, which names no user — so any per-user feature (focus
+    lists, personal webhooks) has nobody to act as. The remedy is a credential
+    that identifies someone, hence the wording.
+    """
+    if mcp_user is None:
+        raise ValueError(
+            f"{tool_name} acts on your personal data, so it needs a credential "
+            "that identifies you. The shared CYT_MCP_TOKEN doesn't. Reconnect "
+            "with OAuth, or create a personal access token in "
+            "Settings → Connections and use it as the Bearer token."
+        )
+    return mcp_user
+
+
+def _resolve_reporter_for_mcp(user=None):
+    """Return the user that MCP writes should be attributed to.
+
+    When *user* is provided (i.e. an OAuth or personal-token authenticated MCP
+    request), it is used directly. Otherwise — only reachable via the legacy
+    static ``CYT_MCP_TOKEN`` or stdio — we fall back to the heuristic chain:
     ``CYT_MCP_DEFAULT_USERNAME`` → first superuser → first staff → first user.
+
+    Write *authorization* is not checked here; scope enforcement lives in
+    ``server._ScopedFastMCP.call_tool``, which covers every tool rather than
+    just the three paths that resolve a reporter.
     """
     if user is not None:
         return user

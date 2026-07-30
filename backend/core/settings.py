@@ -331,29 +331,79 @@ GITHUB_WEBHOOK_SECRET = _os.environ.get("GITHUB_WEBHOOK_SECRET", "")
 # ---------------------------------------------------------------------------
 # Remote MCP authentication
 # ---------------------------------------------------------------------------
-# Token for authenticating remote MCP clients connecting via HTTP at /mcp/.
-# Set CYT_MCP_TOKEN in the environment. When empty, the MCP endpoint is open
-# (fine for local dev; lock it down for production).
+# LEGACY. A single shared bearer for every remote MCP client. It cannot be
+# attributed to a user (writes fall back to the first superuser) and it cannot
+# be revoked without redeploying, so prefer OAuth or a per-user personal access
+# token (apps.mcp_server.models.McpAccessToken). Kept working for backwards
+# compatibility; see MCP_ALLOW_ANONYMOUS below for the empty-value behaviour.
 CYT_MCP_TOKEN = _os.environ.get("CYT_MCP_TOKEN", "")
+
+# Scopes an OAuth access token must carry to reach /mcp at all. Write tools
+# additionally require "write" (enforced in apps.mcp_server.tools).
+MCP_REQUIRED_SCOPES = ["read"]
+
+# Whether /mcp answers a request that carries no Authorization header at all.
+# Historically an empty CYT_MCP_TOKEN meant "wide open" regardless of
+# environment; that is only ever acceptable in local dev, so it is now tied to
+# DEBUG. Set MCP_ALLOW_ANONYMOUS=true to opt back in explicitly.
+# `or` rather than a get() default: docker-compose passes unset variables through
+# as the empty string, which get() would happily return, so the DEBUG-derived
+# default would never apply.
+MCP_ALLOW_ANONYMOUS = (
+    _os.environ.get("MCP_ALLOW_ANONYMOUS", "").strip()
+    or ("true" if DEBUG else "false")
+).lower() in ("1", "true", "yes")
 
 # ---------------------------------------------------------------------------
 # OAuth 2.0 (django-oauth-toolkit)
 # ---------------------------------------------------------------------------
 OAUTH2_PROVIDER = {
-    "SCOPES": {"read": "Read access", "write": "Read+Write access"},
+    "SCOPES": {
+        "read": "Read your projects, tasks, wiki pages and files",
+        "write": "Create, update and delete tasks, wiki pages and files",
+    },
     "DEFAULT_SCOPES": ["read", "write"],
     "ACCESS_TOKEN_EXPIRE_SECONDS": 3600,  # 1 hour
     "REFRESH_TOKEN_EXPIRE_SECONDS": 86400 * 30,  # 30 days
     "ROTATE_REFRESH_TOKEN": True,
-    "ALLOWED_REDIRECT_URI_SCHEMES": ["http", "https"],
+    # Custom schemes let editor-based MCP clients (Cursor, VS Code, Zed)
+    # complete the browser OAuth dance instead of pasting a static token.
+    # Plain "http" stays in the list for loopback callbacks (Claude Code binds
+    # http://127.0.0.1:<port>/callback); the DCR endpoint in core/urls.py is
+    # what enforces http-means-loopback, since django-oauth-toolkit's own
+    # validation only looks at the scheme.
+    "ALLOWED_REDIRECT_URI_SCHEMES": [
+        "https",
+        "http",
+        "cursor",
+        "vscode",
+        "vscode-insiders",
+        "code",
+        "windsurf",
+        "zed",
+    ],
     "PKCE_REQUIRED": True,
+    # "auto" makes re-authorization silent: if the user already holds a live
+    # token for this application covering the requested scopes, the authorize
+    # view short-circuits straight to the redirect instead of asking again.
+    # This is what makes reconnects and token refreshes seamless — see
+    # AuthorizationView.get() in django-oauth-toolkit.
+    "REQUEST_APPROVAL_PROMPT": "auto",
 }
 
-# When OAuth needs login, redirect to the frontend login page.
-# After login the user has a Django session cookie (same domain via
-# COOKIE_DOMAIN=.cytsoftware.com), so the OAuth authorize page works.
-_frontend_url = _os.environ.get("FRONTEND_URL", "http://localhost:3000")
-LOGIN_URL = f"{_frontend_url}/login"
+# This deployment's externally reachable origin, used to build OAuth metadata
+# documents and the /mcp 401 challenge. Falls back to per-request derivation
+# (see core/oauth_meta.py), but set it explicitly in production — it is the
+# only source that doesn't depend on what the reverse proxy forwards.
+BACKEND_PUBLIC_URL = _os.environ.get("BACKEND_PUBLIC_URL", "")
+
+# When OAuth needs login, redirect to the frontend login page. The authorize
+# view (apps.mcp_server.oauth_views.McpAuthorizationView) overrides Django's
+# default `next` handling to send an *absolute* backend URL, because the
+# frontend resolves relative paths against its own origin.
+FRONTEND_URL = _os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+_frontend_url = FRONTEND_URL  # retained: referenced further down for WIKI_ENCODE_URL
+LOGIN_URL = f"{FRONTEND_URL}/login"
 
 # ---------------------------------------------------------------------------
 # Wiki Markdown ↔ Yjs encoder (frontend route)
@@ -367,8 +417,6 @@ WIKI_ENCODE_URL = _os.environ.get(
     "WIKI_ENCODE_URL", f"{_frontend_url}/api/wiki/encode"
 )
 WIKI_ENCODE_SECRET = _os.environ.get("WIKI_ENCODE_SECRET", CYT_BROADCAST_SECRET)
-
-FRONTEND_URL = _frontend_url
 
 # ---------------------------------------------------------------------------
 # useSend (transactional email — assignment notifications)

@@ -111,3 +111,8 @@ export const externalEventSummaryKey = (source?: number) =>
 // Workspace-wide external service directory.
 export const infrastructureServicesKey = () =>
   ["infrastructure-services"] as const;
+
+// MCP auth. OAuth connections (client apps holding tokens for the current
+// user) and personal access tokens for headless MCP clients.
+export const oauthConnectionsKey = () => ["oauth-connections"] as const;
+export const mcpTokensKey = () => ["mcp-tokens"] as const;

@@ -30,6 +30,16 @@ import { Sidebar } from "./Sidebar";
  * server-renders `false` — so *every* device, desktop included, painted the
  * mobile layout and swapped on hydration. Keep it CSS-only (TAS-061).
  */
+/**
+ * Routes that render without the app chrome.
+ *
+ * `/login` is the obvious one. `/oauth/consent` joins it because it is a step
+ * inside another application's OAuth flow: showing the sidebar and project
+ * switcher there would invite the user to wander off mid-authorization, and the
+ * page is reached by redirect from the backend rather than by navigation.
+ */
+const STANDALONE_ROUTES = ["/login", "/oauth/consent"];
+
 export function Shell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -96,9 +106,16 @@ export function Shell({ children }: { children: ReactNode }) {
     !meQuery.isLoading && (meQuery.data === null || meQuery.isError);
 
   useEffect(() => {
-    if (needsLogin && pathname !== "/login") {
-      router.replace("/login");
+    if (!needsLogin || pathname === "/login") return;
+    // `/oauth/consent` carries the whole authorization request in its query
+    // string, so bouncing to a bare `/login` would silently discard it and the
+    // waiting client would hang. Round-trip it through `next` instead.
+    if (pathname === "/oauth/consent") {
+      const next = window.location.pathname + window.location.search;
+      router.replace(`/login?next=${encodeURIComponent(next)}`);
+      return;
     }
+    router.replace("/login");
   }, [needsLogin, pathname, router]);
 
   // Global notification socket — one per authenticated session, mounted
@@ -126,7 +143,7 @@ export function Shell({ children }: { children: ReactNode }) {
     });
   }, [needsLogin, userId, queryClient]);
 
-  if (pathname === "/login") return <>{children}</>;
+  if (STANDALONE_ROUTES.includes(pathname)) return <>{children}</>;
 
   if (meQuery.isLoading) {
     return (

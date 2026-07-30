@@ -50,7 +50,7 @@ docker compose up --build
 
 `backend/core/asgi.py` is the single source of entry for Daphne. It dispatches by scope:
 
-1. **HTTP** requests under `/mcp` → MCP Streamable HTTP app, after a custom Bearer-token check (OAuth access token via `django-oauth-toolkit`, falling back to a static `CYT_MCP_TOKEN`). The authenticated user is stashed in a `ContextVar` (`mcp_authenticated_user`) that MCP tools read to attribute writes.
+1. **HTTP** requests under `/mcp` → MCP Streamable HTTP app, after the auth gate in `apps/mcp_server/auth.py` (OAuth access token → personal access token → legacy static `CYT_MCP_TOKEN`). The authenticated user and its scopes are stashed **on the ASGI scope dict** and read back per request by `server._get_mcp_user()`; the `mcp_authenticated_user` ContextVar is only for stdio (over streamable HTTP it is session-scoped, not request-scoped). See CLAUDE.md for the full picture.
 2. **WebSocket** connections → Channels `URLRouter` from `apps/tasks/routing.py` → `TaskConsumer` subscribes to `project_<id>` groups.
 3. **Everything else** → standard Django HTTP (DRF + admin + OAuth URLs).
 
@@ -133,7 +133,9 @@ Backend (see `core/settings.py`):
 - `SECRET_KEY`, `ALLOWED_HOSTS`, `DEBUG`
 - `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` — comma-separated. Defaults target `http://localhost:3000`.
 - `COOKIE_DOMAIN` — set to `.cytsoftware.com` in prod so session cookies work across the frontend/backend subdomain split. In prod (`DEBUG=False`) the settings automatically flip to `SameSite=None; Secure`.
-- `CYT_MCP_TOKEN` — static Bearer for the HTTP MCP endpoint. Empty = open (local dev only).
+- `CYT_MCP_TOKEN` — **legacy** shared Bearer for the HTTP MCP endpoint; names no user. Prefer OAuth or a personal access token.
+- `MCP_ALLOW_ANONYMOUS` — allow `/mcp` with no `Authorization` header. Defaults to `DEBUG`; an empty `CYT_MCP_TOKEN` no longer means "open".
+- `BACKEND_PUBLIC_URL` — public origin for OAuth metadata and the `/mcp` 401; set it in prod.
 - `CYT_BROADCAST_SECRET` — shared secret for the cross-process broadcast bridge.
 - `CYT_BROADCAST_URL` — set in the MCP stdio process so broadcasts reach Daphne via HTTP.
 - `FRONTEND_URL` — used to build `LOGIN_URL` for OAuth redirects, and the default for `WIKI_ENCODE_URL`.
@@ -159,7 +161,8 @@ The two `NEXT_PUBLIC_*` vars are baked in at `next build` time — the Dockerfil
 - Shared `apps/tasks/query.py` is mandatory — don't reimplement task filters in a viewset or MCP tool.
 - `broadcast_task_event` is fire-and-forget and must not throw; any new write path needs a matching broadcast call to keep browsers in sync.
 - `apps.tasks.notifications.notify_task_event` is the same fire-and-forget contract, for per-user `Notification` rows + the `ws/notifications/` push (verbs: `assigned`, `updated`, `moved`, `completed`, `deleted`). Every task write path that calls `broadcast_task_event` should also call this — recipients default to the task's assignees minus the acting user. It reuses `apps.tasks.broadcast`'s cross-process bridge (`broadcast_to_group`, `scope: "group"` on `/api/internal/broadcast/`) so it works from the MCP stdio process too.
-- When adding a new MCP write tool, read the user from `mcp_authenticated_user.get(None)` via `_get_mcp_user()` in `server.py` and pass it through to the underlying helper so writes are attributed correctly.
+- When adding a new MCP write tool, get the caller via `_get_mcp_user()` in `server.py` and pass it through so writes are attributed correctly. Do **not** read `mcp_authenticated_user` directly.
+- Any new read-only MCP tool must be added to `READ_ONLY_TOOLS` in `server.py`; anything omitted is treated as a write and requires the `write` scope.
 - `Task.save()` runs key generation inside a transaction only on first save; don't set `key` manually.
 - Never write the wiki body (`DocState`/`content`) by re-encoding the CRDT in Python — it diverges from the editor. Route body writes through `apps.wiki.content_ops.apply_content` (→ the frontend encoder). If you add a node type to the editor, mirror it in `frontend/src/components/wiki/wiki-schema.ts` or MCP-written content will lose it.
 - Phase 1 uses SQLite + `channels.layers.InMemoryChannelLayer` + `locmem` cache. Swapping to Postgres/Redis is planned — don't bake assumptions that would break the swap (e.g. SQLite-only SQL).

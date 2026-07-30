@@ -14,7 +14,6 @@ import logging
 import asyncio
 import contextvars
 
-from asgiref.sync import sync_to_async
 from django.core.asgi import get_asgi_application
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
@@ -23,7 +22,6 @@ django_asgi_app = get_asgi_application()
 
 from channels.auth import AuthMiddlewareStack  # noqa: E402
 from channels.routing import URLRouter  # noqa: E402
-from django.conf import settings  # noqa: E402
 
 from apps.tasks.routing import websocket_urlpatterns  # noqa: E402
 from apps.wiki.routing import (  # noqa: E402
@@ -32,8 +30,13 @@ from apps.wiki.routing import (  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-# Context variable holding the authenticated user for the current MCP request.
-# MCP tool functions read this to determine who is calling.
+# Authenticated user for the current MCP *session*, for the stdio transport.
+#
+# Do not read this directly from tool code over HTTP: the streamable-HTTP session
+# manager copies the context once per session, so this value is pinned to
+# whoever opened the session rather than whoever is making the current call.
+# `apps.mcp_server.server._get_mcp_user` reads the per-request ASGI scope first
+# and only falls back to this.
 mcp_authenticated_user: contextvars.ContextVar = contextvars.ContextVar(
     "mcp_authenticated_user", default=None
 )
@@ -49,7 +52,16 @@ _channels_ws = AuthMiddlewareStack(
 # ---------------------------------------------------------------------------
 
 _mcp_app = None
-_mcp_initialized = False
+
+#: Set once the MCP app has answered our synthetic lifespan.startup. Every /mcp
+#: request awaits it, so none can reach an uninitialized session manager.
+#: Created lazily because it must be bound to the running event loop.
+_mcp_ready: asyncio.Event | None = None
+_mcp_lifespan_task = None
+
+#: How long to wait for MCP startup before giving up and letting the request
+#: through (where it will fail loudly) rather than hanging forever.
+MCP_STARTUP_TIMEOUT_SECONDS = 10
 
 
 def _build_mcp():
@@ -65,134 +77,158 @@ _mcp_app = _build_mcp()
 
 
 async def _ensure_mcp_lifespan():
-    """Send a synthetic lifespan.startup to the MCP app so it initializes
-    its task group. Daphne doesn't send lifespan events, so we do it manually
-    on the first MCP request."""
-    global _mcp_initialized
-    if _mcp_initialized or not _mcp_app:
-        return
-    _mcp_initialized = True
+    """Drive a synthetic ASGI lifespan so the MCP app initializes its task group.
 
-    startup_complete = asyncio.Event()
-    shutdown_triggered = asyncio.Event()
+    Daphne never emits lifespan events, so we synthesize ``lifespan.startup`` on
+    the first ``/mcp`` request and keep the lifespan coroutine alive for the rest
+    of the process — the streamable-HTTP session manager's task group lives
+    inside it. Do not remove this.
 
-    async def receive():
-        # Send startup, then wait forever (shutdown only on process exit)
-        if not startup_complete.is_set():
-            startup_complete.set()
-            return {"type": "lifespan.startup"}
-        await shutdown_triggered.wait()
-        return {"type": "lifespan.shutdown"}
-
-    async def send(message):
-        pass  # Ignore startup.complete / shutdown.complete
-
-    # Run the lifespan handler in the background — it stays alive for the
-    # duration of the process, keeping the MCP task group open.
-    asyncio.create_task(_mcp_app({"type": "lifespan"}, receive, send))
-    # Give it a moment to start up
-    await asyncio.sleep(0.1)
-
-
-async def _validate_oauth_token(bearer_token: str):
-    """Validate an OAuth2 Bearer token via django-oauth-toolkit.
-
-    Returns the Django user if the token is valid, or None. Looks up by
-    token_checksum (sha256, indexed) which is how oauth2_provider itself
-    validates — the raw `token` column is an un-indexed TextField.
+    Callers **await readiness** rather than sleeping a fixed interval. The
+    earlier version flipped an `_mcp_initialized` flag before starting the task
+    and then slept 0.1s, which meant two requests arriving together at cold
+    start both skipped the wait and the second hit
+    ``RuntimeError: Task group is not initialized`` → 500. Concurrent first
+    requests are the norm, not an edge case: a client opens its session and
+    immediately starts calling.
     """
-    import hashlib
-    from oauth2_provider.models import AccessToken
-    from django.utils import timezone as tz
+    global _mcp_ready, _mcp_lifespan_task
+    if not _mcp_app:
+        return
 
-    checksum = hashlib.sha256(bearer_token.encode("utf-8")).hexdigest()
+    if _mcp_ready is None:
+        # No await between the check and the assignment, so on a single-threaded
+        # event loop exactly one caller can win this branch.
+        _mcp_ready = asyncio.Event()
+        ready = _mcp_ready
+        startup_sent = asyncio.Event()
+        shutdown_triggered = asyncio.Event()
+
+        async def receive():
+            # Send startup once, then block forever — shutdown only happens when
+            # the process exits, at which point this task is discarded.
+            if not startup_sent.is_set():
+                startup_sent.set()
+                return {"type": "lifespan.startup"}
+            await shutdown_triggered.wait()
+            return {"type": "lifespan.shutdown"}
+
+        async def send(message):
+            msg_type = message.get("type")
+            if msg_type == "lifespan.startup.complete":
+                ready.set()
+            elif msg_type == "lifespan.startup.failed":
+                # Unblock the waiters; the request will then fail visibly
+                # instead of timing out silently.
+                logger.error("MCP lifespan startup failed: %s", message.get("message"))
+                ready.set()
+
+        # Held in a module global so the task isn't garbage-collected mid-flight.
+        _mcp_lifespan_task = asyncio.create_task(
+            _mcp_app({"type": "lifespan"}, receive, send)
+        )
+
     try:
-        token_obj = await sync_to_async(
-            AccessToken.objects.select_related("user").get
-        )(token_checksum=checksum)
-    except AccessToken.DoesNotExist:
-        logger.info("OAuth token not found (checksum=%s...)", checksum[:8])
-        return None
+        await asyncio.wait_for(
+            _mcp_ready.wait(), timeout=MCP_STARTUP_TIMEOUT_SECONDS
+        )
+    except TimeoutError:
+        logger.error(
+            "MCP app did not signal lifespan startup within %ss; "
+            "forwarding the request anyway",
+            MCP_STARTUP_TIMEOUT_SECONDS,
+        )
 
-    if token_obj.expires < tz.now():
-        logger.info("OAuth token expired for user=%s", token_obj.user_id)
+
+async def _send_mcp_401(scope, send):
+    """Emit the 401 that starts OAuth discovery.
+
+    The ``resource_metadata`` parameter is what turns a bare rejection into a
+    usable hint: a spec-compliant MCP client reads it, fetches the protected
+    resource metadata, finds the authorization server and runs the flow. It must
+    name *this* deployment's origin — it used to be a hardcoded
+    ``tm-api.cytsoftware.com``, which made OAuth impossible anywhere else.
+    """
+    from core.oauth_meta import resource_metadata_url
+
+    metadata_url = resource_metadata_url(_scope_origin(scope))
+    challenge = 'Bearer realm="mcp", error="invalid_token"'
+    if metadata_url:
+        challenge += f', resource_metadata="{metadata_url}"'
+
+    await send({
+        "type": "http.response.start",
+        "status": 401,
+        "headers": [
+            [b"content-type", b"application/json"],
+            [b"www-authenticate", challenge.encode()],
+        ],
+    })
+    await send({
+        "type": "http.response.body",
+        "body": b'{"error":"invalid_token","error_description":'
+                b'"A valid OAuth access token or MCP personal access token is required."}',
+    })
+
+
+def _scope_origin(scope):
+    """Best-effort public origin for an ASGI scope, as an ``http[s]://host`` str.
+
+    Only used when ``BACKEND_PUBLIC_URL`` is unset — there is no Django request
+    object at this layer, so the Host / X-Forwarded-* headers are all we have.
+    """
+    headers = {k.lower(): v for k, v in scope.get("headers", [])}
+    host = headers.get(b"x-forwarded-host") or headers.get(b"host")
+    if not host:
         return None
-    logger.info("OAuth token valid for user=%s", token_obj.user_id)
-    return token_obj.user
+    proto = headers.get(b"x-forwarded-proto")
+    scheme = proto.decode().split(",")[0].strip() if proto else scope.get("scheme", "http")
+    return f"{scheme}://{host.decode().split(',')[0].strip()}"
 
 
 async def _handle_mcp(scope, receive, send):
-    """Token auth + forward to MCP app.
+    """Authenticate, then forward to the MCP app.
 
-    Auth priority:
-    1. OAuth 2.0 Bearer token (validated via django-oauth-toolkit) — runs
-       MCP tools as the authenticated user.
-    2. Static CYT_MCP_TOKEN — backwards-compatible fallback for simple
-       deployments, runs tools as the default MCP user.
-    3. Reject with 401.
+    All credential handling lives in :mod:`apps.mcp_server.auth`; this function
+    only translates its verdict into ASGI.
+
+    The authenticated user is published two ways:
+
+    * on the **scope dict** — the source of truth. The streamable-HTTP session
+      manager spawns one long-lived task per session and copies the context at
+      *session creation*, so a module-level ContextVar set here would be frozen
+      to whoever opened the session. The MCP SDK threads the per-message
+      Starlette ``Request`` through to tool handlers, and that ``Request`` wraps
+      this very dict, so reading it back there is exact per-request.
+      See ``apps.mcp_server.server._get_mcp_user``.
+    * on the **ContextVar** — retained for the stdio transport, which has no
+      ASGI scope at all.
     """
-    static_token = getattr(settings, "CYT_MCP_TOKEN", "")
-    authenticated_user = None
+    from apps.mcp_server.auth import (
+        SCOPE_KIND_KEY,
+        SCOPE_SCOPES_KEY,
+        SCOPE_USER_KEY,
+        authenticate_mcp_request,
+    )
 
-    if scope["type"] == "http":
-        headers = dict(scope.get("headers", []))
-        auth = headers.get(b"authorization", b"").decode()
+    headers = {k.lower(): v for k, v in scope.get("headers", [])}
+    auth_header = headers.get(b"authorization", b"").decode(errors="replace")
+
+    auth = await authenticate_mcp_request(auth_header)
+    if auth is None:
         logger.info(
-            "MCP request path=%s method=%s has_auth=%s",
+            "MCP request rejected path=%s method=%s has_auth=%s",
             scope.get("path"),
             scope.get("method"),
-            bool(auth),
+            bool(auth_header),
         )
+        await _send_mcp_401(scope, send)
+        return
 
-        if auth.startswith("Bearer "):
-            bearer = auth[7:]
-
-            # Try OAuth token first
-            oauth_user = await _validate_oauth_token(bearer)
-            if oauth_user is not None:
-                authenticated_user = oauth_user
-            elif static_token and bearer == static_token:
-                # Static token match — no specific user
-                authenticated_user = None
-            else:
-                # Neither OAuth nor static token matched
-                await send({
-                    "type": "http.response.start",
-                    "status": 401,
-                    "headers": [
-                        [b"content-type", b"application/json"],
-                        [
-                            b"www-authenticate",
-                            b'Bearer realm="mcp", resource_metadata="https://tm-api.cytsoftware.com/.well-known/oauth-protected-resource"',
-                        ],
-                    ],
-                })
-                await send({
-                    "type": "http.response.body",
-                    "body": b'{"detail":"Invalid or missing MCP token."}',
-                })
-                return
-        elif static_token:
-            # No Authorization header but static token is required
-            await send({
-                "type": "http.response.start",
-                "status": 401,
-                "headers": [
-                    [b"content-type", b"application/json"],
-                    [
-                        b"www-authenticate",
-                        b'Bearer realm="mcp", resource_metadata="https://tm-api.cytsoftware.com/.well-known/oauth-protected-resource"',
-                    ],
-                ],
-            })
-            await send({
-                "type": "http.response.body",
-                "body": b'{"detail":"Invalid or missing MCP token."}',
-            })
-            return
-
-    # Set the authenticated user in a context variable so MCP tools can read it.
-    mcp_authenticated_user.set(authenticated_user)
+    scope[SCOPE_USER_KEY] = auth.user
+    scope[SCOPE_SCOPES_KEY] = auth.scopes
+    scope[SCOPE_KIND_KEY] = auth.kind
+    mcp_authenticated_user.set(auth.user)
 
     await _ensure_mcp_lifespan()
     await _mcp_app(scope, receive, send)

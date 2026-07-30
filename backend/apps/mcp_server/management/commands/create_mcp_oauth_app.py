@@ -1,14 +1,19 @@
-"""Management command to create (or display) the default OAuth2 application
-for MCP clients.
+"""Create (or display) a pre-registered OAuth2 application for MCP clients.
+
+Usually unnecessary: any client that supports RFC 7591 dynamic client
+registration — claude.ai, Claude Code, Cursor — self-provisions against
+``POST /oauth/register/`` and never needs these credentials. This command exists
+for the client that doesn't, and for bootstrapping a deployment before anyone
+has connected.
 
 Usage::
 
     python manage.py create_mcp_oauth_app
+    python manage.py create_mcp_oauth_app --redirect-uri https://example.com/cb
 
-If the application already exists it prints the existing credentials.
-The client secret is only shown in plaintext on first creation; after that
-the hashed version is stored and the secret cannot be recovered. Re-run with
-``--regenerate`` to create a new secret.
+If the application already exists it prints the existing ``client_id``. The
+secret is shown in plaintext only on first creation; afterwards only its hash is
+stored and it cannot be recovered — re-run with ``--regenerate`` for a new one.
 """
 
 from django.contrib.auth import get_user_model
@@ -29,6 +34,16 @@ class Command(BaseCommand):
             "--regenerate",
             action="store_true",
             help="Regenerate the client secret for an existing application.",
+        )
+        parser.add_argument(
+            "--redirect-uri",
+            action="append",
+            dest="redirect_uris",
+            metavar="URI",
+            help=(
+                "Callback URI to register; repeat for several. Defaults to a "
+                "loopback listener, which is what CLI clients use."
+            ),
         )
 
     def handle(self, *args, **options):
@@ -66,13 +81,20 @@ class Command(BaseCommand):
                 )
                 return
 
+            # "http://localhost" alone is not a usable callback — it has no port
+            # and no path, so nothing can listen on it. A loopback listener with
+            # a port is what CLI clients actually bind.
+            redirect_uris = options.get("redirect_uris") or [
+                "http://127.0.0.1:8976/callback"
+            ]
+
             plain_secret = generate_client_secret()
             app = Application(
                 name=APP_NAME,
                 user=owner,
                 client_type=Application.CLIENT_CONFIDENTIAL,
                 authorization_grant_type=Application.GRANT_AUTHORIZATION_CODE,
-                redirect_uris="http://localhost",
+                redirect_uris=" ".join(redirect_uris),
             )
             # Set the secret directly so we can capture it before hashing
             app.client_secret = plain_secret

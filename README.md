@@ -69,7 +69,7 @@ A self-hosted, Linear-style task tracker for Cyt Software's internal work — wi
                                             └─────────────────────────────┘
 ```
 
-**One ASGI app, three protocols.** Daphne runs `core/asgi.py`, which routes by scope: HTTP `/mcp` requests hit a Bearer-token gate and the MCP Streamable HTTP app, WebSocket connections flow through Channels into `TaskConsumer`, everything else goes to the normal Django HTTP stack. The MCP HTTP endpoint accepts either an OAuth 2.0 Bearer (validated via `django-oauth-toolkit`, the resulting user is attributed to any writes) or a static `CYT_MCP_TOKEN`.
+**One ASGI app, three protocols.** Daphne runs `core/asgi.py`, which routes by scope: HTTP `/mcp` requests hit a Bearer-token gate and the MCP Streamable HTTP app, WebSocket connections flow through Channels into `TaskConsumer`, everything else goes to the normal Django HTTP stack. The MCP HTTP endpoint accepts an OAuth 2.0 Bearer (validated via `django-oauth-toolkit`), a per-user personal access token, or the legacy shared `CYT_MCP_TOKEN`; the first two name a real user, so writes are attributed to them. See `apps/mcp_server/auth.py`.
 
 **Shared filter/sort logic.** `apps/tasks/query.py` is the single source of truth for task filtering and sorting. Both the DRF `TaskViewSet` (when resolving `?view=<id>`) and every MCP tool call through it, so a saved view produces identical results whether queried from the browser or an agent.
 
@@ -160,7 +160,9 @@ docker compose up --build
 | `CSRF_TRUSTED_ORIGINS`                 | Comma list                                                                                                    | `http://localhost:3000`       |
 | `COOKIE_DOMAIN`                        | Cross-subdomain session cookie (e.g. `.cytsoftware.com`)                                                      | unset                         |
 | `FRONTEND_URL`                         | Used to build `LOGIN_URL` for OAuth redirects                                                                 | `http://localhost:3000`       |
-| `CYT_MCP_TOKEN`                        | Static Bearer for `/mcp/`; empty = open (dev only)                                                            | unset                         |
+| `BACKEND_PUBLIC_URL`                   | This deployment's public origin, used in OAuth metadata + the `/mcp` 401. Set in prod                         | derived from request          |
+| `CYT_MCP_TOKEN`                        | **Legacy** shared Bearer for `/mcp`; names no user. Prefer OAuth or a personal token                          | unset                         |
+| `MCP_ALLOW_ANONYMOUS`                  | Allow `/mcp` requests with no `Authorization` header (local dev only)                                         | `DEBUG`                       |
 | `CYT_BROADCAST_SECRET`                 | Shared secret for the cross-process broadcast bridge                                                          | `dev-broadcast-secret…`       |
 | `CYT_BROADCAST_URL`                    | URL the stdio MCP process POSTs broadcasts to                                                                 | `http://127.0.0.1:8000/api/internal/broadcast/` |
 | `DB_DIR`                               | Override SQLite directory (Docker volume mount)                                                               | `backend/`                    |
@@ -227,12 +229,26 @@ Schema / docs:
 OAuth 2.0:
 
 ```
-/.well-known/oauth-authorization-server   # RFC 8414 discovery
-/oauth/register/                           # RFC 7591 dynamic client registration
-/oauth/authorize/                          # django-oauth-toolkit
-/oauth/token/
+/.well-known/oauth-authorization-server[/mcp]   # RFC 8414 discovery
+/.well-known/oauth-protected-resource[/mcp]     # RFC 9728, named by the /mcp 401
+/oauth/register/                                 # RFC 7591 dynamic client registration
+/oauth/authorize/                                # consent hand-off to the frontend
+/oauth/token/                                    # django-oauth-toolkit
 /oauth/revoke_token/
 /oauth/introspect/
+```
+
+All four `.well-known` routes accept an optional trailing slash and the optional
+`/mcp` path suffix, since clients differ on both.
+
+Session-authenticated management endpoints (used by the frontend):
+
+```
+GET|POST /api/oauth/authorize-request/     # describe / decide a pending consent
+GET      /api/oauth/connections/           # clients holding live tokens for me
+DELETE   /api/oauth/connections/<app_id>/  # revoke access + refresh + grants
+GET|POST /api/mcp/tokens/                  # personal access tokens (reveal-once)
+DELETE   /api/mcp/tokens/<id>/             # revoke one
 ```
 
 ---
@@ -241,15 +257,36 @@ OAuth 2.0:
 
 The MCP server exposes the task tracker to AI agents. Every write path inside an MCP tool runs inside `transaction.atomic` and fires a real-time broadcast, so LLM-driven changes show up live on browsers just like human edits.
 
-### Option 1 — Remote MCP over HTTP (recommended)
+### Option 1 — OAuth (recommended)
 
-Already running. When Daphne is up, the MCP endpoint is served at:
+Nothing to copy around: the client discovers everything, registers itself, and you approve it in the browser once.
+
+**In claude.ai / Claude Desktop** — Settings → Connectors → *Add custom connector*, and paste the MCP URL:
 
 ```
-http://localhost:8000/mcp/
+https://tm-api.cytsoftware.com/mcp
 ```
 
-Set `CYT_MCP_TOKEN` in the environment and connect clients with a matching `Authorization: Bearer <token>` header. An MCP client config (e.g. `.mcp.json`) looks like:
+Then click Connect. What happens:
+
+1. The client gets a `401` carrying `WWW-Authenticate: … resource_metadata="…"`, and follows it to `/.well-known/oauth-protected-resource/mcp`.
+2. From there it finds the authorization server and reads `/.well-known/oauth-authorization-server`.
+3. It self-registers via [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591) at `POST /oauth/register/` — no `client_id` to create by hand.
+4. Your browser opens `/oauth/authorize/`. If you aren't signed in you land on the frontend login page and are returned here afterwards.
+5. You get a consent screen naming the client and the scopes it wants. Approve it.
+6. The client exchanges its code (authorization code + PKCE) and starts calling.
+
+**Reconnects and token refreshes are silent** — no second consent screen — because an existing live token with covering scopes short-circuits the authorize step (`REQUEST_APPROVAL_PROMPT="auto"`).
+
+Writes are attributed to the approving user (`reporter`, `created_by`), and every user-scoped tool (`list_focus`, `register_webhook`, …) works.
+
+Manage connections at **Settings → Connections**: see which clients hold live tokens and disconnect any of them (which clears its access tokens, refresh tokens and pending grants together).
+
+Editor clients (Cursor, VS Code, Zed) work the same way; their custom-scheme and loopback callbacks are permitted (see `ALLOWED_REDIRECT_URI_SCHEMES`).
+
+### Option 2 — Personal access token (for headless clients)
+
+For a client that can't open a browser — Claude Code reading `.mcp.json`, a cron job, CI. Create one at **Settings → Connections → New token**. It is shown once, is revocable, can expire, and can be scoped read-only.
 
 ```json
 {
@@ -258,28 +295,38 @@ Set `CYT_MCP_TOKEN` in the environment and connect clients with a matching `Auth
       "type": "http",
       "url": "https://tm-api.cytsoftware.com/mcp",
       "headers": {
-        "Authorization": "Bearer <CYT_MCP_TOKEN>"
+        "Authorization": "Bearer cyt_mcp_..."
       }
     }
   }
 }
 ```
 
-For per-user attribution, use OAuth 2.0 instead. Create a confidential OAuth app once:
+Unlike the legacy shared token below, this identifies you — so writes are attributed correctly and the user-scoped tools work.
+
+### Option 3 — Static `CYT_MCP_TOKEN` (legacy)
+
+A single shared Bearer set in the environment. Still accepted, but **deprecated**: it names no user, so writes fall back to a heuristic (first superuser) and the user-scoped tools refuse to run; and it can only be rotated by redeploying. Prefer Option 1 or 2.
+
+> `/mcp` refuses requests with no `Authorization` header unless `MCP_ALLOW_ANONYMOUS` is true (it defaults to `DEBUG`). An unset `CYT_MCP_TOKEN` no longer means "open".
+
+### Pre-registering an OAuth client
+
+Only needed for a client that doesn't support dynamic registration:
 
 ```bash
-uv run python manage.py create_mcp_oauth_app
+uv run python manage.py create_mcp_oauth_app --redirect-uri https://example.com/callback
 ```
 
-(This runs idempotently from `entrypoint.sh`, so on Docker it happens on every deploy.) The command prints a `client_id` / `client_secret`. Point your MCP client at the discovery URL `/.well-known/oauth-authorization-server` and it will pick up the `/oauth/authorize/` and `/oauth/token/` endpoints automatically. Clients that support [RFC 7591 dynamic client registration](https://datatracker.ietf.org/doc/html/rfc7591) (Claude Desktop, Cursor, etc.) can self-provision a client via `POST /oauth/register/` without running the management command.
+(Runs idempotently from `entrypoint.sh`.) It prints a `client_id` and, on first creation only, the `client_secret`.
 
-When an MCP request arrives with a valid OAuth Bearer token, writes are attributed to that user (`reporter`, `created_by`).
-
-### Option 2 — Local stdio for Claude Desktop
+### Option 4 — Local stdio for Claude Desktop
 
 ```bash
 uv run python manage.py mcp_serve
 ```
+
+stdio has no `Authorization` header and no OAuth scopes, so it is unrestricted (running it already implies shell access to the host) and writes fall back to the same heuristic as the legacy static token: `CYT_MCP_DEFAULT_USERNAME` → first superuser → first staff → first user.
 
 Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
@@ -442,7 +489,7 @@ Each service is deployed as an independent Dokploy application. The backend cont
 
 Production quirks handled by settings:
 
-- `/.well-known/oauth-authorization-server` forces `https://` in its response when the host is non-loopback, so Traefik's http-to-backend termination doesn't leak through to MCP clients.
+- OAuth metadata and the `/mcp` 401 challenge name `BACKEND_PUBLIC_URL` when set, else derive the origin from the request and force `https://` for non-loopback hosts — so Traefik's http-to-backend termination doesn't leak through to MCP clients (`core/oauth_meta.py`).
 - When `DEBUG=False`, session and CSRF cookies automatically flip to `SameSite=None; Secure` so the frontend (`tm.cytsoftware.com`) and backend (`tm-api.cytsoftware.com`) can share auth across subdomains. Set `COOKIE_DOMAIN=.cytsoftware.com` so both subdomains read the cookie.
 - The frontend Dockerfile passes `NEXT_PUBLIC_API_URL` / `NEXT_PUBLIC_WS_URL` as build args so Next.js can bake them into the bundle.
 

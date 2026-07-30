@@ -50,11 +50,11 @@ docker compose up --build
 
 `backend/core/asgi.py` is the single source of entry for Daphne. It dispatches by scope:
 
-1. **HTTP** requests under `/mcp` → MCP Streamable HTTP app, after a custom Bearer-token check (OAuth access token via `django-oauth-toolkit`, falling back to a static `CYT_MCP_TOKEN`). The authenticated user is stashed in a `ContextVar` (`mcp_authenticated_user`) that MCP tools read to attribute writes.
+1. **HTTP** requests under `/mcp` → MCP Streamable HTTP app, after the auth gate in `apps/mcp_server/auth.py` (OAuth access token → personal access token → legacy static `CYT_MCP_TOKEN`). The authenticated user and its scopes are stashed **on the ASGI scope dict**, which is what tools read back per request; the `mcp_authenticated_user` ContextVar remains only for the stdio transport. See the attribution note below.
 2. **WebSocket** connections → Channels `URLRouter` from `apps/tasks/routing.py` → `TaskConsumer` subscribes to `project_<id>` groups.
 3. **Everything else** → standard Django HTTP (DRF + admin + OAuth URLs).
 
-Because Daphne does not emit ASGI `lifespan` events, `asgi.py` synthesizes a startup message for the MCP app on the first `/mcp` request so its internal task group initializes. Do not remove `_ensure_mcp_lifespan`.
+Because Daphne does not emit ASGI `lifespan` events, `asgi.py` synthesizes a startup message for the MCP app on the first `/mcp` request so its internal task group initializes. Do not remove `_ensure_mcp_lifespan`. Callers **await** a readiness `Event` that is set when the app answers `lifespan.startup.complete` — do not go back to sleeping a fixed interval: the previous version flipped an `_mcp_initialized` flag *before* starting the task and then slept 0.1s, so two requests arriving together at cold start both skipped the wait and the second hit `RuntimeError: Task group is not initialized` → 500.
 
 ### Data model (`apps/tasks/models.py`)
 
@@ -97,14 +97,22 @@ Two triggers call this:
 - **stdio**: `python manage.py mcp_serve` — for Claude Desktop.
 - **Streamable HTTP**: auto-mounted at `/mcp/` by `core/asgi.py` — for remote agents.
 
-Authentication for the HTTP transport is done in `_handle_mcp` in `core/asgi.py`, **not** inside FastMCP — the SDK's built-in DNS rebinding protection is disabled intentionally because we gate on the Bearer token ourselves.
+Authentication for the HTTP transport happens in `_handle_mcp` in `core/asgi.py`, **not** inside FastMCP — the SDK's DNS rebinding protection is disabled intentionally because we gate on the Bearer token ourselves. All credential logic lives in `apps/mcp_server/auth.py`, which accepts, in order: an OAuth access token (validated with DOT's own `AccessToken.is_valid(scopes)`, so expiry *and* scope are checked), an `McpAccessToken` personal token, then the legacy static `CYT_MCP_TOKEN`. It **fails closed**: a request with no `Authorization` header is rejected unless `MCP_ALLOW_ANONYMOUS` (defaults to `DEBUG`).
 
-OAuth is handled by `django-oauth-toolkit` mounted at `/oauth/`, plus two shim views in `core/urls.py`:
+**Attribution is per-request, via the ASGI scope — not a ContextVar.** Over streamable HTTP the session manager spawns one long-lived task per session and anyio copies the context at *session-creation* time, so a module-level ContextVar is pinned to whoever opened the session and every later call on it reads that user. The SDK does thread the per-message Starlette `Request` through to tool handlers (`request_ctx`), and that `Request` wraps the very scope dict the gate annotated — so `server._get_mcp_user()` / `_get_mcp_scopes()` read `scope["cyt_mcp_user"]` / `["cyt_mcp_scopes"]` first and only fall back to the ContextVar for stdio. Don't reintroduce a ContextVar read in tool code.
 
-- `GET /.well-known/oauth-authorization-server` — RFC 8414 metadata (forces HTTPS when behind a reverse proxy for non-localhost hosts).
-- `POST /oauth/register/` — RFC 7591 dynamic client registration, so MCP clients can self-provision a `client_id`/`client_secret`.
+Write **scope** enforcement is one choke point: `_ScopedFastMCP.call_tool` in `server.py` requires `write` for any tool not in `READ_ONLY_TOOLS`. That set lists the *reads*, so a tool added later and forgotten is guarded by default.
 
-`LOGIN_URL` points at the frontend (`/login`) so OAuth's "not logged in" redirect hands off cleanly; in production, `COOKIE_DOMAIN=.cytsoftware.com` lets the session cookie be shared between frontend and backend subdomains.
+OAuth is `django-oauth-toolkit`. `core/urls.py` mounts only its `base_urlpatterns` — the server-rendered application/token management views are dropped (they duplicate `/settings/connections`), which is why `admin.py` sets `view_on_site = False` on `ApplicationAdmin`: `Application.get_absolute_url()` reverses one of the dropped routes. Around it:
+
+- `core/oauth_meta.py` — single source for the public origin. Prefers `BACKEND_PUBLIC_URL`, else derives it from the request and forces HTTPS for non-loopback hosts. Used by both `.well-known` documents and the `/mcp` 401 challenge, which previously hardcoded `tm-api.cytsoftware.com`.
+- `GET /.well-known/oauth-authorization-server[/mcp]` — RFC 8414. Advertises `S256` only, matching `PKCE_REQUIRED`.
+- `GET /.well-known/oauth-protected-resource[/mcp]` — RFC 9728; named by the 401's `resource_metadata`.
+- `POST /oauth/register/` — RFC 7591 dynamic registration. Validates redirect URIs (https, or http on loopback only, or an allowlisted custom scheme), rate-limits per IP, and **dedups public clients** so a reconnect doesn't mint another `Application` row. Confidential clients can't be deduped: DOT hashes `client_secret` on save, so an existing row's plaintext is unrecoverable — capture it *before* `save()` and return that.
+- `apps/mcp_server/oauth_views.py` — `McpAuthorizationView` subclasses DOT's `AuthorizationView` and overrides exactly two things: `handle_no_permission` (redirect to the frontend login with an **absolute** `next`; Django's relative default resolves against the *frontend* origin and 404s) and `render_to_response` (redirect to `/oauth/consent` instead of DOT's template). Everything upstream is untouched, so `skip_authorization` and `REQUEST_APPROVAL_PROMPT="auto"` still short-circuit — which is what makes reconnects silent.
+- `OAuthAuthorizeRequestView` backs that page. It talks to `get_oauthlib_core()` directly rather than subclassing `AuthorizationView` alongside DRF's `APIView` — `FormMixin.initial = {}` would shadow `APIView.initial()`. It re-validates from the **raw query string** on both GET and POST, so client parameters we don't model (`resource`, `nonce`, `claims`) pass through untouched and nothing echoed by the page is trusted.
+
+`LOGIN_URL` points at the frontend (`/login`); in production `COOKIE_DOMAIN=.cytsoftware.com` lets the session cookie be shared between the frontend and backend subdomains.
 
 #### Wiki body writes over MCP (`apps/wiki/content_ops.py`)
 
@@ -141,6 +149,7 @@ The breakpoint is `lg` (1024px); `max-lg:` is the mobile variant throughout. **P
 - **`hover-none:`** is a custom variant for `@media (hover: none)`. Every `opacity-0 group-hover:opacity-100` / `hidden group-hover:*` affordance needs a `hover-none:` counterpart or it is unreachable on touch.
 - **`pt-safe` / `pb-safe`** apply `env(safe-area-inset-*)`; anything anchored to a screen edge needs them because `viewportFit: "cover"` is set.
 - **Drag and drop does not work on touch.** `@atlaskit/pragmatic-drag-and-drop`'s element adapter is the native HTML5 drag API, which never fires from touch input. The board and `/focus` register `draggable()` only under `(pointer: fine)` and offer a long-press → bottom-sheet move instead (`components/kanban/MoveTaskSheet.tsx`, `hooks/use-long-press.ts`). Any new drag surface needs the same touch counterpart.
+- **Standalone routes** (no app chrome) are listed in `STANDALONE_ROUTES` in `Shell.tsx`: `/login` and `/oauth/consent`. The consent page also needs its `next` preserved when the session has expired — `Shell` round-trips the full path + query through `/login?next=…`, because the whole authorization request lives in that query string.
 - **`components/ui/sheet.tsx`** (Base UI, not Radix) is the primitive for edge-anchored overlays; **`components/layout/MasterDetail.tsx`** is the two-pane list⇄detail layout used by wiki, llm-wiki, drive, and both settings rails.
 - Toolbars that scroll horizontally need `shrink-0` on their buttons — `overflow-x-auto` alone just lets flex children compress.
 
@@ -151,7 +160,9 @@ Backend (see `core/settings.py`):
 - `SECRET_KEY`, `ALLOWED_HOSTS`, `DEBUG`
 - `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` — comma-separated. Defaults target `http://localhost:3000`.
 - `COOKIE_DOMAIN` — set to `.cytsoftware.com` in prod so session cookies work across the frontend/backend subdomain split. In prod (`DEBUG=False`) the settings automatically flip to `SameSite=None; Secure`.
-- `CYT_MCP_TOKEN` — static Bearer for the HTTP MCP endpoint. Empty = open (local dev only).
+- `CYT_MCP_TOKEN` — **legacy** shared Bearer for the HTTP MCP endpoint. Names no user, so writes fall back to a heuristic and user-scoped tools refuse. Prefer OAuth or a personal access token.
+- `MCP_ALLOW_ANONYMOUS` — allow `/mcp` with no `Authorization` header. Defaults to `DEBUG`; an empty `CYT_MCP_TOKEN` no longer means "open".
+- `BACKEND_PUBLIC_URL` — this deployment's public origin for OAuth metadata and the `/mcp` 401. Falls back to per-request derivation; set it in prod.
 - `CYT_BROADCAST_SECRET` — shared secret for the cross-process broadcast bridge.
 - `CYT_BROADCAST_URL` — set in the MCP stdio process so broadcasts reach Daphne via HTTP.
 - `FRONTEND_URL` — used to build `LOGIN_URL` for OAuth redirects, and the default for `WIKI_ENCODE_URL`.
@@ -177,7 +188,9 @@ The two `NEXT_PUBLIC_*` vars are baked in at `next build` time — the Dockerfil
 - Shared `apps/tasks/query.py` is mandatory — don't reimplement task filters in a viewset or MCP tool.
 - `broadcast_task_event` is fire-and-forget and must not throw; any new write path needs a matching broadcast call to keep browsers in sync.
 - `apps.tasks.notifications.notify_task_event` is the same fire-and-forget contract, for per-user `Notification` rows + the `ws/notifications/` push (verbs: `assigned`, `updated`, `moved`, `completed`, `deleted`). Every task write path that calls `broadcast_task_event` should also call this — recipients default to the task's assignees minus the acting user. It reuses `apps.tasks.broadcast`'s cross-process bridge (`broadcast_to_group`, `scope: "group"` on `/api/internal/broadcast/`) so it works from the MCP stdio process too.
-- When adding a new MCP write tool, read the user from `mcp_authenticated_user.get(None)` via `_get_mcp_user()` in `server.py` and pass it through to the underlying helper so writes are attributed correctly.
+- When adding a new MCP write tool, get the caller via `_get_mcp_user()` in `server.py` and pass it through to the underlying helper so writes are attributed correctly. Do **not** read `mcp_authenticated_user` directly — it is session-scoped, not request-scoped (see the MCP server section).
+- Any new MCP tool that only reads must be added to `READ_ONLY_TOOLS` in `server.py`, or a read-only credential won't be able to call it. Anything omitted is treated as a write.
+- `backend/apps/mcp_server/tests.py` is the one real Django test suite (`uv run python manage.py test apps.mcp_server`). Extend it when touching auth — every defect it covers shipped to production once already.
 - `Task.save()` runs key generation inside a transaction only on first save; don't set `key` manually.
 - Never write the wiki body (`DocState`/`content`) by re-encoding the CRDT in Python — it diverges from the editor. Route body writes through `apps.wiki.content_ops.apply_content` (→ the frontend encoder). If you add a node type to the editor, mirror it in `frontend/src/components/wiki/wiki-schema.ts` or MCP-written content will lose it.
 - Phase 1 uses SQLite + `channels.layers.InMemoryChannelLayer` + `locmem` cache. Swapping to Postgres/Redis is planned — don't bake assumptions that would break the swap (e.g. SQLite-only SQL).
