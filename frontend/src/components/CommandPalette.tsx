@@ -35,6 +35,7 @@ import {
   FolderKanban,
   Search,
   Terminal,
+  X,
 } from "lucide-react";
 
 import { apiFetch } from "@/lib/api";
@@ -400,8 +401,10 @@ export function CommandPalette({ open, onClose }: Props) {
         onClick={onClose}
       />
 
-      {/* Dialog */}
-      <div className="absolute top-[12%] left-1/2 -translate-x-1/2 w-full max-w-xl mx-auto px-4">
+      {/* Dialog — below lg it docks near the top with safe-area padding and
+          tighter gutters, since the virtual keyboard eats the bottom half of
+          the screen. */}
+      <div className="absolute top-[12%] left-1/2 -translate-x-1/2 w-full max-w-xl mx-auto px-4 max-lg:top-0 max-lg:mt-2 max-lg:px-2 max-lg:pt-safe">
         <div className="rounded-xl border border-border bg-popover text-popover-foreground shadow-2xl ring-1 ring-foreground/5 overflow-hidden">
           {/* Input row */}
           <div className="flex items-center gap-2 px-3 border-b border-border/60">
@@ -418,14 +421,29 @@ export function CommandPalette({ open, onClose }: Props) {
               className="flex-1 h-12 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               spellCheck={false}
               autoComplete="off"
+              inputMode="search"
+              enterKeyHint="go"
             />
-            <kbd className="hidden sm:inline-flex items-center text-[10px] font-mono text-muted-foreground/60 border border-border/60 rounded px-1 py-0.5 shrink-0">
+            <kbd className="hidden lg:inline-flex items-center text-[10px] font-mono text-muted-foreground/60 border border-border/60 rounded px-1 py-0.5 shrink-0">
               ESC
             </kbd>
+            {/* Touch-only close affordance — the backdrop tap still works,
+                but there's no visible ESC hint below lg. */}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="lg:hidden size-8 grid place-items-center tap-target shrink-0 text-muted-foreground"
+            >
+              <X className="size-4" />
+            </button>
           </div>
 
           {/* Results */}
-          <div ref={listRef} className="max-h-[60vh] overflow-y-auto py-1">
+          <div
+            ref={listRef}
+            className="max-h-[60vh] max-lg:max-h-[50dvh] overflow-y-auto py-1"
+          >
             {entries.map((entry, i) => {
               const active = i === clampedIndex;
               const firstOfKind = (pred: (e: Entry) => boolean) =>
@@ -477,7 +495,7 @@ export function CommandPalette({ open, onClose }: Props) {
                     type="button"
                     data-result-index={i}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 text-left text-[13px] transition-colors cursor-pointer group",
+                      "w-full flex items-center gap-3 px-3 py-2 max-lg:py-2.5 text-left text-[13px] transition-colors cursor-pointer group",
                       active
                         ? "bg-accent text-accent-foreground"
                         : "text-foreground hover:bg-accent/50",
@@ -530,8 +548,8 @@ export function CommandPalette({ open, onClose }: Props) {
             )}
           </div>
 
-          {/* Footer hints */}
-          <div className="flex items-center gap-3 px-3 h-8 border-t border-border/60 bg-muted/30 text-[11px] text-muted-foreground">
+          {/* Footer hints — keyboard-only affordance, hidden on touch */}
+          <div className="max-lg:hidden flex items-center gap-3 px-3 h-8 border-t border-border/60 bg-muted/30 text-[11px] text-muted-foreground">
             <Hint keys={["↑", "↓"]} label="navigate" />
             <Hint keys={["↵"]} label="run" />
             <Hint keys={["esc"]} label="close" />
