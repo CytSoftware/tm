@@ -22,14 +22,64 @@ from mcp.server.transport_security import TransportSecuritySettings
 from . import tools
 
 
+def _current_request_scope():
+    """The ASGI scope of the MCP message being handled, or ``None``.
+
+    The SDK threads the per-message Starlette ``Request`` from
+    ``streamable_http.py`` through ``lowlevel.server``'s ``request_ctx``, and
+    that ``Request`` wraps the very same scope dict our ASGI gate annotated.
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+
+        request = request_ctx.get().request
+    except (ImportError, LookupError, AttributeError):
+        return None
+    return getattr(request, "scope", None)
+
+
 def _get_mcp_user():
-    """Return the OAuth-authenticated user for the current MCP request, or None."""
+    """Return the authenticated user for the current MCP request, or None.
+
+    Reads the **per-request** ASGI scope first. This matters: over streamable
+    HTTP the session manager spawns one long-lived task per session and anyio
+    copies the context at session-creation time, so the module-level ContextVar
+    is pinned to whoever opened the session — every later call on that session
+    would be attributed to them. The scope dict, in contrast, is the one
+    belonging to the message actually being handled.
+
+    The ContextVar remains the fallback for the stdio transport, which has no
+    ASGI scope at all.
+    """
+    from .auth import SCOPE_USER_KEY
+
+    scope = _current_request_scope()
+    if scope is not None and SCOPE_USER_KEY in scope:
+        return scope[SCOPE_USER_KEY]
+
     from core.asgi import mcp_authenticated_user
+
     return mcp_authenticated_user.get(None)
 
+
+def _get_mcp_scopes():
+    """OAuth scopes granted to the current MCP request.
+
+    Returns ``None`` when unknown (stdio, or a transport that never went through
+    the ASGI gate), which callers treat as "unrestricted" — stdio access already
+    implies shell access to the host.
+    """
+    from .auth import SCOPE_SCOPES_KEY
+
+    scope = _current_request_scope()
+    if scope is not None and SCOPE_SCOPES_KEY in scope:
+        return scope[SCOPE_SCOPES_KEY]
+    return None
+
+
 # Disable the MCP SDK's built-in DNS rebinding protection entirely.
-# We already authenticate via Bearer token (CYT_MCP_TOKEN) in our own
-# ASGI middleware, so the SDK's Host/Origin validation is redundant and
+# We authenticate every /mcp request ourselves in core/asgi.py (see
+# apps.mcp_server.auth), so the SDK's Host/Origin validation is redundant and
 # causes 421/403 rejections for legitimate remote clients.
 _SERVER_INSTRUCTIONS = """Cyt Task Manager — tasks, the collaborative wiki, the Drive \
 (Backblaze B2), and the LLM wiki.
@@ -46,7 +96,76 @@ other pages with `[[path/to/page]]` wikilinks.
 - The `index` catalog and `log` are auto-maintained by the server — never write them.
 Never file secrets/credentials/tokens or personal (non-business) content in the wiki."""
 
-mcp = FastMCP(
+#: Tools that only read. Everything else is treated as a write and requires the
+#: ``write`` scope.
+#:
+#: Listing the *reads* rather than the writes is deliberate: a tool added later
+#: and forgotten here is guarded by default. The failure mode is then "a
+#: read-only token can't call a new read tool" — visible and harmless — instead
+#: of "a read-only token can write", which is neither.
+READ_ONLY_TOOLS = frozenset({
+    "drive_list",
+    "drive_read",
+    "get_bet",
+    "get_task",
+    "get_throughput",
+    "get_weekly_completions",
+    "get_wiki_doc",
+    "knowledge_list",
+    "knowledge_read",
+    "knowledge_schema",
+    "knowledge_sources",
+    "list_bets",
+    "list_columns",
+    "list_focus",
+    "list_labels",
+    "list_projects",
+    "list_recurring_tasks",
+    "list_tasks",
+    "list_users",
+    "list_views",
+    "list_webhook_deliveries",
+    "list_webhooks",
+    "list_wiki_docs",
+    "preview_recurring_task",
+    "query_view",
+})
+
+
+class _ScopedFastMCP(FastMCP):
+    """FastMCP with OAuth scope enforcement on tool calls.
+
+    ``/mcp`` admits any credential carrying ``read`` so a read-only client can
+    connect and browse; this is where the ``write`` scope is actually required.
+    Overriding ``call_tool`` gives one choke point for all 60-odd tools rather
+    than a guard duplicated in each.
+    """
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]):
+        if name not in READ_ONLY_TOOLS:
+            _require_write_scope(name)
+        return await super().call_tool(name, arguments)
+
+
+def _require_write_scope(tool_name: str) -> None:
+    """Raise unless the current MCP credential carries the ``write`` scope.
+
+    A caller with no scope information (the stdio transport) is unrestricted —
+    running stdio already implies shell access to this host.
+    """
+    scopes = _get_mcp_scopes()
+    if scopes is None:
+        return
+    if "write" not in set(scopes):
+        granted = ", ".join(sorted(scopes)) or "none"
+        raise ValueError(
+            f"{tool_name} modifies data, but this connection is read-only "
+            f"(granted scopes: {granted}). Reconnect and approve the 'write' "
+            "scope, or use a personal access token that has it."
+        )
+
+
+mcp = _ScopedFastMCP(
     "cyt-task-tracker",
     instructions=_SERVER_INSTRUCTIONS,
     transport_security=TransportSecuritySettings(
