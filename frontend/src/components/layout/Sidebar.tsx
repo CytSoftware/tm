@@ -227,7 +227,10 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           </SidebarGroup>
         )}
         <SidebarGroup title="Workspace" collapsed={isCollapsed}>
-          <NotificationInbox collapsed={isCollapsed} onNavigate={onClose} />
+          <NotificationInbox
+            variant={isCollapsed ? "sidebar-collapsed" : "sidebar"}
+            onNavigate={onClose}
+          />
           <NavLink
             icon={
               <Home

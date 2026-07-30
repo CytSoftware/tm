@@ -3,28 +3,29 @@
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Menu, Search as SearchIcon } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { CommandPalette } from "@/components/CommandPalette";
 import { GlobalShortcuts } from "@/components/GlobalShortcuts";
+import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { meKey, myTasksKey, toReviewKey } from "@/lib/query-keys";
 import { fetchMe } from "@/lib/auth";
 import { ensureCsrfCookie } from "@/lib/api";
 import { connectNotificationSocket } from "@/lib/ws";
 import { usePalette } from "@/lib/palette";
 import { useSidebar } from "@/lib/sidebar-state";
-import { TaskDialogProvider } from "@/lib/task-dialog";
+import { TaskDialogProvider, useTaskDialog } from "@/lib/task-dialog";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { prependNotification } from "@/hooks/use-notifications";
 import { Sidebar } from "./Sidebar";
+import { BottomBar } from "./BottomBar";
 
 /**
  * App shell.
  *
  * One DOM, switched by CSS at `lg` (1024px):
- *   ≥lg   <Sidebar> inline (toggleable width), mobile top-bar hidden
- *   <lg   top-bar with hamburger, <Sidebar> in a left Sheet
+ *   ≥lg   <Sidebar> inline (toggleable width), mobile chrome hidden
+ *   <lg   slim brand top-bar + <BottomBar> primary nav, <Sidebar> in a left
+ *         Sheet (opened from the bottom bar's Menu slot)
  *
  * This used to branch in JS on `useMediaQuery("(min-width: 1024px)")`, which
  * server-renders `false` — so *every* device, desktop included, painted the
@@ -166,19 +167,11 @@ export function Shell({ children }: { children: ReactNode }) {
           <Sidebar user={user} />
         </div>
 
-        {/* Top-bar with hamburger — mobile only */}
+        {/* Slim brand top-bar — mobile only. Navigation now lives in
+            <BottomBar>, so this is just the brand mark + the inbox bell. */}
         {/* `min-h` + `pt-safe` rather than a fixed `h`: under viewport-fit=cover
             the bar has to grow by the status-bar inset, not squash into it. */}
-        <header className="lg:hidden shrink-0 min-h-12 pt-safe flex items-center gap-2 px-2 border-b border-border/80 bg-background">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 tap-target"
-            onClick={() => setMobileOpen(true)}
-            aria-label="Open sidebar"
-          >
-            <Menu className="size-4" />
-          </Button>
+        <header className="lg:hidden shrink-0 min-h-12 pt-safe flex items-center gap-2 px-3 border-b border-border/80 bg-background">
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
             <div className="size-5 rounded-[4px] bg-foreground grid place-items-center text-background text-[9px] font-semibold">
               C
@@ -187,20 +180,22 @@ export function Shell({ children }: { children: ReactNode }) {
               Cyt
             </span>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 tap-target"
-            onClick={() => setPaletteOpen(true)}
-            aria-label="Search"
-          >
-            <SearchIcon className="size-4" />
-          </Button>
+          <NotificationInbox variant="topbar" />
         </header>
 
         <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-background">
           {children}
         </main>
+
+        {/* Bottom nav bar — mobile only. Rendered inside TaskDialogProvider
+            (see the return below), so the Quick Add wiring lives in a small
+            inner component that can call useTaskDialog(); Shell itself sits
+            *outside* the provider it returns and can't call the hook
+            directly. */}
+        <MobileBottomBar
+          onSearch={() => setPaletteOpen(true)}
+          onMenu={() => setMobileOpen(true)}
+        />
 
         {/* Nav drawer — mobile only. The Sheet brings the focus trap, scroll
             lock and Escape handling the old hand-rolled overlay lacked. */}
@@ -224,5 +219,29 @@ export function Shell({ children }: { children: ReactNode }) {
         onClose={() => setPaletteOpen(false)}
       />
     </TaskDialogProvider>
+  );
+}
+
+/**
+ * Thin wrapper so <BottomBar> (dumb, no context deps) can still fire the
+ * global "create task" flow. It has to be its own component — not inlined
+ * as a callback in Shell — because useTaskDialog() is only valid inside
+ * <TaskDialogProvider>, and Shell's own function body runs *outside* the
+ * provider it returns.
+ */
+function MobileBottomBar({
+  onSearch,
+  onMenu,
+}: {
+  onSearch: () => void;
+  onMenu: () => void;
+}) {
+  const { createTask } = useTaskDialog();
+  return (
+    <BottomBar
+      onQuickAdd={() => createTask()}
+      onSearch={onSearch}
+      onMenu={onMenu}
+    />
   );
 }
