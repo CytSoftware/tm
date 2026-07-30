@@ -3,8 +3,9 @@
 /**
  * Bell + unread badge + inbox popover — mounted as the first entry in the
  * sidebar nav (see Sidebar.tsx) so it's visible in both the collapsed
- * (icon + dot) and expanded (icon + label + count badge) desktop rail, and
- * in the mobile overlay sidebar.
+ * (icon + dot) and expanded (icon + label + count badge) desktop rail, in
+ * the mobile overlay sidebar, and (as `variant="topbar"`) in the mobile
+ * slim top bar (see Shell.tsx).
  *
  * Row rendering + click behavior live in NotificationRow (shared with the
  * dashboard activity feed).
@@ -28,12 +29,12 @@ import {
 } from "@/hooks/use-notifications";
 
 type Props = {
-  collapsed: boolean;
+  variant: "sidebar" | "sidebar-collapsed" | "topbar";
   /** Mobile overlay close callback — called after a row navigates. */
   onNavigate?: () => void;
 };
 
-export function NotificationInbox({ collapsed, onNavigate }: Props) {
+export function NotificationInbox({ variant, onNavigate }: Props) {
   const [open, setOpen] = useState(false);
   const query = useNotificationsInfinite();
   const markAllRead = useMarkAllNotificationsRead();
@@ -44,48 +45,67 @@ export function NotificationInbox({ collapsed, onNavigate }: Props) {
   );
   const unreadCount = unreadCountFrom(query.data);
   const badgeLabel = unreadCount > 9 ? "9+" : String(unreadCount);
+  const collapsed = variant === "sidebar-collapsed";
 
-  const triggerButton = (
-    <button
-      type="button"
-      aria-label={unreadCount > 0 ? `Inbox, ${unreadCount} unread` : "Inbox"}
-      className={cn(
-        "relative transition-colors text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
-        collapsed
-          ? "w-full grid place-items-center py-1.5 rounded-md"
-          : "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px]",
-        open && "bg-sidebar-accent text-sidebar-accent-foreground",
-      )}
-    >
-      <Bell
-        className={collapsed ? "size-4" : "size-3.5 shrink-0 text-muted-foreground"}
-      />
-      {collapsed ? (
-        unreadCount > 0 && (
+  const triggerButton =
+    variant === "topbar" ? (
+      <button
+        type="button"
+        aria-label={unreadCount > 0 ? `Inbox, ${unreadCount} unread` : "Inbox"}
+        className={cn(
+          "tap-target relative size-8 rounded-md grid place-items-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors",
+          open && "bg-muted text-foreground",
+        )}
+      >
+        <Bell className="size-4" />
+        {unreadCount > 0 && (
           <span
-            className="absolute top-1 right-2 size-1.5 rounded-full bg-primary"
+            className="absolute top-1 right-1 size-1.5 rounded-full bg-primary"
             aria-hidden
           />
-        )
-      ) : (
-        <>
-          <span className="truncate flex-1 text-left">Inbox</span>
-          {unreadCount > 0 && (
-            <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-medium grid place-items-center tabular-nums">
-              {badgeLabel}
-            </span>
-          )}
-        </>
-      )}
-    </button>
-  );
+        )}
+      </button>
+    ) : (
+      <button
+        type="button"
+        aria-label={unreadCount > 0 ? `Inbox, ${unreadCount} unread` : "Inbox"}
+        className={cn(
+          "relative transition-colors text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
+          collapsed
+            ? "w-full grid place-items-center py-1.5 rounded-md"
+            : "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px]",
+          open && "bg-sidebar-accent text-sidebar-accent-foreground",
+        )}
+      >
+        <Bell
+          className={collapsed ? "size-4" : "size-3.5 shrink-0 text-muted-foreground"}
+        />
+        {collapsed ? (
+          unreadCount > 0 && (
+            <span
+              className="absolute top-1 right-2 size-1.5 rounded-full bg-primary"
+              aria-hidden
+            />
+          )
+        ) : (
+          <>
+            <span className="truncate flex-1 text-left">Inbox</span>
+            {unreadCount > 0 && (
+              <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-medium grid place-items-center tabular-nums">
+                {badgeLabel}
+              </span>
+            )}
+          </>
+        )}
+      </button>
+    );
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={triggerButton} />
       <PopoverContent
-        side="right"
-        align="start"
+        side={variant === "topbar" ? "bottom" : "right"}
+        align={variant === "topbar" ? "end" : "start"}
         sideOffset={8}
         className="w-[min(380px,calc(100vw-1rem))] max-h-[70dvh] flex flex-col p-0 gap-0"
       >
