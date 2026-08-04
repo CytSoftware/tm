@@ -39,6 +39,11 @@ export const toReviewKey = () => ["tasks", "to-review"] as const;
  *  Lives under ["tasks"] so mutation invalidations refresh it. */
 export const unclaimedReviewsKey = () => ["tasks", "unclaimed-reviews"] as const;
 
+/** Everything sitting in a review-kind column across all projects, whoever
+ *  the reviewer is — backs the "In review with others" section on the To
+ *  Review page. Lives under ["tasks"] so mutation invalidations refresh it. */
+export const allInReviewKey = () => ["tasks", "all-in-review"] as const;
+
 export const viewsKey = () => ["views"] as const;
 
 export const usersKey = () => ["users"] as const;
