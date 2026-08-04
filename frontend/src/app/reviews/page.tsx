@@ -1,23 +1,29 @@
 "use client";
 
 /**
- * /reviews — the user's personal "To Review" queue.
+ * /reviews — the whole review landscape, across every project.
  *
- * Cross-project list of everything waiting on the current user's review,
- * split into three sections (each task appears in exactly one):
+ * Sections, in "how much does this need me" order (each task appears in
+ * exactly one — later sections subtract the earlier ones by task id):
  *
  *  - "PRs awaiting your review" — tasks with at least one open linked PR
  *    whose GitHub reviewer is me. The PR badges link straight to GitHub.
  *  - "Tasks to review" — the rest of ``reviewer=me`` (manual reviewer
  *    assignments, or a reviewer left set after the PR closed).
  *  - "Unclaimed reviews" (TAS-064) — tasks sitting in a review-kind column
- *    with no reviewer claimed yet, across all projects. Anyone can claim one
- *    to become its reviewer.
+ *    with no reviewer claimed yet. Anyone can claim one to become its
+ *    reviewer.
+ *  - "In review with others" (TAS-067) — everything else in a review-kind
+ *    column, i.e. someone else's queue. Read-only context: it answers "is
+ *    my PR being looked at" without pinging anyone.
  *
  * Data comes from ``/api/tasks/?reviewer=me`` (TAS-011 rule engine sets
- * ``Task.reviewer`` on ``review_requested`` webhooks) and, for unclaimed
- * reviews, ``/api/tasks/?reviewer=none&column_kind=review``. Rows open the
- * global task overlay in place.
+ * ``Task.reviewer`` on ``review_requested`` webhooks), ``?reviewer=none&
+ * column_kind=review`` for unclaimed reviews, and ``?column_kind=review``
+ * for the workspace-wide set. Rows open the global task overlay in place.
+ *
+ * Note the sidebar's "To Review" badge deliberately stays the needs-you
+ * count — the others section is context, not a queue.
  */
 
 import { useMemo } from "react";
@@ -26,13 +32,23 @@ import { GitPullRequest } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { LinkedPRBadge } from "@/components/integrations/LinkedPRBadge";
-import { useClaimReview, useToReviewQuery, useUnclaimedReviewsQuery } from "@/hooks/use-tasks";
+import { UserAvatar } from "@/components/UserAvatar";
+import { formatDuration } from "@/components/task/TimeInColumn";
+import {
+  useAllInReviewQuery,
+  useClaimReview,
+  useToReviewQuery,
+  useUnclaimedReviewsQuery,
+} from "@/hooks/use-tasks";
 import { ApiError } from "@/lib/api";
 import { fetchMe } from "@/lib/auth";
 import { meKey } from "@/lib/query-keys";
 import { useTaskDialog } from "@/lib/task-dialog";
-import type { LinkedPR, Task } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { PRIORITY_DOT, PRIORITY_TEXT } from "@/lib/types";
+import type { LinkedPR, Task, User } from "@/lib/types";
 
 /** PRs that are actionable review targets — open (drafts included: a review
  *  request on a draft is still a request). */
@@ -40,18 +56,35 @@ function openPRs(task: Task): LinkedPR[] {
   return task.linked_prs.filter((pr) => pr.state === "open" && !pr.merged);
 }
 
+/** "2h ago" / "3d ago" from an ISO timestamp, reusing the compact duration
+ *  formatter the card/notification rows already share. `formatDuration`
+ *  returns "just now" under a minute, which already reads as past tense. */
+function relativeSince(iso: string): string {
+  const d = formatDuration(iso);
+  return d === "just now" ? d : `${d} ago`;
+}
+
 export default function ReviewsPage() {
   const tasksQuery = useToReviewQuery();
   const unclaimedQuery = useUnclaimedReviewsQuery();
+  const allInReviewQuery = useAllInReviewQuery();
   const meQuery = useQuery({ queryKey: meKey(), queryFn: fetchMe });
   const claim = useClaimReview();
 
   const tasks = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data]);
-  const unclaimedTasks = useMemo(
-    () => unclaimedQuery.data ?? [],
-    [unclaimedQuery.data],
+  // The three fetches land independently, so a reviewer change between them
+  // can leave the same task in two responses. Each list subtracts the ones
+  // above it by id, which is what makes the "exactly one section" rule hold.
+  const unclaimedTasks = useMemo(() => {
+    const mine = new Set(tasks.map((t) => t.id));
+    return (unclaimedQuery.data ?? []).filter((t) => !mine.has(t.id));
+  }, [unclaimedQuery.data, tasks]);
+  const allInReview = useMemo(
+    () => allInReviewQuery.data ?? [],
+    [allInReviewQuery.data],
   );
   const githubLogin = (meQuery.data?.github_username ?? "").toLowerCase();
+  const meId = meQuery.data?.id;
 
   const { prTasks, otherTasks } = useMemo(() => {
     const awaitsMyPrReview = (t: Task) =>
@@ -66,12 +99,37 @@ export default function ReviewsPage() {
     return { prTasks, otherTasks };
   }, [tasks, githubLogin]);
 
+  // Someone else's queue: the workspace-wide set minus everything already
+  // rendered above. Tasks whose reviewer is me are dropped even if the
+  // reviewer=me fetch hasn't caught up yet — better a row missing for one
+  // poll than my own review filed under "other people".
+  const othersTasks = useMemo(() => {
+    if (meId == null) return [];
+    const shown = new Set([...tasks, ...unclaimedTasks].map((t) => t.id));
+    return allInReview.filter(
+      (t) => t.reviewer != null && t.reviewer.id !== meId && !shown.has(t.id),
+    );
+  }, [allInReview, tasks, unclaimedTasks, meId]);
+
   const showGithubHint =
     meQuery.data != null && meQuery.data.github_username === "";
 
-  const isLoading = tasksQuery.isLoading || unclaimedQuery.isLoading;
-  const isEmpty =
-    !isLoading && tasks.length === 0 && unclaimedTasks.length === 0;
+  // `Shell` gates the whole tree on `me`, so `meId` is resolved by the time
+  // this renders — only the task queries can be in flight here.
+  const needsMeCount = tasks.length + unclaimedTasks.length;
+  const needsMeLoading = tasksQuery.isLoading || unclaimedQuery.isLoading;
+  // The workspace-wide query is secondary: it must not hold back the queue
+  // sections, which the sidebar usually has cached already. It only gates
+  // the spinner when there'd be nothing on screen without it.
+  const isLoading =
+    needsMeLoading || (needsMeCount === 0 && allInReviewQuery.isLoading);
+  const loadFailed =
+    tasksQuery.isError || unclaimedQuery.isError || allInReviewQuery.isError;
+
+  // Two distinct "nothing here" states: a genuinely quiet workspace, versus
+  // a clear personal queue while other people still have work in review.
+  const queueClear = !isLoading && needsMeCount === 0;
+  const isEmpty = queueClear && othersTasks.length === 0;
 
   function handleClaim(task: Task) {
     claim.mutate(task.key, {
@@ -92,8 +150,8 @@ export default function ReviewsPage() {
         <GitPullRequest className="size-4 text-emerald-500" />
         <h1 className="text-[13px] font-semibold tracking-tight">To Review</h1>
         <span className="hidden md:inline text-[11px] text-muted-foreground">
-          PRs and tasks waiting on your review, plus unclaimed reviews anyone
-          can pick up, across all projects.
+          Everything in review across all projects — what&apos;s waiting on
+          you, what&apos;s unclaimed, and what others are reviewing.
         </span>
       </header>
 
@@ -113,14 +171,28 @@ export default function ReviewsPage() {
             </div>
           ) : isEmpty ? (
             <div className="rounded-lg border border-border/60 bg-card py-14 px-6 text-center text-[12.5px] text-muted-foreground">
-              Nothing waiting on your review.
+              {loadFailed
+                ? "Couldn't load reviews. Retrying shortly."
+                : "Nothing is in review anywhere right now."}
             </div>
           ) : (
             <>
-              <ReviewSection
-                title="PRs awaiting your review"
-                tasks={prTasks}
-              />
+              {/* Queue clear, but the workspace isn't — say so, then still
+                  render the others section underneath as context. */}
+              {queueClear && (
+                <div className="rounded-lg border border-border/60 bg-card py-8 px-6 text-center">
+                  <p className="text-[12.5px] font-medium">
+                    Nothing needs your review.
+                  </p>
+                  <p className="mt-1 text-[11.5px] text-muted-foreground">
+                    {othersTasks.length}{" "}
+                    {othersTasks.length === 1 ? "task is" : "tasks are"} in
+                    review with other people.
+                  </p>
+                </div>
+              )}
+
+              <ReviewSection title="PRs awaiting your review" tasks={prTasks} />
               <ReviewSection title="Tasks to review" tasks={otherTasks} />
               <ReviewSection
                 title="Unclaimed reviews"
@@ -129,7 +201,7 @@ export default function ReviewsPage() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-6 px-2 text-[11px]"
+                    className="h-6 px-2 text-[11px] tap-target"
                     disabled={claim.isPending}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -139,6 +211,12 @@ export default function ReviewsPage() {
                     Claim
                   </Button>
                 )}
+              />
+              <ReviewSection
+                title="In review with others"
+                tasks={othersTasks}
+                showReviewer
+                subdued
               />
             </>
           )}
@@ -152,12 +230,20 @@ function ReviewSection({
   title,
   tasks,
   renderAction,
+  showReviewer,
+  subdued,
 }: {
   title: string;
   tasks: Task[];
   /** Optional per-row action (e.g. the "Claim" button for unclaimed
    *  reviews), rendered at the end of each row. */
   renderAction?: (task: Task) => React.ReactNode;
+  /** Surface the reviewer avatar + name on each row. Only "In review with
+   *  others" needs it — everywhere else the reviewer is me or nobody. */
+  showReviewer?: boolean;
+  /** Read-only context rather than a queue: flattened card, dimmed titles.
+   *  Still full-contrast enough to read — just clearly not actionable. */
+  subdued?: boolean;
 }) {
   if (tasks.length === 0) return null;
   return (
@@ -166,13 +252,22 @@ function ReviewSection({
         {title}
         <span className="tabular-nums">{tasks.length}</span>
       </h2>
-      <div className="rounded-lg border border-border/60 bg-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+      <div
+        className={cn(
+          "rounded-lg border",
+          subdued
+            ? "border-border/40 bg-card/50"
+            : "border-border/60 bg-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
+        )}
+      >
         <ul className="px-3 py-2">
           {tasks.map((t) => (
             <ReviewRow
               key={t.id}
               task={t}
               action={renderAction?.(t)}
+              showReviewer={showReviewer}
+              subdued={subdued}
             />
           ))}
         </ul>
@@ -181,7 +276,17 @@ function ReviewSection({
   );
 }
 
-function ReviewRow({ task, action }: { task: Task; action?: React.ReactNode }) {
+function ReviewRow({
+  task,
+  action,
+  showReviewer,
+  subdued,
+}: {
+  task: Task;
+  action?: React.ReactNode;
+  showReviewer?: boolean;
+  subdued?: boolean;
+}) {
   const { openTaskByKey } = useTaskDialog();
   const prs = openPRs(task);
 
@@ -211,19 +316,104 @@ function ReviewRow({ task, action }: { task: Task; action?: React.ReactNode }) {
         <span className="font-mono text-[11px] text-muted-foreground shrink-0">
           {task.key}
         </span>
-        <span className="min-w-0 flex-1 basis-40 truncate text-[12.5px]">
+        {task.priority && (
+          <span
+            className={cn(
+              "shrink-0 inline-flex items-center gap-1 font-mono text-[10px] font-semibold tracking-wider",
+              PRIORITY_TEXT[task.priority],
+            )}
+            title={`Priority ${task.priority}`}
+          >
+            <span
+              className={cn("size-2 rounded-full", PRIORITY_DOT[task.priority])}
+            />
+            {task.priority}
+          </span>
+        )}
+        <span
+          className={cn(
+            "min-w-0 flex-1 basis-40 truncate text-[12.5px]",
+            subdued && "text-muted-foreground",
+          )}
+        >
           {task.title}
         </span>
         {prs.map((pr) => (
           <LinkedPRBadge key={pr.id} pr={pr} />
         ))}
+        {showReviewer && task.reviewer && (
+          <ReviewerChip reviewer={task.reviewer} />
+        )}
+        <AssigneeAvatars assignees={task.assignees} />
         {task.column && (
           <span className="shrink-0 text-[10.5px] text-muted-foreground">
             {task.column.name}
           </span>
         )}
+        <span
+          className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground/70"
+          title={new Date(task.updated_at).toLocaleString()}
+        >
+          {relativeSince(task.updated_at)}
+        </span>
         {action}
       </div>
     </li>
+  );
+}
+
+/** The reviewer, named — this is the whole point of the "In review with
+ *  others" section, so unlike the kanban card's bare avatar it carries the
+ *  username inline at every width (the row wraps rather than dropping it;
+ *  "who has it" is the one thing this section exists to answer). Emerald,
+ *  matching the card's `ReviewerAvatar`, so it doesn't read as another
+ *  assignee. */
+function ReviewerChip({ reviewer }: { reviewer: User }) {
+  return (
+    <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 py-0.5 pl-0.5 pr-2">
+      <UserAvatar
+        username={reviewer.username}
+        avatarUrl={reviewer.avatar_url}
+        size="size-5"
+      />
+      <span className="max-w-24 truncate text-[11px] text-emerald-700 dark:text-emerald-400">
+        {reviewer.username}
+      </span>
+    </span>
+  );
+}
+
+/** Who the work belongs to, at a glance. Capped at two avatars + a `+N`
+ *  bubble so the row stays one line on desktop. */
+function AssigneeAvatars({ assignees }: { assignees: User[] }) {
+  const VISIBLE = 2;
+  if (assignees.length === 0) return null;
+  const shown = assignees.slice(0, VISIBLE);
+  const extra = assignees.length - shown.length;
+
+  return (
+    <div className="shrink-0 flex items-center -space-x-1.5">
+      {shown.map((u) => (
+        <Tooltip key={u.id}>
+          <TooltipTrigger
+            render={
+              <div className="ring-2 ring-card rounded-full">
+                <UserAvatar
+                  username={u.username}
+                  avatarUrl={u.avatar_url}
+                  size="size-5"
+                />
+              </div>
+            }
+          />
+          <TooltipContent>{u.username}</TooltipContent>
+        </Tooltip>
+      ))}
+      {extra > 0 && (
+        <div className="size-5 ring-2 ring-card rounded-full bg-muted text-[9px] font-semibold text-muted-foreground grid place-items-center">
+          +{extra}
+        </div>
+      )}
+    </div>
   );
 }
