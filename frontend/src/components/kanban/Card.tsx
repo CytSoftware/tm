@@ -21,7 +21,7 @@ import { useUpdateTask } from "@/hooks/use-tasks";
 import { cn } from "@/lib/utils";
 import { withAlpha } from "@/lib/colors";
 import { currentPeriodStart } from "@/lib/periods";
-import { PRIORITY_DOT } from "@/lib/types";
+import { PRIORITY_DOT, PRIORITY_TEXT } from "@/lib/types";
 import type { Bet, BetRef, Task, Priority, CardField, User } from "@/lib/types";
 
 const PRIORITY_BADGE: Record<
@@ -30,25 +30,25 @@ const PRIORITY_BADGE: Record<
 > = {
   P1: {
     bg: "bg-red-500/10",
-    text: "text-red-600 dark:text-red-400",
+    text: PRIORITY_TEXT.P1,
     border: "border-red-500/30",
     label: "P1",
   },
   P2: {
     bg: "bg-orange-500/10",
-    text: "text-orange-600 dark:text-orange-400",
+    text: PRIORITY_TEXT.P2,
     border: "border-orange-500/30",
     label: "P2",
   },
   P3: {
     bg: "bg-blue-500/10",
-    text: "text-blue-600 dark:text-blue-400",
+    text: PRIORITY_TEXT.P3,
     border: "border-blue-500/30",
     label: "P3",
   },
   P4: {
     bg: "bg-muted",
-    text: "text-muted-foreground",
+    text: PRIORITY_TEXT.P4,
     border: "border-border",
     label: "P4",
   },
