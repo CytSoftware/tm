@@ -100,6 +100,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     columns = ColumnSerializer(many=True, read_only=True)
     is_starred = serializers.SerializerMethodField()
     sidebar_position = serializers.SerializerMethodField()
+    open_task_count = serializers.SerializerMethodField()
     # Explicit field so DRF doesn't auto-attach the model's RegexValidator —
     # we want our ``validate_github_repo`` normalization (strips github URL
     # prefix + ``.git`` suffix) to run *before* the regex check, not after.
@@ -124,6 +125,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "columns",
             "is_starred",
             "sidebar_position",
+            "open_task_count",
             "created_at",
             "updated_at",
         )
@@ -131,6 +133,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "task_counter",
             "is_starred",
             "sidebar_position",
+            "open_task_count",
             "created_at",
             "updated_at",
         )
@@ -187,6 +190,14 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     def get_sidebar_position(self, obj: Project) -> int | None:
         return self._sidebar_order_map().get(obj.pk)
+
+    def get_open_task_count(self, obj: Project) -> int:
+        # Read the annotation ``ProjectViewSet.get_queryset`` attaches, so the
+        # /projects index gets a count per card without an N+1 of COUNT
+        # queries. Any consumer that serializes a bare Project (never through
+        # the viewset) degrades to 0 rather than silently firing extra SQL.
+        value = getattr(obj, "open_task_count", None)
+        return int(value) if value is not None else 0
 
 
 # ---------------------------------------------------------------------------

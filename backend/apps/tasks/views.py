@@ -865,6 +865,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["archived"]
 
+    def get_queryset(self):
+        # Annotate the open (not-done) task count in the same query as the
+        # list itself — the /projects index shows it on every card, and a
+        # per-row count would be an N+1. ``distinct=True`` because
+        # ``prefetch_related`` doesn't join, but ``filterset_fields`` /
+        # future joins could otherwise double-count. Tasks with no column
+        # (only possible for projectless tasks today) count as open.
+        return super().get_queryset().annotate(
+            open_task_count=models.Count(
+                "tasks",
+                filter=models.Q(tasks__column__isnull=True)
+                | models.Q(tasks__column__is_done=False),
+                distinct=True,
+            )
+        )
+
     @action(detail=True, methods=["get"])
     def columns(self, request, pk=None):
         project = self.get_object()
