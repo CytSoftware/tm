@@ -11,7 +11,13 @@
 
 import type { QueryClient } from "@tanstack/react-query";
 import type { NotificationEvent, TaskEvent } from "./types";
-import { taskListKey, projectKey } from "./query-keys";
+import {
+  allInReviewKey,
+  taskListKey,
+  projectKey,
+  toReviewKey,
+  unclaimedReviewsKey,
+} from "./query-keys";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
 
@@ -44,6 +50,16 @@ export function connectProjectSocket({
 
     queryClient.invalidateQueries({ queryKey: taskListKey(projectId) });
     queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
+
+    // The /reviews page is cross-project, so its keys sit beside — not under
+    // — taskListKey(projectId) and the two invalidations above miss them.
+    // Refresh them on every task event (including task.moved: moving a card
+    // into a review column is exactly what creates an unclaimed review).
+    // Cheap when the page is closed — invalidation only refetches queries
+    // that are currently mounted.
+    for (const key of [toReviewKey(), unclaimedReviewsKey(), allInReviewKey()]) {
+      queryClient.invalidateQueries({ queryKey: key });
+    }
 
     // Scope the infinite-query invalidation so we don't clobber optimistic
     // drag-and-drop state. `task.moved` events from the local session would

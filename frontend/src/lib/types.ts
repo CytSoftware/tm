@@ -28,6 +28,15 @@ export const PRIORITY_DOT: Record<Priority, string> = {
   P4: "bg-muted-foreground/40",
 };
 
+/** Text tone per priority (Tailwind `text-*` class), paired with
+ *  `PRIORITY_DOT` above. Light/dark tone pairs, not hardcoded colors. */
+export const PRIORITY_TEXT: Record<Priority, string> = {
+  P1: "text-red-600 dark:text-red-400",
+  P2: "text-orange-600 dark:text-orange-400",
+  P3: "text-blue-600 dark:text-blue-400",
+  P4: "text-muted-foreground",
+};
+
 export type User = {
   id: number;
   username: string;
