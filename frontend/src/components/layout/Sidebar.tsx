@@ -18,6 +18,7 @@ import {
   BookText,
   Boxes,
   ChevronsLeft,
+  FolderKanban,
   GitPullRequest,
   HardDrive,
   Home,
@@ -264,6 +265,26 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
             collapsed={isCollapsed}
             onNavigate={() => {
               router.push("/board");
+              onClose?.();
+            }}
+          />
+          {/* Sits under Tasks: it's the "which board am I on" surface, and
+              the only route that can reach an archived project. */}
+          <NavLink
+            icon={
+              <FolderKanban
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="Projects"
+            active={pathname.startsWith("/projects")}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/projects");
               onClose?.();
             }}
           />

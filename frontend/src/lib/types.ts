@@ -244,6 +244,9 @@ export type Project = {
   /** This user's manual sidebar ordering index, or null if never reordered.
    *  Lower sorts first; nulls sort last (then by name). Per-user. */
   sidebar_position: number | null;
+  /** Tasks not sitting in a done-kind column. Annotated by the project
+   *  viewset; anything that serializes a Project outside it reports 0. */
+  open_task_count: number;
   created_at: string;
   updated_at: string;
 };
