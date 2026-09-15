@@ -1,11 +1,8 @@
 "use client";
 
 /**
- * Bell + unread badge + inbox popover — mounted as the first entry in the
- * sidebar nav (see Sidebar.tsx) so it's visible in both the collapsed
- * (icon + dot) and expanded (icon + label + count badge) desktop rail, in
- * the mobile overlay sidebar, and (as `variant="topbar"`) in the mobile
- * slim top bar (see Shell.tsx).
+ * Bell + unread badge + inbox popover in the sidebar header, collapsed
+ * sidebar navigation, and mobile top bar.
  *
  * Row rendering + click behavior live in NotificationRow (shared with the
  * dashboard activity feed).
@@ -51,6 +48,7 @@ export function NotificationInbox({ variant, onNavigate }: Props) {
     variant === "topbar" ? (
       <button
         type="button"
+        title="Inbox"
         aria-label={unreadCount > 0 ? `Inbox, ${unreadCount} unread` : "Inbox"}
         className={cn(
           "tap-target relative size-8 rounded-md grid place-items-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors",
@@ -175,4 +173,3 @@ export function NotificationInbox({ variant, onNavigate }: Props) {
     </Popover>
   );
 }
-

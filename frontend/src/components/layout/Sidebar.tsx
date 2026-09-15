@@ -11,6 +11,7 @@
  */
 
 import { useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -136,11 +137,11 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
               render={
                 <button
                   type="button"
-                  className="size-8 rounded-md bg-foreground grid place-items-center text-background text-[11px] font-semibold"
+                  className="size-8 rounded-md grid place-items-center hover:bg-sidebar-accent/60"
                   onClick={toggle}
                   aria-label="Expand sidebar"
                 >
-                  C
+                  <Image src="/cyt-logo.png" alt="" width={32} height={32} className="dark:invert" />
                 </button>
               }
             />
@@ -151,14 +152,13 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
         ) : (
           <>
             <div className="flex items-center gap-2">
-              <div className="size-6 rounded-md bg-foreground grid place-items-center text-background text-[11px] font-semibold">
-                C
-              </div>
+              <Image src="/cyt-logo.png" alt="" width={32} height={32} className="shrink-0 dark:invert" />
               <span className="text-[13px] font-semibold tracking-tight">
                 Cyt
               </span>
             </div>
             <div className="flex items-center gap-0.5">
+              <NotificationInbox variant="topbar" onNavigate={onClose} />
               {!mobile && (
                 <Tooltip>
                   <TooltipTrigger
@@ -228,10 +228,7 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           </SidebarGroup>
         )}
         <SidebarGroup title="Workspace" collapsed={isCollapsed}>
-          <NotificationInbox
-            variant={isCollapsed ? "sidebar-collapsed" : "sidebar"}
-            onNavigate={onClose}
-          />
+          {isCollapsed && <NotificationInbox variant="sidebar-collapsed" />}
           <NavLink
             icon={
               <Home
