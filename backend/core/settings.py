@@ -7,22 +7,12 @@ SECRET_KEY / ALLOWED_HOSTS / CORS origins via environment variables.
 
 import os as _os_bootstrap
 from pathlib import Path
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load ``backend/.env`` into ``os.environ`` early so the rest of this module
-# (and ``dev.sh``) can read the same values. Kept minimal and dependency-free
-# — no quoting/interpolation/escapes, just ``KEY=VALUE`` per line. Real
-# secrets shouldn't live in a checked-in file anyway; ``.env`` is gitignored
-# so this is purely a per-developer override hook.
-_env_file = BASE_DIR / ".env"
-if _env_file.is_file():
-    for _line in _env_file.read_text().splitlines():
-        _stripped = _line.strip()
-        if not _stripped or _stripped.startswith("#") or "=" not in _stripped:
-            continue
-        _key, _, _val = _stripped.partition("=")
-        _os_bootstrap.environ.setdefault(_key.strip(), _val.strip())
+# PEM keys need dotenv's quoted/multiline parsing. Deployment env takes precedence.
+load_dotenv(BASE_DIR / ".env", override=False, interpolate=False)
 
 # Make `apps.tasks`, `apps.mcp_server` importable without an `apps.` prefix
 # when the `apps` package is already on sys.path via Django's app loader.
@@ -321,12 +311,14 @@ CYT_BROADCAST_SECRET = _os.environ.get(
 )
 
 # ---------------------------------------------------------------------------
-# GitHub integration (P0: manual webhook only)
+# GitHub integration
 # ---------------------------------------------------------------------------
 # Shared secret configured in the GitHub repo/App webhook settings. The
 # webhook view verifies an X-Hub-Signature-256 HMAC against this value.
 # Leave empty to disable the endpoint (it will reject every request with 403).
 GITHUB_WEBHOOK_SECRET = _os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+GITHUB_APP_ID = _os.environ.get("GITHUB_APP_ID", "")
+GITHUB_PRIVATE_KEY = _os.environ.get("GITHUB_PRIVATE_KEY", "").replace("\\n", "\n")
 
 # ---------------------------------------------------------------------------
 # Remote MCP authentication

@@ -179,6 +179,26 @@ Both frontend vars are baked in at `next build` time (Dockerfile passes them as 
 
 ---
 
+### GitHub repository linking
+
+Install the company GitHub App on the repositories you want to connect. Configure
+`GITHUB_APP_ID` and `GITHUB_PRIVATE_KEY` on the backend, then deploy it. The private
+key accepts a PEM with real newlines or escaped `\n` sequences. Local development
+loads quoted/multiline values from the git-ignored `backend/.env`.
+
+Open a project's settings and select a repository under **GitHub repositories**.
+The picker lists repositories from the App's active installations; **Refresh**
+fetches changes to installation access. Linking always checks current GitHub
+access. Multiple projects can share a repository, and a project can link several.
+Existing manual mappings can use **Connect App** without losing their PR links.
+Unlinking removes this project's stored PR associations, not GitHub repositories
+or tasks. Workspace members can manage links, matching project permissions.
+
+Repository discovery uses metadata-only installation tokens and a 60-second cache.
+It does not need `GITHUB_CLIENT_ID` or `GITHUB_CLIENT_SECRET`; those are reserved
+for the separate user account-linking flow. Existing webhooks continue using
+`GITHUB_WEBHOOK_SECRET`. This step does not import existing PRs or change Reviews.
+
 ## HTTP API
 
 The REST API is mounted at `/api/`. Endpoints are session-authenticated; unsafe methods require the `X-CSRFToken` header (the frontend reads it from the `csrftoken` cookie seeded by `/api/auth/csrf/`).

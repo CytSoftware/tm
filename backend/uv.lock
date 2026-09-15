@@ -412,12 +412,15 @@ dependencies = [
     { name = "django-oauth-toolkit" },
     { name = "djangorestframework" },
     { name = "drf-spectacular" },
+    { name = "httpx" },
     { name = "markdownify" },
     { name = "mcp", extra = ["cli"] },
     { name = "openpyxl" },
     { name = "pillow" },
     { name = "pycrdt-websocket", extra = ["django"] },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "python-dateutil" },
+    { name = "python-dotenv" },
     { name = "whitenoise" },
 ]
 
@@ -436,12 +439,15 @@ requires-dist = [
     { name = "django-oauth-toolkit", specifier = ">=3.2.0" },
     { name = "djangorestframework", specifier = ">=3.17.1" },
     { name = "drf-spectacular", specifier = ">=0.29.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "markdownify", specifier = ">=1.2.2" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.27.0" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "pycrdt-websocket", extras = ["django"], specifier = ">=0.16.3" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.12.1" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "whitenoise", specifier = ">=6.12.0" },
 ]
 

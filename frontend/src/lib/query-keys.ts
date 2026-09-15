@@ -4,6 +4,8 @@ export const meKey = () => ["me"] as const;
 
 export const projectsKey = () => ["projects"] as const;
 export const projectKey = (projectId: number) => ["project", projectId] as const;
+export const projectRepositoriesKey = (projectId: number) => ["project-repositories", projectId] as const;
+export const githubRepositoriesKey = () => ["github-repositories"] as const;
 
 export const taskListKey = (projectId: number, viewId?: number | null) =>
   ["tasks", projectId, viewId ?? null] as const;

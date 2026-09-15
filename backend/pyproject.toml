@@ -11,12 +11,15 @@ dependencies = [
     "django-oauth-toolkit>=3.2.0",
     "djangorestframework>=3.17.1",
     "drf-spectacular>=0.29.0",
+    "httpx>=0.28.1",
     "markdownify>=1.2.2",
     "mcp[cli]>=1.27.0",
     "openpyxl>=3.1.5",
     "pillow>=12.2.0",
     "pycrdt-websocket[django]>=0.16.3",
+    "pyjwt[crypto]>=2.12.1",
     "python-dateutil>=2.9.0.post0",
+    "python-dotenv>=1.2.2",
     "whitenoise>=6.12.0",
 ]
 

@@ -20,9 +20,11 @@ from .models import (
 
 
 class ProjectRepositoryNestedSerializer(serializers.ModelSerializer):
+    installation_id = serializers.IntegerField(source="installation.installation_id", read_only=True, allow_null=True)
+
     class Meta:
         model = ProjectRepository
-        fields = ("id", "repo_id", "repo_full_name", "default_branch")
+        fields = ("id", "repo_id", "repo_full_name", "default_branch", "installation_id")
         read_only_fields = fields
 
 
