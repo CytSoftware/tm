@@ -12,6 +12,7 @@ from .views import (
     InfrastructureServiceViewSet,
 )
 from .webhooks import event_source_ingest_view, github_webhook_view
+from .pull_requests import GitHubPullRequestsView
 from .repositories import GitHubRepositoriesView, ProjectRepositoriesView
 
 router = SimpleRouter()
@@ -20,6 +21,7 @@ router.register(r"events", ExternalEventViewSet, basename="external-event")
 router.register(r"services", InfrastructureServiceViewSet, basename="service")
 
 urlpatterns = [
+    path("github/pull-requests/", GitHubPullRequestsView.as_view()),
     path("github/repositories/", GitHubRepositoriesView.as_view()),
     path("projects/<int:project_id>/repositories/", ProjectRepositoriesView.as_view()),
     path("github/webhook/", github_webhook_view, name="github-webhook"),

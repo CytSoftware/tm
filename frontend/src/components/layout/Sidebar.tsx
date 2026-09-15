@@ -50,7 +50,8 @@ import { meKey } from "@/lib/query-keys";
 import { logout as apiLogout } from "@/lib/auth";
 import { useSidebar } from "@/lib/sidebar-state";
 import { useActiveProject } from "@/lib/active-project";
-import { useToReviewQuery, useUnclaimedReviewsQuery } from "@/hooks/use-tasks";
+import { usePullRequestsQuery } from "@/hooks/use-pull-requests";
+import { pullRequestQueues } from "@/lib/pull-request-queues";
 import { useEventSourcesQuery } from "@/hooks/use-events";
 import { MonitoringIcon } from "@/lib/monitoring";
 import { QuickActionIcon } from "@/lib/quick-actions";
@@ -76,9 +77,9 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
   const isCollapsed = mobile ? false : collapsed;
 
   const eventSourcesQuery = useEventSourcesQuery();
-  const toReviewCount =
-    (useToReviewQuery().data?.length ?? 0) +
-    (useUnclaimedReviewsQuery().data?.length ?? 0);
+  const pullRequests = usePullRequestsQuery();
+  const reviewQueues = pullRequestQueues(pullRequests.data?.results ?? [], user.github_username);
+  const toReviewCount = reviewQueues.mine.length + reviewQueues.unassigned.length;
   const quickActions = user.preferences.quick_actions ?? [];
   const monitoringSources = useMemo(
     () => eventSourcesQuery.data?.results ?? [],

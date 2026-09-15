@@ -123,3 +123,5 @@ export const infrastructureServicesKey = () =>
 // user) and personal access tokens for headless MCP clients.
 export const oauthConnectionsKey = () => ["oauth-connections"] as const;
 export const mcpTokensKey = () => ["mcp-tokens"] as const;
+
+export const githubPullRequestsKey = () => ["github-pull-requests"] as const;

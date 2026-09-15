@@ -540,3 +540,15 @@ npm run dev
 npm run build
 npm run lint
 ```
+
+The Reviews page lists open PRs (including drafts) from all linked repositories
+through the GitHub App. The App needs **Pull requests: read** permission. Results
+are cached for 60 seconds; Refresh bypasses the cache. Repository failures appear
+on the page so a partial list is not mistaken for an empty queue.
+
+Mine/Others use pending GitHub review requests and the user's mapped GitHub
+username. Team requests appear in Others; team membership is not resolved.
+Unassigned means no pending user or team requests, including PRs already reviewed.
+Task keys referenced in the PR title, description, or branch appear as clickable
+tags. PRs without task references appear too. Existing webhook task automation
+continues separately; opening Reviews does not change tasks.
