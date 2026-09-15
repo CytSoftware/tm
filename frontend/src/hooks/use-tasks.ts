@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchReviewTasks } from "@/lib/review-queues";
+
 import {
   useInfiniteQuery,
   useMutation,
@@ -164,9 +166,10 @@ export function useToReviewQuery() {
   return useQuery({
     queryKey: toReviewKey(),
     queryFn: () =>
-      apiFetch<TaskListResponse>(
+      fetchReviewTasks(
         "/api/tasks/?reviewer=me&done=false&include_archived=false&sort_field=updated_at&sort_dir=desc&limit=100",
-      ).then((r) => r.results),
+        apiFetch,
+      ),
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
   });
@@ -180,26 +183,24 @@ export function useUnclaimedReviewsQuery() {
   return useQuery({
     queryKey: unclaimedReviewsKey(),
     queryFn: () =>
-      apiFetch<TaskListResponse>(
+      fetchReviewTasks(
         "/api/tasks/?reviewer=none&column_kind=review&done=false&include_archived=false&sort_field=updated_at&sort_dir=desc&limit=100",
-      ).then((r) => r.results),
+        apiFetch,
+      ),
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
   });
 }
 
-/** Every open task in a review-kind column across all projects, whoever the
- *  reviewer is (or none). The To Review page subtracts the sections it
- *  already renders and shows the remainder as "In review with others", so
- *  the page reflects the whole review landscape rather than just my queue.
- *  Higher limit than the personal queries — this one spans the workspace. */
+/** Workspace review queue, fetched across every page for complete tab counts. */
 export function useAllInReviewQuery() {
   return useQuery({
     queryKey: allInReviewKey(),
     queryFn: () =>
-      apiFetch<TaskListResponse>(
+      fetchReviewTasks(
         "/api/tasks/?column_kind=review&done=false&include_archived=false&sort_field=updated_at&sort_dir=desc&limit=200",
-      ).then((r) => r.results),
+        apiFetch,
+      ),
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
   });

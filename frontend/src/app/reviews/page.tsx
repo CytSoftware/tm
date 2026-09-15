@@ -1,32 +1,10 @@
 "use client";
 
-/**
- * /reviews — the whole review landscape, across every project.
- *
- * Sections, in "how much does this need me" order (each task appears in
- * exactly one — later sections subtract the earlier ones by task id):
- *
- *  - "PRs awaiting your review" — tasks with at least one open linked PR
- *    whose GitHub reviewer is me. The PR badges link straight to GitHub.
- *  - "Tasks to review" — the rest of ``reviewer=me`` (manual reviewer
- *    assignments, or a reviewer left set after the PR closed).
- *  - "Unclaimed reviews" (TAS-064) — tasks sitting in a review-kind column
- *    with no reviewer claimed yet. Anyone can claim one to become its
- *    reviewer.
- *  - "In review with others" (TAS-067) — everything else in a review-kind
- *    column, i.e. someone else's queue. Read-only context: it answers "is
- *    my PR being looked at" without pinging anyone.
- *
- * Data comes from ``/api/tasks/?reviewer=me`` (TAS-011 rule engine sets
- * ``Task.reviewer`` on ``review_requested`` webhooks), ``?reviewer=none&
- * column_kind=review`` for unclaimed reviews, and ``?column_kind=review``
- * for the workspace-wide set. Rows open the global task overlay in place.
- *
- * Note the sidebar's "To Review" badge deliberately stays the needs-you
- * count — the others section is context, not a queue.
- */
+/** Task-linked PRs and manual reviews, grouped by reviewer across projects. */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { Tabs } from "@base-ui/react/tabs";
+import { REVIEW_TABS, reviewQueues, type ReviewTab } from "@/lib/review-queues";
 import { useQuery } from "@tanstack/react-query";
 import { GitPullRequest } from "lucide-react";
 import { toast } from "sonner";
@@ -71,65 +49,26 @@ export default function ReviewsPage() {
   const meQuery = useQuery({ queryKey: meKey(), queryFn: fetchMe });
   const claim = useClaimReview();
 
-  const tasks = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data]);
-  // The three fetches land independently, so a reviewer change between them
-  // can leave the same task in two responses. Each list subtracts the ones
-  // above it by id, which is what makes the "exactly one section" rule hold.
-  const unclaimedTasks = useMemo(() => {
-    const mine = new Set(tasks.map((t) => t.id));
-    return (unclaimedQuery.data ?? []).filter((t) => !mine.has(t.id));
-  }, [unclaimedQuery.data, tasks]);
-  const allInReview = useMemo(
-    () => allInReviewQuery.data ?? [],
-    [allInReviewQuery.data],
-  );
-  const githubLogin = (meQuery.data?.github_username ?? "").toLowerCase();
-  const meId = meQuery.data?.id;
-
-  const { prTasks, otherTasks } = useMemo(() => {
-    const awaitsMyPrReview = (t: Task) =>
-      openPRs(t).some((pr) =>
-        githubLogin
-          ? pr.reviewer_login.toLowerCase() === githubLogin
-          : pr.reviewer_login !== "",
-      );
-    const prTasks: Task[] = [];
-    const otherTasks: Task[] = [];
-    for (const t of tasks) (awaitsMyPrReview(t) ? prTasks : otherTasks).push(t);
-    return { prTasks, otherTasks };
-  }, [tasks, githubLogin]);
-
-  // Someone else's queue: the workspace-wide set minus everything already
-  // rendered above. Tasks whose reviewer is me are dropped even if the
-  // reviewer=me fetch hasn't caught up yet — better a row missing for one
-  // poll than my own review filed under "other people".
-  const othersTasks = useMemo(() => {
-    if (meId == null) return [];
-    const shown = new Set([...tasks, ...unclaimedTasks].map((t) => t.id));
-    return allInReview.filter(
-      (t) => t.reviewer != null && t.reviewer.id !== meId && !shown.has(t.id),
-    );
-  }, [allInReview, tasks, unclaimedTasks, meId]);
-
-  const showGithubHint =
-    meQuery.data != null && meQuery.data.github_username === "";
-
-  // `Shell` gates the whole tree on `me`, so `meId` is resolved by the time
-  // this renders — only the task queries can be in flight here.
-  const needsMeCount = tasks.length + unclaimedTasks.length;
-  const needsMeLoading = tasksQuery.isLoading || unclaimedQuery.isLoading;
-  // The workspace-wide query is secondary: it must not hold back the queue
-  // sections, which the sidebar usually has cached already. It only gates
-  // the spinner when there'd be nothing on screen without it.
-  const isLoading =
-    needsMeLoading || (needsMeCount === 0 && allInReviewQuery.isLoading);
-  const loadFailed =
-    tasksQuery.isError || unclaimedQuery.isError || allInReviewQuery.isError;
-
-  // Two distinct "nothing here" states: a genuinely quiet workspace, versus
-  // a clear personal queue while other people still have work in review.
-  const queueClear = !isLoading && needsMeCount === 0;
-  const isEmpty = queueClear && othersTasks.length === 0;
+  const [tab, setTab] = useState<ReviewTab>("mine");
+  const [project, setProject] = useState("");
+  const [repository, setRepository] = useState("");
+  const { allTasks, queues } = useMemo(() => reviewQueues(
+    [tasksQuery.data ?? [], unclaimedQuery.data ?? [], allInReviewQuery.data ?? []],
+    meQuery.data?.id, project, repository,
+  ), [tasksQuery.data, unclaimedQuery.data, allInReviewQuery.data, meQuery.data?.id, project, repository]);
+  const projects = [...new Map(allTasks.filter(t => t.project != null).map(t => [String(t.project), t.project_name ?? t.project_prefix ?? "Project"])).entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  const repositories = [...new Map(allTasks.filter(t => !project || String(t.project) === project)
+    .flatMap(t => openPRs(t)).filter(pr => pr.repository != null)
+    .map(pr => [String(pr.repository!.repo_id), pr.repository!.repo_full_name])).entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  const queries = [tasksQuery, unclaimedQuery, allInReviewQuery, meQuery];
+  const isLoading = queries.some(query => query.isPending);
+  const loadFailed = queries.some(query => query.isError);
+  const refreshing = queries.some(query => query.isFetching);
+  const showGithubHint = meQuery.data?.github_username === "";
+  const selectedTasks = queues[tab];
+  const hasFilters = Boolean(project || repository);
 
   function handleClaim(task: Task) {
     claim.mutate(task.key, {
@@ -145,84 +84,62 @@ export default function ReviewsPage() {
   }
 
   return (
-    <div className="h-full flex flex-col min-h-0">
-      <header className="shrink-0 min-h-12 flex flex-wrap items-center gap-x-3 gap-y-1 px-4 max-lg:px-3 py-1.5 border-b border-border/80 bg-background">
+    <Tabs.Root value={tab} onValueChange={value => setTab(value as ReviewTab)} className="h-full min-h-0 min-w-0 flex flex-col">
+      <header className="shrink-0 flex flex-wrap items-center gap-3 border-b px-4 py-3">
         <GitPullRequest className="size-4 text-emerald-500" />
-        <h1 className="text-[13px] font-semibold tracking-tight">To Review</h1>
-        <span className="hidden md:inline text-[11px] text-muted-foreground">
-          Everything in review across all projects — what&apos;s waiting on
-          you, what&apos;s unclaimed, and what others are reviewing.
-        </span>
+        <h1 className="text-sm font-semibold">Reviews</h1>
+        <span className="text-xs text-muted-foreground">Task-linked PRs and manual reviews</span>
+        <Button variant="ghost" size="sm" className="ml-auto" disabled={refreshing} onClick={() => queries.forEach(query => void query.refetch())}>
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </Button>
       </header>
-
-      <div className="flex-1 min-h-0 overflow-y-auto bg-muted/40">
-        <div className="mx-auto max-w-3xl px-4 py-5 space-y-5">
-          {showGithubHint && (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-[12px] text-amber-700 dark:text-amber-400">
-              Your account has no GitHub username mapped, so PR review requests
-              can&apos;t be routed to you. Set it in the Django admin (user
-              profile &rarr; GitHub username).
-            </div>
-          )}
-
-          {isLoading ? (
-            <div className="grid place-items-center py-16">
-              <div className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
-            </div>
-          ) : isEmpty ? (
-            <div className="rounded-lg border border-border/60 bg-card py-14 px-6 text-center text-[12.5px] text-muted-foreground">
-              {loadFailed
-                ? "Couldn't load reviews. Retrying shortly."
-                : "Nothing is in review anywhere right now."}
-            </div>
-          ) : (
-            <>
-              {/* Queue clear, but the workspace isn't — say so, then still
-                  render the others section underneath as context. */}
-              {queueClear && (
-                <div className="rounded-lg border border-border/60 bg-card py-8 px-6 text-center">
-                  <p className="text-[12.5px] font-medium">
-                    Nothing needs your review.
-                  </p>
-                  <p className="mt-1 text-[11.5px] text-muted-foreground">
-                    {othersTasks.length}{" "}
-                    {othersTasks.length === 1 ? "task is" : "tasks are"} in
-                    review with other people.
-                  </p>
+      <div className="shrink-0 border-b px-4 pt-3">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <select aria-label="Filter by project" className="h-8 max-w-full rounded-md border bg-background px-2 text-xs" value={project} onChange={e => { setProject(e.target.value); setRepository(""); }}>
+            <option value="">All projects</option>
+            {project && !projects.some(([id]) => id === project) && <option value={project}>Selected project (no reviews)</option>}
+            {projects.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+          <select aria-label="Filter by repository" className="h-8 max-w-full rounded-md border bg-background px-2 text-xs" value={repository} onChange={e => setRepository(e.target.value)}>
+            <option value="">All repositories</option>
+            {repository && !repositories.some(([id]) => id === repository) && <option value={repository}>Selected repository (no reviews)</option>}
+            {repositories.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+          {hasFilters && <Button size="sm" variant="ghost" onClick={() => { setProject(""); setRepository(""); }}>Clear filters</Button>}
+        </div>
+        <Tabs.List aria-label="Review queues" className="flex overflow-x-auto gap-1">
+          {REVIEW_TABS.map(({ value, label }) => (
+            <Tabs.Tab key={value} value={value} className="shrink-0 border-b-2 border-transparent px-3 py-2 text-xs text-muted-foreground data-[active]:border-primary data-[active]:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+              {label} <span className="ml-1 rounded bg-muted px-1.5 py-0.5 text-[10px] tabular-nums">{isLoading || loadFailed ? "—" : queues[value].length}</span>
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-muted/30">
+        <div className="mx-auto max-w-5xl space-y-4 px-4 py-5">
+          {showGithubHint && <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+            Your GitHub username isn’t mapped yet. Ask a workspace administrator to set it in your user profile so PR requests reach your queue.
+          </p>}
+          {loadFailed && <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-xs text-destructive">Couldn’t load all reviews. The list may be incomplete. Use Refresh to retry.</div>}
+          {REVIEW_TABS.map(({ value, label }) => (
+            <Tabs.Panel key={value} value={value}>
+              {isLoading ? <p role="status" className="py-12 text-center text-sm text-muted-foreground">Loading reviews…</p> : selectedTasks.length === 0 ? (
+                <div className="rounded-lg border bg-card px-6 py-12 text-center">
+                  <p className="text-sm font-medium">{loadFailed ? "Reviews are unavailable." : hasFilters ? "No reviews match these filters." : value === "mine" ? "Nothing is assigned to you for review." : "No reviews in this queue."}</p>
+                  {!hasFilters && value === "mine" && queues.unassigned.length > 0 && <Button variant="link" onClick={() => setTab("unassigned")}>Browse {queues.unassigned.length} unassigned reviews</Button>}
                 </div>
+              ) : (
+                <ReviewSection title={`${label} · ${selectedTasks.length === 1 ? "review" : "reviews"}`} tasks={selectedTasks} showReviewer repository={repository}
+                  renderAction={task => task.reviewer == null ? (
+                    <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={claim.isPending} onClick={e => { e.stopPropagation(); handleClaim(task); }}>Claim</Button>
+                  ) : null}
+                />
               )}
-
-              <ReviewSection title="PRs awaiting your review" tasks={prTasks} />
-              <ReviewSection title="Tasks to review" tasks={otherTasks} />
-              <ReviewSection
-                title="Unclaimed reviews"
-                tasks={unclaimedTasks}
-                renderAction={(task) => (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-6 px-2 text-[11px] tap-target"
-                    disabled={claim.isPending}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleClaim(task);
-                    }}
-                  >
-                    Claim
-                  </Button>
-                )}
-              />
-              <ReviewSection
-                title="In review with others"
-                tasks={othersTasks}
-                showReviewer
-                subdued
-              />
-            </>
-          )}
+            </Tabs.Panel>
+          ))}
         </div>
       </div>
-    </div>
+    </Tabs.Root>
   );
 }
 
@@ -231,19 +148,16 @@ function ReviewSection({
   tasks,
   renderAction,
   showReviewer,
-  subdued,
+  repository,
 }: {
   title: string;
   tasks: Task[];
   /** Optional per-row action (e.g. the "Claim" button for unclaimed
    *  reviews), rendered at the end of each row. */
   renderAction?: (task: Task) => React.ReactNode;
-  /** Surface the reviewer avatar + name on each row. Only "In review with
-   *  others" needs it — everywhere else the reviewer is me or nobody. */
+  /** Show the assigned reviewer alongside the task's assignees. */
   showReviewer?: boolean;
-  /** Read-only context rather than a queue: flattened card, dimmed titles.
-   *  Still full-contrast enough to read — just clearly not actionable. */
-  subdued?: boolean;
+  repository?: string;
 }) {
   if (tasks.length === 0) return null;
   return (
@@ -252,14 +166,7 @@ function ReviewSection({
         {title}
         <span className="tabular-nums">{tasks.length}</span>
       </h2>
-      <div
-        className={cn(
-          "rounded-lg border",
-          subdued
-            ? "border-border/40 bg-card/50"
-            : "border-border/60 bg-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
-        )}
-      >
+      <div className="rounded-lg border border-border/60 bg-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
         <ul className="px-3 py-2">
           {tasks.map((t) => (
             <ReviewRow
@@ -267,7 +174,7 @@ function ReviewSection({
               task={t}
               action={renderAction?.(t)}
               showReviewer={showReviewer}
-              subdued={subdued}
+              repository={repository}
             />
           ))}
         </ul>
@@ -280,15 +187,15 @@ function ReviewRow({
   task,
   action,
   showReviewer,
-  subdued,
+  repository,
 }: {
   task: Task;
   action?: React.ReactNode;
   showReviewer?: boolean;
-  subdued?: boolean;
+  repository?: string;
 }) {
   const { openTaskByKey } = useTaskDialog();
-  const prs = openPRs(task);
+  const prs = openPRs(task).filter(pr => !repository || String(pr.repository?.repo_id) === repository);
 
   // The row is a clickable div, not a <button> — the PR badges (and the
   // optional action button) inside are real interactive elements (nesting
@@ -301,7 +208,7 @@ function ReviewRow({
         tabIndex={0}
         onClick={() => void openTaskByKey(task.key)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
+          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
             e.preventDefault();
             void openTaskByKey(task.key);
           }
@@ -331,10 +238,7 @@ function ReviewRow({
           </span>
         )}
         <span
-          className={cn(
-            "min-w-0 flex-1 basis-40 truncate text-[12.5px]",
-            subdued && "text-muted-foreground",
-          )}
+          className="min-w-0 flex-1 basis-40 truncate text-[12.5px]"
         >
           {task.title}
         </span>
