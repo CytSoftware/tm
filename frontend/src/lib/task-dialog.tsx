@@ -109,6 +109,13 @@ export function TaskDialogProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  useEffect(() => {
+    const key = new URLSearchParams(window.location.search).get("task");
+    // The task is fetched before openTaskByKey updates state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (key) void openTaskByKey(key);
+  }, [openTaskByKey]);
+
   const createTask = useCallback(
     (opts?: { projectId?: number | null; columnId?: number | null }) => {
       setState({

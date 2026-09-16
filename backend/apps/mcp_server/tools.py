@@ -164,6 +164,10 @@ def _project_dict(p: Project) -> dict[str, Any]:
         "icon": p.icon,
         "archived": p.archived,
         "task_counter": p.task_counter,
+        "repositories": [
+            {"repo_id": repo.repo_id, "full_name": repo.repo_full_name}
+            for repo in p.repositories.all()
+        ],
     }
 
 
@@ -290,7 +294,7 @@ def _view_dict(v: View) -> dict[str, Any]:
 
 
 def list_projects() -> list[dict[str, Any]]:
-    return [_project_dict(p) for p in Project.objects.all().order_by("name")]
+    return [_project_dict(p) for p in Project.objects.prefetch_related("repositories").order_by("name")]
 
 
 # ---------------------------------------------------------------------------
