@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
@@ -386,6 +387,7 @@ class MeView(APIView):
                 "type": "object",
                 "properties": {
                     "avatar_url": {"type": "string"},
+                    "github_username": {"type": "string"},
                     "preferences": {
                         "type": "object",
                         "properties": {
@@ -431,6 +433,18 @@ class MeView(APIView):
         from .models import UserProfile
 
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
+
+        if "github_username" in request.data:
+            username = request.data["github_username"]
+            if not isinstance(username, str):
+                raise ValidationError({"github_username": "Enter a GitHub username."})
+            username = username.strip().removeprefix("@").lower()
+            if username and not re.fullmatch(r"[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}", username):
+                raise ValidationError({"github_username": "Enter a username, not a GitHub URL (up to 39 letters, numbers, or single hyphens)."})
+            if username and UserProfile.objects.filter(github_username__iexact=username).exclude(pk=profile.pk).exists():
+                raise ValidationError({"github_username": "This GitHub username is already mapped to another user."})
+            profile.github_username = username
+            profile.save(update_fields=["github_username"])
 
         avatar_image = request.FILES.get("avatar_image")
         if avatar_image is not None:

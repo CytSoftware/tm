@@ -4,6 +4,7 @@ import {
   Activity,
   Columns3,
   Grid2X2,
+  GitPullRequest,
   Plug,
   Send,
   Settings,
@@ -17,6 +18,7 @@ import { MasterDetail } from "@/components/layout/MasterDetail";
 import { cn } from "@/lib/utils";
 
 const SETTINGS_NAV = [
+  { href: "/settings/github", label: "GitHub", description: "Your review username", icon: GitPullRequest },
   {
     href: "/settings/quick-actions",
     label: "Quick actions",

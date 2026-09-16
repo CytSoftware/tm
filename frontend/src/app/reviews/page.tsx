@@ -3,6 +3,7 @@
 /** Open GitHub pull requests across project repositories. */
 
 import { usePullRequestsQuery } from "@/hooks/use-pull-requests";
+import Link from "next/link";
 import { useState } from "react";
 import { Tabs } from "@base-ui/react/tabs";
 import { REVIEW_TABS, type ReviewTab } from "@/lib/review-queues";
@@ -86,7 +87,7 @@ export default function ReviewsPage() {
       <div className="min-h-0 flex-1 overflow-y-auto bg-muted/30">
         <div className="mx-auto max-w-5xl space-y-4 px-4 py-5">
           {showGithubHint && <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
-            Your GitHub username isn’t mapped yet. Ask a workspace administrator to set it in your user profile so PR requests reach your queue.
+            Set your GitHub username in <Link href="/settings/github" className="underline">Settings → GitHub</Link> so PR requests reach your queue.
           </p>}
           {loadFailed && <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-xs text-destructive">Couldn’t load all reviews. The list may be incomplete. Use Refresh to retry.
             {[prsQuery.error?.message, meQuery.error?.message, refreshError, ...(prsQuery.data?.errors ?? [])].filter(Boolean).map((message, i) => <p key={i} className="mt-1">{message}</p>)}</div>}
