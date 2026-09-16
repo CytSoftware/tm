@@ -54,11 +54,11 @@ export default function ReviewsPage() {
 
   return (
     <Tabs.Root value={tab} onValueChange={value => setTab(value as ReviewTab)} className="h-full min-h-0 min-w-0 flex flex-col">
-      <header className="shrink-0 flex flex-wrap items-center gap-3 border-b px-4 py-3">
+      <header className="shrink-0 min-h-12 flex flex-wrap items-center gap-x-3 gap-y-1 px-4 max-lg:px-3 py-1.5 border-b border-border/80 bg-background">
         <GitPullRequest className="size-4 text-emerald-500" />
-        <h1 className="text-sm font-semibold">Reviews</h1>
-        <span className="text-xs text-muted-foreground">Open PRs from linked repositories</span>
-        <Button variant="ghost" size="sm" className="ml-auto" disabled={refreshing} onClick={() => void refresh()}>
+        <h1 className="text-[13px] font-semibold tracking-tight">Reviews</h1>
+        <span className="hidden md:inline text-[11px] text-muted-foreground">Open PRs from linked repositories</span>
+        <Button variant="ghost" size="sm" className="ml-auto h-7 text-[12px] tap-target" disabled={refreshing} onClick={() => void refresh()}>
           {refreshing ? "Refreshing…" : "Refresh"}
         </Button>
       </header>

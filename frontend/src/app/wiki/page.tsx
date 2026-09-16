@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
-import { Plus } from "lucide-react";
+import { BookOpen, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { MasterDetail } from "@/components/layout/MasterDetail";
@@ -45,41 +45,41 @@ export default function WikiPage() {
   }
 
   return (
-    <MasterDetail
-      railWidth="w-72"
-      hasSelection={selected != null}
-      onBack={() => setSelectedKey(null)}
-      backLabel="Wiki"
-      master={
-        <>
-        <div className="flex items-center justify-between px-3 h-11 shrink-0 border-b border-border">
-          <span className="text-[13px] font-medium">Wiki</span>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 gap-1 px-2 text-[12px]"
-            onClick={() => createPage(null)}
-            disabled={create.isPending}
-          >
-            <Plus className="size-3.5" /> New
-          </Button>
-        </div>
-        <div className="flex-1 min-h-0 overflow-y-auto px-1">
-          {treeQuery.isLoading ? (
-            <p className="px-3 py-2 text-[13px] text-muted-foreground">
-              Loading…
-            </p>
-          ) : (
-            <WikiTree
-              docs={docs}
-              selectedKey={selectedKey}
-              onSelect={setSelectedKey}
-              onCreateChild={(pid) => createPage(pid)}
-              onDelete={deletePage}
-            />
+    <div className="h-full min-h-0 flex flex-col">
+      <header className="shrink-0 min-h-12 flex flex-wrap items-center gap-x-3 gap-y-1 px-4 max-lg:px-3 py-1.5 border-b border-border/80 bg-background">
+        <BookOpen className="size-4 text-muted-foreground" />
+        <h1 className="text-[13px] font-semibold tracking-tight">Wiki</h1>
+        <Button
+          size="sm"
+          className="ml-auto h-7 text-[12px] tap-target"
+          onClick={() => createPage(null)}
+          disabled={create.isPending}
+        >
+          <Plus className="size-3.5" /> New page
+        </Button>
+      </header>
+      <MasterDetail
+        className="h-auto flex-1"
+        railWidth="w-72"
+        hasSelection={selected != null}
+        onBack={() => setSelectedKey(null)}
+        backLabel="Wiki"
+        master={
+          <div className="flex-1 min-h-0 overflow-y-auto px-1">
+            {treeQuery.isLoading ? (
+              <p className="px-3 py-2 text-[13px] text-muted-foreground">
+                Loading…
+              </p>
+            ) : (
+              <WikiTree
+                docs={docs}
+                selectedKey={selectedKey}
+                onSelect={setSelectedKey}
+                onCreateChild={(pid) => createPage(pid)}
+                onDelete={deletePage}
+              />
           )}
         </div>
-        </>
       }
       detail={
         selected ? (
@@ -104,5 +104,6 @@ export default function WikiPage() {
         )
       }
     />
+    </div>
   );
 }

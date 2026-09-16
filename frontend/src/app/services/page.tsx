@@ -41,19 +41,19 @@ export default function ServicesPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <header className="shrink-0 min-h-14 px-3 lg:px-5 border-b border-border/80 flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
-        <div className="flex-1 min-w-0">
-          <h1 className="text-[16px] font-semibold tracking-tight">Services</h1>
-          <p className="text-[11px] text-muted-foreground">
-            Dashboards and tools used across the infrastructure.
-          </p>
-        </div>
+      <header className="shrink-0 min-h-12 flex flex-wrap items-center gap-x-3 gap-y-1 px-4 max-lg:px-3 py-1.5 border-b border-border/80 bg-background">
+        <Boxes className="size-4 text-muted-foreground" />
+        <h1 className="text-[13px] font-semibold tracking-tight">Services</h1>
+        <span className="hidden md:inline text-[11px] text-muted-foreground">
+          Dashboards and tools used across the infrastructure.
+        </span>
         <Button
           size="sm"
           variant="outline"
+          className="ml-auto h-7 text-[12px] tap-target"
           render={<a href="/settings/services" />}
         >
-          <Settings2 /> Configure
+          <Settings2 className="size-3.5" /> Configure
         </Button>
       </header>
 

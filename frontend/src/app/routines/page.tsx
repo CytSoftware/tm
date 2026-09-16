@@ -35,6 +35,9 @@ export default function RoutinesPage() {
     queryFn: () => apiFetch<{ count: number; results: Routine[]; next: string | null }>("/api/integrations/routines/", { query: { limit: 50, offset } }),
     refetchInterval: 30_000,
   });
+  const latestSync = query.data?.results.reduce<string | null>((latest, routine) => (
+    !latest || new Date(routine.synced_at) > new Date(latest) ? routine.synced_at : latest
+  ), null) ?? null;
   useEffect(() => connectProjectSocket({
     projectId: 0,
     queryClient,
@@ -45,16 +48,17 @@ export default function RoutinesPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b px-4 py-3">
+      <header className="shrink-0 min-h-12 flex flex-wrap items-center gap-x-3 gap-y-1 px-4 max-lg:px-3 py-1.5 border-b border-border/80 bg-background">
         <Repeat className="size-4 text-muted-foreground" />
-        <h1 className="text-sm font-semibold">Routines</h1>
-        <span className="text-xs text-muted-foreground">{query.data?.count ?? "—"} routines</span>
-        <Button className="ml-auto" size="sm" variant="ghost" disabled={query.isFetching} onClick={() => void query.refetch()}><RefreshCw className="size-3.5" />Refresh</Button>
-        <Button size="sm" variant="outline" render={<a href="https://t.me/CytAiBot" target="_blank" rel="noopener noreferrer" />}>Open Hermes</Button>
+        <h1 className="text-[13px] font-semibold tracking-tight">Routines</h1>
+        <span className="text-[11px] tabular-nums text-muted-foreground">{query.data?.count ?? "—"} routines</span>
+        <Button className="ml-auto h-7 text-[12px] tap-target" size="sm" variant="ghost" disabled={query.isFetching} onClick={() => void query.refetch()}><RefreshCw className="size-3.5" />Refresh</Button>
+        <Button className="h-7 text-[12px] tap-target" size="sm" variant="outline" render={<a href="https://t.me/CytAiBot" target="_blank" rel="noopener noreferrer" />}>Open Hermes</Button>
       </header>
       <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl space-y-4 p-4 lg:p-6">
+        <div className="w-full space-y-4 p-4">
           <p className="text-sm text-muted-foreground">Managed through Hermes chat. Ask Hermes to create, edit, pause, or remove a routine. This page shows the last synchronized state.</p>
+          {latestSync && <p className="text-xs text-muted-foreground">Latest routine sync{(query.data?.count ?? 0) > 50 ? " on this page" : ""}: {date(latestSync)} · Times shown in your local timezone</p>}
           {query.isError && <p role="alert" className="text-sm text-destructive">Couldn’t refresh routines. Any displayed records may be outdated. Use Refresh to retry.</p>}
           {query.isPending ? <p role="status" className="py-12 text-center text-muted-foreground">Loading routines…</p> : query.data?.results.length === 0 ? (
             <div className="rounded-lg border border-dashed p-10 text-center">
@@ -79,7 +83,6 @@ export default function RoutinesPage() {
                 {routine.skills.length > 0 && <p className="mt-3 break-words text-xs text-muted-foreground">Skills: {routine.skills.join(", ")}</p>}
                 <p className="mt-3 break-all font-mono text-xs text-muted-foreground">{routine.external_id}</p>
               </details>
-              <p className="mt-3 text-[11px] text-muted-foreground">Last synchronized: {date(routine.synced_at)} · Times shown in your local timezone</p>
             </article>
           ))}
           {(offset > 0 || query.data?.next) && <div className="flex items-center justify-between">
