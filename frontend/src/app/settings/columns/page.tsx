@@ -19,6 +19,7 @@ import { Save, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ProjectColumnSettings } from "@/components/project/ProjectColumns";
 import { apiFetch } from "@/lib/api";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import type { Project, StalenessSettings } from "@/lib/types";
@@ -155,12 +156,14 @@ function StalenessForm({
               Columns
             </h1>
             <p className="text-[12px] text-muted-foreground">
-              Configure when tasks become stale in each workflow column. Done
-              columns are always excluded.
+              Manage each project’s columns and task staleness thresholds.
             </p>
           </div>
         </header>
 
+        <ProjectColumnSettings />
+        <h2 className="text-sm font-medium">Staleness thresholds</h2>
+        <p className="text-xs text-muted-foreground">Applied across projects by column name. Done columns are excluded.</p>
         <section className="rounded-lg border border-border bg-card">
           <div className="grid grid-cols-[1fr_90px_90px] max-lg:hidden items-center gap-3 px-4 py-2.5 border-b border-border/60 text-[11px] uppercase tracking-wide text-muted-foreground">
             <span>Column</span>

@@ -23,6 +23,11 @@ export function boardColumns(project?: Project, columnName?: string | null): Col
   return STANDARD_COLUMNS.map((column, i) => ({ ...column, id: -(i + 1), project: 0 }));
 }
 
+export function isCustomColumn(column: Pick<Column, "name" | "kind">): boolean {
+  const stage = STANDARD_COLUMNS.find(c => c.kind === column.kind);
+  return column.name.trim().toLowerCase() !== stage?.name.toLowerCase();
+}
+
 /** A shared-stage reorder keeps the task in its existing project column. */
 export function destinationColumns(task: Task, display: Column, projects: Project[]): Column[] {
   const columns = projects.find(p => p.id === task.project)?.columns ?? [];

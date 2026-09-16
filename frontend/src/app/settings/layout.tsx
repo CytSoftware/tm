@@ -28,7 +28,7 @@ const SETTINGS_NAV = [
   {
     href: "/settings/columns",
     label: "Columns",
-    description: "Staleness thresholds",
+    description: "Project columns and staleness",
     icon: Columns3,
   },
   {

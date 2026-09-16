@@ -21,6 +21,7 @@ import { useUpdateTask } from "@/hooks/use-tasks";
 import { cn } from "@/lib/utils";
 import { withAlpha } from "@/lib/colors";
 import { currentPeriodStart } from "@/lib/periods";
+import { isCustomColumn } from "@/lib/board-columns";
 import { PRIORITY_DOT, PRIORITY_TEXT } from "@/lib/types";
 import type { Bet, BetRef, Task, Priority, CardField, User } from "@/lib/types";
 
@@ -252,7 +253,7 @@ export function KanbanCard({
         </div>
       )}
 
-      {showProject && task.column && <div className="px-3 pb-1.5">
+      {showProject && task.column && isCustomColumn(task.column) && <div className="px-3 pb-1.5">
         <span className="inline-block max-w-full truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={task.column.name}>{task.column.name}</span>
       </div>}
 

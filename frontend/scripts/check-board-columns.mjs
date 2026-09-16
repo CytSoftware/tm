@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { boardColumns, destinationColumns } from '../src/lib/board-columns.ts';
+import { boardColumns, destinationColumns, isCustomColumn } from '../src/lib/board-columns.ts';
 const dev = { id: 10, project: 1, kind: 'in_progress', name: 'In Dev', order: 1 };
 const testing = { ...dev, id: 11, name: 'Testing', order: 2 };
 const review = { ...dev, id: 12, name: 'QA', kind: 'review', order: 3 };
@@ -19,4 +19,8 @@ assert.deepEqual(boardColumns(projects[0], 'testing').map(c => c.id), [11]);
 assert.deepEqual(boardColumns().map(c => c.kind), ['backlog', 'todo', 'in_progress', 'review', 'done', 'other']);
 assert.ok(boardColumns().every(c => c.id < 0));
 assert.equal(boardColumns(projects[0], 'missing').length, 0);
+for (const column of boardColumns()) assert.equal(isCustomColumn(column), false);
+assert.equal(isCustomColumn({ name: ' in review ', kind: 'review' }), false);
+assert.equal(isCustomColumn({ name: 'In Dev', kind: 'review' }), true);
+assert.equal(isCustomColumn({ name: 'In Review', kind: 'in_progress' }), true);
 console.log('Board columns and destination checks passed');

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Save, Trash2 } from "lucide-react";
 
 import { ProjectRepositories } from "@/components/integrations/ProjectRepositories";
+import { ProjectColumns } from "@/components/project/ProjectColumns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -226,6 +227,7 @@ function ProjectSettingsForm({ project }: { project: Project }) {
           </div>
 
           <ProjectRepositories projectId={project.id} legacyRepo={project.github_repo} />
+          <ProjectColumns project={project} />
 
           {/* Archive toggle */}
           <div className="flex items-center justify-between rounded-md border border-border/60 p-4">
