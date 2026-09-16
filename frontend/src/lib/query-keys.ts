@@ -17,6 +17,7 @@ export const taskInfiniteKey = (args: {
   projectId: number | null;
   columnId: number | null;
   columnName: string | null;
+  columnKind?: string | null;
   filtersKey: string;
 }) =>
   [
@@ -25,6 +26,7 @@ export const taskInfiniteKey = (args: {
     args.columnId,
     args.columnName,
     args.filtersKey,
+    args.columnKind ?? null,
   ] as const;
 
 export const taskKey = (key: string) => ["task", key] as const;
@@ -125,3 +127,5 @@ export const oauthConnectionsKey = () => ["oauth-connections"] as const;
 export const mcpTokensKey = () => ["mcp-tokens"] as const;
 
 export const githubPullRequestsKey = () => ["github-pull-requests"] as const;
+
+export const routinesKey = () => ["routines"] as const;

@@ -101,6 +101,8 @@ import { useBoardColumnPrefs } from "@/hooks/use-board-column-prefs";
 import { useIsMobile } from "@/hooks/use-media-query";
 import { useLongPress } from "@/hooks/use-long-press";
 import { ColumnPager } from "@/components/kanban/ColumnPager";
+import { toast } from "sonner";
+import { boardColumns, destinationColumns } from "@/lib/board-columns";
 import { MoveTaskSheet } from "@/components/kanban/MoveTaskSheet";
 import {
   copyTaskId,
@@ -125,20 +127,6 @@ import { EMPTY_BOARD_FILTERS } from "@/lib/types";
 
 /** Stable empty set, so `collapsedColumns` keeps a referential identity. */
 const EMPTY_HIDDEN: ReadonlySet<number> = new Set<number>();
-
-/** Standard column names and their canonical order. */
-const STANDARD_COLUMNS = [
-  { name: "Backlog", order: 0, is_done: false, kind: "backlog" },
-  { name: "Todo", order: 1, is_done: false, kind: "todo" },
-  { name: "In Progress", order: 2, is_done: false, kind: "in_progress" },
-  { name: "In Review", order: 3, is_done: false, kind: "review" },
-  { name: "Done", order: 4, is_done: true, kind: "done" },
-] as const satisfies readonly {
-  name: string;
-  order: number;
-  is_done: boolean;
-  kind: ColumnKind;
-}[];
 
 type CardDragData = {
   type: "card";
@@ -354,13 +342,9 @@ function BoardPageContent() {
   const queryClient = useQueryClient();
 
   const projectsQuery = useProjectsQuery();
-  const allProjects: Project[] = projectsQuery.data?.results ?? [];
+  const allProjects = useMemo(() => projectsQuery.data?.results ?? [], [projectsQuery.data]);
   const projects: Project[] = allProjects.filter((p) => !p.archived);
   const hasArchivedProjects = allProjects.some((p) => p.archived);
-  const project = useMemo(
-    () => projects.find((p) => p.id === projectId),
-    [projects, projectId],
-  );
 
   // Arriving via the "assignee" quick action means "show me everyone's work
   // across all projects, filtered to this assignee" — so force the board to
@@ -409,6 +393,12 @@ function BoardPageContent() {
         requestedAssigneeId !== null ? [requestedAssigneeId] : [],
     }),
   );
+  const effectiveProjectId = projectId ?? boardFilters.project ?? null;
+  const project = allProjects.find(p => p.id === effectiveProjectId);
+  const [pendingMove, setPendingMove] = useState<{
+    task: Task; columns: Column[]; move: (column: Column) => void;
+  } | null>(null);
+
   const [seededForTarget, setSeededForTarget] = useState<string | null>(null);
 
   // Fetch all labels for the command palette + filter bar
@@ -505,7 +495,7 @@ function BoardPageContent() {
   // Per-user, per-project collapsed/hidden columns. ``projectId`` is null on
   // the all-projects board — the hook maps that to the "0" prefs key.
   const { hiddenColumns, hideColumn, showColumn } =
-    useBoardColumnPrefs(projectId);
+    useBoardColumnPrefs(effectiveProjectId);
   const { isMobile } = useIsMobile();
   // Hiding columns saves horizontal space on the desktop track. The mobile
   // pager shows one column at a time, so there's no space to save — honouring
@@ -529,27 +519,16 @@ function BoardPageContent() {
   } | null>(null);
 
   useEffect(() => {
-    if (!projectId) return;
-    return connectProjectSocket({ projectId, queryClient });
-  }, [projectId, queryClient]);
+    if (!effectiveProjectId) return;
+    return connectProjectSocket({ projectId: effectiveProjectId, queryClient });
+  }, [effectiveProjectId, queryClient]);
 
   // Which columns should we render? Single project → real columns by order.
-  // All-projects → fixed set of virtual columns (negative ids so they don't
-  // collide with real column ids when the drag monitor maps back to a real
-  // column via `STANDARD_COL_ORDER`).
-  const displayColumns: Column[] = useMemo(() => {
-    if (project) {
-      return project.columns.slice().sort((a, b) => a.order - b.order);
-    }
-    return STANDARD_COLUMNS.map((std, i) => ({
-      id: -(i + 1),
-      project: 0,
-      name: std.name,
-      order: std.order,
-      is_done: std.is_done,
-      kind: std.kind,
-    }));
-  }, [project]);
+  // Shared stages use negative IDs to stay distinct from project columns.
+  const displayColumns = useMemo(
+    () => boardColumns(project, boardFilters.columnName),
+    [project, boardFilters.columnName],
+  );
 
   // Per-column results are fetched inside <ColumnContainer>s below and lifted
   // back here via callback. The map is what the drag monitor + keyboard nav
@@ -576,7 +555,7 @@ function BoardPageContent() {
     [],
   );
 
-  const isAllProjects = !projectId;
+  const isAllProjects = effectiveProjectId == null;
 
   // Loaded-card counts for the mobile pager pills.
   const columnCounts = useMemo(() => {
@@ -585,52 +564,44 @@ function BoardPageContent() {
     return out;
   }, [tasksByColumn]);
 
-  /**
-   * Move a task to the end of a display column. The single move primitive
-   * shared by ⌘←/→ and the mobile move sheet — keep both on this so the
-   * virtual-column mapping and position estimate stay in one place.
-   *
-   * Display columns on the all-projects board are virtual (negative ids), so
-   * they resolve to the task's own project's column of the same name first.
-   */
-  const moveTaskToDisplayColumn = useCallback(
-    (task: Task, destDisplayCol: Column) => {
-      const targetColumn =
-        destDisplayCol.id > 0
-          ? destDisplayCol
-          : projects
-              .find((p) => p.id === task.project)
-              ?.columns.find((c) => c.name === destDisplayCol.name);
-      if (!targetColumn || targetColumn.id === task.column?.id) return;
+  const moveToColumn = useCallback((task: Task, display: Column, before: Task | null, after: Task | null) => {
+    const columns = destinationColumns(task, display, allProjects);
+    if (!columns.length) {
+      toast.error(`This project has no column for ${display.name}. Add one or change a column’s type.`);
+      return;
+    }
+    const move = (column: Column) => moveTask.mutate({
+      key: task.key,
+      column_id: column.id,
+      before_id: before?.id ?? null,
+      after_id: after?.id ?? null,
+      position_scope: display.id < 0 && isAllProjects ? "kind" : "column",
+      optimistic: {
+        destColumn: column,
+        estimatedPosition: before && after ? (before.position + after.position) / 2
+          : after ? after.position + 1000 : before ? before.position - 1000 : 1000,
+      },
+    }, { onError: () => toast.error("Couldn’t move the task. Try again.") });
+    if (columns.length === 1) move(columns[0]);
+    else setPendingMove({ task, columns, move });
+  }, [allProjects, moveTask, isAllProjects]);
 
-      // Append at the end — if the dest column's loaded list is empty both
-      // ids are null, same as dropping into an empty column body.
-      const destTasks = tasksByColumn.get(destDisplayCol.id) ?? [];
-      const tail = destTasks[destTasks.length - 1];
-      moveTask.mutate({
-        key: task.key,
-        column_id: targetColumn.id,
-        before_id: null,
-        after_id: tail?.id ?? null,
-        optimistic: {
-          destColumn: targetColumn,
-          estimatedPosition: tail ? tail.position + 1000 : 1000,
-        },
-      });
-    },
-    [projects, tasksByColumn, moveTask],
-  );
+  const moveTaskToDisplayColumn = useCallback((task: Task, display: Column) => {
+    const tasks = (tasksByColumn.get(display.id) ?? []).filter(t => t.id !== task.id);
+    moveToColumn(task, display, null, tasks.at(-1) ?? null);
+  }, [tasksByColumn, moveToColumn]);
 
   // The currently selected task — pulled from whichever column's loaded
   // page happens to carry it.
   const selectedTask = useMemo(() => {
     if (selectedTaskId === null) return null;
-    for (const tasks of tasksByColumn.values()) {
+    for (const column of displayColumns) {
+      const tasks = tasksByColumn.get(column.id) ?? [];
       const hit = tasks.find((t) => t.id === selectedTaskId);
       if (hit) return hit;
     }
     return null;
-  }, [selectedTaskId, tasksByColumn]);
+  }, [selectedTaskId, tasksByColumn, displayColumns]);
 
   // Contribute board context to the shell-mounted ⌘K palette: the selected
   // task (unlocks task-scoped commands) and the commands that need
@@ -665,30 +636,17 @@ function BoardPageContent() {
   // doesn't contain the source card during a cross-column drag.
   const draggedTask = useMemo(() => {
     if (!dragPreview) return null;
-    for (const tasks of tasksByColumn.values()) {
+    for (const column of displayColumns) {
+      const tasks = tasksByColumn.get(column.id) ?? [];
       const hit = tasks.find((t) => t.id === dragPreview.sourceTaskId);
       if (hit) return hit;
     }
     return null;
-  }, [dragPreview, tasksByColumn]);
+  }, [dragPreview, tasksByColumn, displayColumns]);
 
   // Keyboard navigation — arrow keys, Enter, Esc, Space, plus Phase 3's
   // Linear-style modifier moves / priority keys / field-editor keys / help.
   useEffect(() => {
-    /** Resolve the concrete `Column` a task should land in for a given
-     *  *display* column (which may be a virtual all-projects column). Mirrors
-     *  the drag monitor's onDrop resolution below (same virtual→real mapping
-     *  by column name), so keyboard moves and drag-and-drop drop into
-     *  identical places. */
-    function resolveRealColumn(
-      displayCol: Column,
-      task: Task,
-    ): Column | undefined {
-      if (displayCol.id > 0) return displayCol;
-      const realProject = projects.find((p) => p.id === task.project);
-      return realProject?.columns.find((c) => c.name === displayCol.name);
-    }
-
     /** Cmd/Alt+←/→ — move the selected task into the previous/next VISIBLE
      *  column (collapsed columns are skipped), appended at the end of that
      *  column's currently-loaded list. Selection stays on the moved task
@@ -742,57 +700,21 @@ function BoardPageContent() {
         beforeId = swapIdx + 1 < tasks.length ? tasks[swapIdx + 1].id : null;
       }
 
-      const afterTask = afterId ? tasks.find((t) => t.id === afterId) : undefined;
-      const beforeTask = beforeId ? tasks.find((t) => t.id === beforeId) : undefined;
-      let estimatedPosition: number;
-      if (afterTask && beforeTask) {
-        estimatedPosition = (afterTask.position + beforeTask.position) / 2;
-      } else if (afterTask) {
-        estimatedPosition = afterTask.position + 1000;
-      } else if (beforeTask) {
-        estimatedPosition = beforeTask.position - 1000;
-      } else {
-        estimatedPosition = 1000;
-      }
-
-      moveTask.mutate({
-        key: selectedTask.key,
-        column_id: selectedTask.column.id,
-        before_id: beforeId,
-        after_id: afterId,
-        optimistic: { destColumn: selectedTask.column, estimatedPosition },
-      });
+      moveToColumn(selectedTask, displayColumns[ci],
+        tasks.find(t => t.id === beforeId) ?? null,
+        tasks.find(t => t.id === afterId) ?? null);
     }
 
-    /** `d` — move the selected task to its own project's rightmost `is_done`
-     *  column. Resolved directly from `task.project` rather than the
-     *  currently-displayed virtual column, so — unlike drag-and-drop, which
-     *  has to map a *drop target* back to a real column by name — this works
-     *  identically on the all-projects board. */
     function moveToDoneColumn() {
       if (!selectedTask) return;
-      const realProject = projects.find((p) => p.id === selectedTask.project);
-      if (!realProject) return;
-      const doneCol = realProject.columns
-        .filter((c) => c.is_done)
-        .sort((a, b) => b.order - a.order)[0];
-      if (!doneCol || doneCol.id === selectedTask.column?.id) return;
-
-      const destKey = isAllProjects
-        ? displayColumns.find((c) => c.name === doneCol.name)?.id ?? doneCol.id
-        : doneCol.id;
-      const destTasks = tasksByColumn.get(destKey) ?? [];
-      const tail = destTasks[destTasks.length - 1];
-      moveTask.mutate({
-        key: selectedTask.key,
-        column_id: doneCol.id,
-        before_id: null,
-        after_id: tail?.id ?? null,
-        optimistic: {
-          destColumn: doneCol,
-          estimatedPosition: tail ? tail.position + 1000 : 1000,
-        },
-      });
+      const done = (project?.columns ?? displayColumns).find(c => c.kind === "done");
+      if (done) {
+        if (isAllProjects) moveTaskToDisplayColumn(selectedTask, done);
+        else {
+          // Completion can have several destinations even on a project board.
+          moveTaskToDisplayColumn(selectedTask, { ...done, id: -5 });
+        }
+      } else toast.error("This project has no Done column.");
     }
 
     /** Selecting a task (or deselecting) always closes any open
@@ -818,6 +740,7 @@ function BoardPageContent() {
       // keyboard entirely while visible.
       if (
         paletteOpen ||
+        pendingMove !== null ||
         taskDialog.isOpen ||
         createProjectOpen ||
         labelManagerOpen ||
@@ -1036,6 +959,10 @@ function BoardPageContent() {
     recurringManagerOpen,
     declutterOpen,
     viewKind,
+    moveToColumn,
+    moveTaskToDisplayColumn,
+    pendingMove,
+    project,
   ]);
 
   // pragmatic-dnd has no drop animation — the card just teleports to its
@@ -1124,7 +1051,8 @@ function BoardPageContent() {
         const { destColumnId: destColId, insertIndex: insertIdx } = resolved;
         const sourceTaskId = source.data.taskId;
         let movingTask: Task | undefined;
-        for (const tasks of tasksByColumn.values()) {
+        for (const column of displayColumns) {
+          const tasks = tasksByColumn.get(column.id) ?? [];
           const hit = tasks.find((t) => t.id === sourceTaskId);
           if (hit) {
             movingTask = hit;
@@ -1146,72 +1074,11 @@ function BoardPageContent() {
         const beforeId =
           insertIdx < destTasks.length ? destTasks[insertIdx]?.id : undefined;
 
-        // Virtual col → real col for the API call. We also grab the real
-        // Column object so the mutation's optimistic insert can attach the
-        // correct ``column`` to the card before the server confirms it.
-        let targetColumnId: number | null = null;
-        let targetColumn: Column | undefined;
-        if (destColId > 0) {
-          targetColumnId = destColId;
-          targetColumn = displayColumns.find((c) => c.id === destColId);
-        } else {
-          const vc = displayColumns.find((c) => c.id === destColId);
-          if (vc) {
-            const realProject = projects.find(
-              (p) => p.id === movingTask.project,
-            );
-            const realCol = realProject?.columns.find(
-              (c) => c.name === vc.name,
-            );
-            targetColumnId = realCol?.id ?? null;
-            targetColumn = realCol;
-          }
-        }
-        if (!targetColumnId) return;
+        const display = displayColumns.find(c => c.id === destColId);
+        if (display) moveToColumn(movingTask, display,
+          destTasks.find(t => t.id === beforeId) ?? null,
+          destTasks.find(t => t.id === afterId) ?? null);
 
-        // Approximate the position the server will assign, so the
-        // optimistic insert slots the card into the exact spot the user
-        // dropped it — otherwise the card disappears for the full network
-        // round-trip. Mirrors the backend ``_compute_position`` arithmetic
-        // using whatever positions we can see locally.
-        const afterTask = afterId
-          ? destTasks.find((t) => t.id === afterId)
-          : undefined;
-        const beforeTask = beforeId
-          ? destTasks.find((t) => t.id === beforeId)
-          : undefined;
-        let estimatedPosition: number;
-        if (afterTask && beforeTask) {
-          estimatedPosition = (afterTask.position + beforeTask.position) / 2;
-        } else if (afterTask) {
-          estimatedPosition = afterTask.position + 1000;
-        } else if (beforeTask) {
-          estimatedPosition = beforeTask.position - 1000;
-        } else {
-          const tail = destTasks.reduce(
-            (m, t) => (t.position > m ? t.position : m),
-            0,
-          );
-          estimatedPosition = tail + 1000;
-        }
-
-        // The server persists the new position regardless of the current
-        // sort. We used to auto-flip sort to ``position`` here so the drag
-        // result was immediately visible, but that changes the queryKey and
-        // forces every column's paginated cache to refetch from offset 0 —
-        // the user loses their scroll position on every drag. Leave sort
-        // alone; if the user is sorted by something other than position the
-        // drag still persists, it just isn't visible until they switch to
-        // manual order.
-        moveTask.mutate({
-          key: movingTask.key,
-          column_id: targetColumnId,
-          before_id: beforeId ?? null,
-          after_id: afterId ?? null,
-          optimistic: targetColumn
-            ? { destColumn: targetColumn, estimatedPosition }
-            : undefined,
-        });
       },
     });
   }, [
@@ -1220,11 +1087,12 @@ function BoardPageContent() {
     projects,
     boardFilters,
     moveTask,
+    moveToColumn,
   ]);
 
   // Column names available as a filter option. With server-side pagination we
   // only see the pages that are loaded, so we derive this from the project's
-  // real columns (or the canonical standard columns in all-projects mode) —
+  // real columns across the selected scope —
   // that way the option stays correct even before any page has loaded.
   const availableColumnNames = useMemo(() => {
     if (project) {
@@ -1233,20 +1101,23 @@ function BoardPageContent() {
         .sort((a, b) => a.order - b.order)
         .map((c) => c.name);
     }
-    return STANDARD_COLUMNS.map((c) => c.name);
-  }, [project]);
+    return [...new Set(allProjects.filter(p => boardFilters.includeArchived || !p.archived).flatMap(p => p.columns.map(c => c.name)))].sort();
+  }, [project, allProjects, boardFilters.includeArchived]);
 
   return (
     <div className="h-full flex flex-col min-h-0">
       <BoardHeader
         projects={projects}
         project={project}
-        projectId={projectId}
-        onSelectProject={setProjectId}
+        projectId={effectiveProjectId}
+        onSelectProject={id => {
+          setProjectId(id);
+          setBoardFilters(current => ({ ...current, project: null }));
+        }}
         onCreateProject={() => setCreateProjectOpen(true)}
         viewId={viewId}
         onViewChange={setViewId}
-        onNewTask={() => taskDialog.createTask({ columnId: null })}
+        onNewTask={() => taskDialog.createTask({ projectId: effectiveProjectId, columnId: null })}
         onManageLabels={() => setLabelManagerOpen(true)}
         onManageRecurring={() => setRecurringManagerOpen(true)}
         boardFilters={boardFilters}
@@ -1300,7 +1171,7 @@ function BoardPageContent() {
           <div className="h-full" />
         ) : viewKind === "table" ? (
           <TableContainer
-            projectId={projectId}
+            projectId={effectiveProjectId}
             filters={boardFilters}
             showProject={isAllProjects}
             onSortChange={(sort) =>
@@ -1316,7 +1187,7 @@ function BoardPageContent() {
               <ColumnContainer
                 key={col.id}
                 column={col}
-                projectId={projectId}
+                projectId={effectiveProjectId}
                 filters={boardFilters}
                 dragPreview={dragPreview}
                 draggedTask={draggedTask}
@@ -1327,7 +1198,7 @@ function BoardPageContent() {
                 onTasksChange={onColumnTasksChange}
                 onAddTask={
                   project
-                    ? () => taskDialog.createTask({ columnId: col.id })
+                    ? () => taskDialog.createTask({ projectId: project.id, columnId: col.id })
                     : undefined
                 }
                 onEditTask={(task) => taskDialog.openTask(task)}
@@ -1384,8 +1255,8 @@ function BoardPageContent() {
             {project && (
               <AddColumnCell
                 isPending={createColumn.isPending}
-                onAdd={(name) =>
-                  createColumn.mutate({ project: project.id, name })
+                onAdd={(name, kind) =>
+                  createColumn.mutate({ project: project.id, name, kind })
                 }
               />
             )}
@@ -1396,7 +1267,7 @@ function BoardPageContent() {
         <DeleteColumnDialog
           open={columnPendingDelete !== null}
           column={columnPendingDelete}
-          siblings={displayColumns.filter(
+          siblings={project.columns.filter(
             (c) => c.id > 0 && c.id !== columnPendingDelete?.id,
           )}
           taskCount={
@@ -1447,19 +1318,30 @@ function BoardPageContent() {
         open={declutterOpen}
         onOpenChange={setDeclutterOpen}
         projects={projects}
-        scopeProjectId={projectId}
+        scopeProjectId={effectiveProjectId}
       />
       <AssignDialog
         open={assignOpen}
         onOpenChange={setAssignOpen}
         projects={projects}
         users={allUsers}
-        scopeProjectId={projectId}
+        scopeProjectId={effectiveProjectId}
       />
       <ShortcutsHelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
+      <Dialog open={pendingMove !== null} onOpenChange={open => { if (!open) setPendingMove(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Move {pendingMove?.task.key} to…</DialogTitle></DialogHeader>
+          <div className="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
+            {pendingMove?.columns.map(column => <Button key={column.id} variant="outline" onClick={() => {
+              pendingMove.move(column);
+              setPendingMove(null);
+            }}>{column.name}</Button>)}
+          </div>
+        </DialogContent>
+      </Dialog>
       <MoveTaskSheet
         task={moveTarget}
-        columns={displayColumns}
+        columns={allProjects.find(p => p.id === moveTarget?.project)?.columns ?? []}
         onMove={moveTaskToDisplayColumn}
         onClose={() => setMoveTarget(null)}
       />
@@ -1602,7 +1484,7 @@ function ColumnContainer({
   onShow,
 }: ColumnContainerProps) {
   // Real columns have positive ids + a concrete `project` fk. All-projects
-  // virtual columns have negative ids and only a column name.
+  // virtual columns have negative IDs and a shared type.
   const isVirtual = column.id < 0;
   // Done columns order by completion time (= when the task entered the
   // column), most recent first — but only while the board is on the default
@@ -1628,7 +1510,7 @@ function ColumnContainer({
   const query = useTasksInfinite({
     projectId,
     columnId: isVirtual ? null : column.id,
-    columnName: isVirtual ? column.name : null,
+    columnKind: isVirtual ? column.kind : null,
     filters: effectiveFilters,
     limit: isHidden ? 1 : 25,
   });

@@ -15,6 +15,7 @@ import {
   allInReviewKey,
   taskListKey,
   projectKey,
+  projectsKey,
   toReviewKey,
   unclaimedReviewsKey,
 } from "./query-keys";
@@ -50,6 +51,9 @@ export function connectProjectSocket({
 
     queryClient.invalidateQueries({ queryKey: taskListKey(projectId) });
     queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
+    if (event.type.startsWith("column.")) {
+      queryClient.invalidateQueries({ queryKey: projectsKey() });
+    }
 
     // The /reviews page is cross-project, so its keys sit beside — not under
     // — taskListKey(projectId) and the two invalidations above miss them.

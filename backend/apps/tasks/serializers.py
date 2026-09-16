@@ -674,6 +674,7 @@ class TaskMoveSerializer(serializers.Serializer):
     """Payload for the ``/tasks/{key}/move/`` action."""
 
     column_id = serializers.IntegerField()
+    position_scope = serializers.ChoiceField(choices=["column", "kind"], default="column")
     position = serializers.FloatField(required=False)
     before_id = serializers.IntegerField(required=False, allow_null=True)
     after_id = serializers.IntegerField(required=False, allow_null=True)

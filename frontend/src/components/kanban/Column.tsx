@@ -408,7 +408,7 @@ export function CollapsedColumn({ column, count, onExpand }: CollapsedColumnProp
 }
 
 type AddColumnCellProps = {
-  onAdd: (name: string) => void;
+  onAdd: (name: string, kind: ColumnKind) => void;
   isPending?: boolean;
 };
 
@@ -417,6 +417,7 @@ type AddColumnCellProps = {
 export function AddColumnCell({ onAdd, isPending }: AddColumnCellProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [kind, setKind] = useState<ColumnKind>("other");
 
   function commit() {
     const next = draft.trim();
@@ -425,7 +426,8 @@ export function AddColumnCell({ onAdd, isPending }: AddColumnCellProps) {
       setDraft("");
       return;
     }
-    onAdd(next);
+    onAdd(next, kind);
+    setKind("other");
     setDraft("");
     setIsEditing(false);
   }
@@ -456,7 +458,10 @@ export function AddColumnCell({ onAdd, isPending }: AddColumnCellProps) {
 
   return (
     <div className="shrink-0 w-[240px] h-full flex items-start pt-1 max-lg:hidden">
-      <div className="flex w-full items-center gap-1">
+      <div className="flex w-full flex-wrap items-center gap-1">
+        <select aria-label="New column type" value={kind} onChange={e => setKind(e.target.value as ColumnKind)} className="h-8 w-full rounded-md border bg-background px-2 text-xs">
+          {COLUMN_KIND_ORDER.map(value => <option key={value} value={value}>{COLUMN_KIND_LABELS[value]}</option>)}
+        </select>
         <Input
           autoFocus
           value={draft}

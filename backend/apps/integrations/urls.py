@@ -6,6 +6,7 @@ Mounted at ``/api/integrations/`` by ``core/urls.py``.
 from django.urls import path
 from rest_framework.routers import SimpleRouter
 
+from .routines import RoutineViewSet
 from .views import (
     EventSourceViewSet,
     ExternalEventViewSet,
@@ -16,6 +17,7 @@ from .pull_requests import GitHubPullRequestsView
 from .repositories import GitHubRepositoriesView, ProjectRepositoriesView
 
 router = SimpleRouter()
+router.register(r"routines", RoutineViewSet, basename="routine")
 router.register(r"event-sources", EventSourceViewSet, basename="event-source")
 router.register(r"events", ExternalEventViewSet, basename="external-event")
 router.register(r"services", InfrastructureServiceViewSet, basename="service")

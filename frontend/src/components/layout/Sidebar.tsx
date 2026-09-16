@@ -26,6 +26,7 @@ import {
   LayoutDashboard,
   LogOut,
   Settings,
+  Repeat,
   Sparkles,
   Target,
 } from "lucide-react";
@@ -304,6 +305,13 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
               router.push("/reviews");
               onClose?.();
             }}
+          />
+          <NavLink
+            icon={<Repeat className={isCollapsed ? "size-4" : "size-3.5 shrink-0 text-muted-foreground"} />}
+            label="Routines"
+            active={pathname.startsWith("/routines")}
+            collapsed={isCollapsed}
+            onNavigate={() => { router.push("/routines"); onClose?.(); }}
           />
           <NavLink
             icon={

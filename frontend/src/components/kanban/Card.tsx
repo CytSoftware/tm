@@ -252,6 +252,10 @@ export function KanbanCard({
         </div>
       )}
 
+      {showProject && task.column && <div className="px-3 pb-1.5">
+        <span className="inline-block max-w-full truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={task.column.name}>{task.column.name}</span>
+      </div>}
+
       {/* Due date — its own row with overdue/soon/future tone, so a deadline
           reads at a glance instead of hiding in the footer. */}
       {showDueDate && task.due_at && <DueBadge due={task.due_at} />}

@@ -315,3 +315,23 @@ class InfrastructureService(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return self.name
+
+
+class Routine(models.Model):
+    """Last confirmed snapshot of a Hermes routine; TM does not execute it."""
+
+    external_id = models.CharField(max_length=200, unique=True)
+    name = models.CharField(max_length=200)
+    instructions = models.TextField(blank=True, default="")
+    trigger_type = models.CharField(max_length=16, choices=[("schedule", "Schedule"), ("webhook", "Webhook"), ("manual", "Manual")])
+    trigger_description = models.CharField(max_length=1000)
+    enabled = models.BooleanField(default=True)
+    skills = models.JSONField(default=list, blank=True)
+    next_run_at = models.DateTimeField(null=True, blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    last_run_status = models.CharField(max_length=40, blank=True, default="")
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="routines_updated")
+    synced_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "id"]

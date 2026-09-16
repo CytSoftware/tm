@@ -9,6 +9,7 @@ import type { Column, ColumnKind } from "@/lib/types";
 function invalidateProject(qc: ReturnType<typeof useQueryClient>, projectId: number) {
   qc.invalidateQueries({ queryKey: projectKey(projectId) });
   qc.invalidateQueries({ queryKey: projectsKey() });
+  qc.invalidateQueries({ queryKey: ["tasks-infinite"] });
 }
 
 export function useCreateColumn() {

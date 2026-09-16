@@ -34,10 +34,7 @@ export function MoveTaskSheet({
   onMove,
   onClose,
 }: MoveTaskSheetProps) {
-  // The task's column is a real column; on the all-projects board the display
-  // columns are virtual, so match on name as well as id.
   const currentId = task?.column?.id ?? null;
-  const currentName = task?.column?.name ?? null;
 
   return (
     <Sheet
@@ -57,8 +54,7 @@ export function MoveTaskSheet({
         </SheetHeader>
         <SheetBody className="px-2 pb-2">
           {columns.map((col) => {
-            const isCurrent =
-              col.id > 0 ? col.id === currentId : col.name === currentName;
+            const isCurrent = col.id === currentId;
             return (
               <button
                 key={col.id}

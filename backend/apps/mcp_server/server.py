@@ -115,6 +115,8 @@ READ_ONLY_TOOLS = frozenset({
     "knowledge_read",
     "knowledge_schema",
     "knowledge_sources",
+    "list_routines",
+    "get_routine",
     "list_bets",
     "list_columns",
     "list_focus",
@@ -1180,6 +1182,67 @@ async def knowledge_delete(slug: str) -> dict[str, Any]:
 async def knowledge_reindex() -> dict[str, Any]:
     """Rebuild the ``index`` catalog from the current pages (housekeeping/repair)."""
     return await _async(tools.knowledge_reindex)()
+
+
+@mcp.tool()
+async def list_routines(limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    """List mirrored Hermes routines and last known state. TM does not execute routines."""
+    from apps.integrations.routines import list_routines as impl
+    return await _async(impl)(limit=limit, offset=offset)
+
+
+@mcp.tool()
+async def get_routine(external_id: str) -> dict[str, Any]:
+    """Read a routine mirror by stable Hermes ID: cron:<job-id> or webhook:<route-name>."""
+    from apps.integrations.routines import get_routine as impl, RoutineSerializer
+    return await _async(lambda: RoutineSerializer(impl(external_id)).data)()
+
+
+@mcp.tool()
+async def create_routine(
+    external_id: str, name: str, instructions: str, trigger_type: str,
+    trigger_description: str, enabled: bool = True, skills: list[str] | None = None,
+    next_run_at: str | None = None, last_run_at: str | None = None,
+    last_run_status: str = "",
+) -> dict[str, Any]:
+    """Create or refresh a TM mirror AFTER creating/verifying the routine in Hermes.
+
+    This does not schedule, enable or execute anything. Retry with the same
+    external_id to avoid duplicates. trigger_type: schedule, webhook, manual.
+    Include timezone in trigger_description; dates are ISO 8601 with timezone.
+    Never include credentials, webhook secrets, or signed URLs. Last-run fields
+    are observations, not proof the requested work succeeded.
+    """
+    from apps.integrations.routines import save_routine
+    return await _async(save_routine)(external_id, {
+        "name": name, "instructions": instructions, "trigger_type": trigger_type,
+        "trigger_description": trigger_description, "enabled": enabled,
+        "skills": skills or [], "next_run_at": next_run_at,
+        "last_run_at": last_run_at, "last_run_status": last_run_status,
+    }, create=True, mcp_user=_get_mcp_user())
+
+
+@mcp.tool()
+async def update_routine(external_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+    """Update a TM mirror AFTER changing/verifying Hermes. Does not pause or change Hermes.
+
+    changes may contain name, instructions, trigger_type, trigger_description,
+    enabled, skills, next_run_at, last_run_at, last_run_status. Omitted fields
+    stay unchanged; null clears dates. Keep external_id stable. No secrets.
+    """
+    from apps.integrations.routines import save_routine
+    return await _async(save_routine)(external_id, changes, mcp_user=_get_mcp_user())
+
+
+@mcp.tool()
+async def delete_routine(external_id: str) -> dict[str, Any]:
+    """Remove only the TM mirror AFTER deleting the real routine in Hermes.
+
+    Idempotent. Does not stop, pause, or delete a Hermes job. For pause, use
+    update_routine(enabled=false) after confirming Hermes is paused instead.
+    """
+    from apps.integrations.routines import delete_routine as impl
+    return await _async(impl)(external_id, mcp_user=_get_mcp_user())
 
 
 # ---------------------------------------------------------------------------

@@ -34,8 +34,9 @@ type TasksInfiniteArgs = {
   projectId: number | null;
   /** When set, scope the query to a single column by id (single-project kanban). */
   columnId?: number | null;
-  /** When set, scope the query to a column by name (all-projects virtual columns). */
+  /** Exact column-name filter, including saved views. */
   columnName?: string | null;
+  columnKind?: import("@/lib/types").ColumnKind | null;
   /** Board filter + sort state. The fields here are translated into
    *  saved-view-shaped query-string params the backend understands. */
   filters: BoardFilters;
@@ -55,12 +56,13 @@ function buildTaskQueryString(
   offset: number,
 ): string {
   const params = new URLSearchParams();
-  const { filters, columnId, columnName, projectId, limit } = args;
+  const { filters, columnId, columnName, columnKind, projectId, limit } = args;
 
   if (projectId != null) params.set("project", String(projectId));
   else if (filters.project != null)
     params.set("project", String(filters.project));
 
+  if (columnKind) params.set("column_kind", columnKind);
   if (columnId != null) params.set("column", String(columnId));
   else if (columnName) params.set("column", columnName);
   else if (filters.columnName) params.set("column", filters.columnName);
@@ -103,7 +105,7 @@ export function filtersCacheKey(
   projectId: number | null,
 ): string {
   return JSON.stringify({
-    projectId,
+    projectId: projectId ?? filters.project,
     priorities: filters.priorities,
     assigneeIds: filters.assigneeIds,
     includeUnassigned: filters.includeUnassigned,
@@ -116,7 +118,7 @@ export function filtersCacheKey(
 }
 
 export function useTasksInfinite(args: TasksInfiniteArgs) {
-  const { projectId, columnId, columnName, filters, enabled } = args;
+  const { projectId, columnId, columnName, columnKind, filters, enabled } = args;
   const filtersKey = filtersCacheKey(filters, projectId);
 
   return useInfiniteQuery<TaskListResponse>({
@@ -125,6 +127,7 @@ export function useTasksInfinite(args: TasksInfiniteArgs) {
       columnId: columnId ?? null,
       columnName: columnName ?? null,
       filtersKey,
+      columnKind,
     }),
     initialPageParam: 0,
     queryFn: ({ pageParam }) => {
@@ -413,6 +416,7 @@ type MovePayload = {
   before_id?: number | null;
   after_id?: number | null;
   position?: number;
+  position_scope?: "column" | "kind";
   /** Client-only hint for the optimistic cache update. Stripped from the
    *  request body before the POST hits the server — the server would reject
    *  the extra field anyway. Skipping it (e.g. when the drop metadata is
@@ -471,6 +475,11 @@ function insertTaskIntoMatchingCaches(qc: QueryClient, task: Task) {
     if (!data) continue;
     const keyColumnId = queryKey[2] as number | null;
     const keyColumnName = queryKey[3] as string | null;
+    const keyColumnKind = queryKey[5] as string | null;
+    const filters = JSON.parse(queryKey[4] as string);
+    if (filters.projectId != null && filters.projectId !== task.project) continue;
+    if (filters.columnName && filters.columnName.toLowerCase() !== task.column.name.toLowerCase()) continue;
+    if (keyColumnKind && keyColumnKind !== task.column.kind) continue;
 
     let matches: boolean;
     if (keyColumnId != null) {
@@ -536,7 +545,8 @@ export function useMoveTask() {
     //               task at its authoritative position. Usually a no-op
     //               visually because the estimate matched.
     //   onError   → restore snapshots.
-    //   onSettled → no refetch; manual cache edits are authoritative.
+    //   onSettled → refresh view metadata. Shared-stage moves also refetch
+    //               task pages because their positions can be rebalanced.
     //               (WebSocket task.moved events from OTHER sessions
     //               still arrive via ws.ts and invalidate appropriately.)
     onMutate: ({ key, optimistic }) => {
@@ -576,12 +586,16 @@ export function useMoveTask() {
         qc.setQueryData(queryKey, data);
       }
     },
-    onSuccess: (serverTask) => {
+    onSuccess: (serverTask, variables) => {
       // Defensive: remove any lingering copy (e.g. from a previous cache
       // state that didn't see onMutate), then insert fresh at the
       // server-dictated position.
       removeTaskFromInfiniteCaches(qc, serverTask.id);
       insertTaskIntoMatchingCaches(qc, serverTask);
+      // A shared-stage move can rebalance positions across project columns.
+      if (variables.position_scope === "kind") {
+        qc.invalidateQueries({ queryKey: ["tasks-infinite"] });
+      }
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: viewsKey() });

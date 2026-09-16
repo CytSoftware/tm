@@ -1578,6 +1578,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                     before_id=before_id,
                     after_id=after_id,
                     task_id=task.id,
+                    position_scope=data["position_scope"],
                 )
             task.save(update_fields=["column", "position", "updated_at"])
             if (old_column.id if old_column else None) != column.id:
@@ -1635,7 +1636,8 @@ class TaskViewSet(viewsets.ModelViewSet):
 
 
 def _compute_position(
-    *, column: Column, before_id: int | None, after_id: int | None, task_id: int
+    *, column: Column, before_id: int | None, after_id: int | None, task_id: int,
+    position_scope: str = "column",
 ) -> float:
     """Midpoint positioning for drag-and-drop.
 
@@ -1647,43 +1649,22 @@ def _compute_position(
     - When only one is given we offset by a constant.
     - When neither is given we append to the bottom.
 
-    ``after_id``/``before_id`` are resolved *globally*, not restricted to
-    ``column``'s tasks. That lets the all-projects virtual kanban hand us
-    neighbour ids from any project — the resulting numeric position is
-    consistent with the cross-project visual slot the user dropped into.
-    The moved task still ends up in ``column``; only the *numeric* position
-    comes from the global neighbours.
+    Shared-stage boards pass ``position_scope="kind"`` so neighbours may
+    belong to different projects and differently named columns of that type.
+    Project boards use the concrete destination column.
     """
-    # Lazy rebalance: every task created before the position-on-create fix
-    # shares the model default (1000.0). Midpoint math on a tied column
-    # returns that same value, so the move silently no-ops and the client
-    # snaps back to (position, id) order. Spread the column out once on the
-    # first move it sees; subsequent moves get clean unique midpoints.
-    _rebalance_if_tied(column, exclude_task_id=task_id)
-
-    after = (
-        Task.objects.filter(id=after_id).exclude(id=task_id).first()
-        if after_id
-        else None
-    )
-    before = (
-        Task.objects.filter(id=before_id).exclude(id=task_id).first()
-        if before_id
-        else None
-    )
+    scope = Task.objects.filter(column__kind=column.kind) if position_scope == "kind" else column.tasks.all()
+    _rebalance_if_tied(scope, exclude_task_id=task_id)
+    after = scope.filter(id=after_id).exclude(id=task_id).first() if after_id else None
+    before = scope.filter(id=before_id).exclude(id=task_id).first() if before_id else None
+    if (after_id and after is None) or (before_id and before is None):
+        raise ValidationError({"detail": "The destination changed. Refresh the board and try again."})
 
     if after and before:
         return (after.position + before.position) / 2.0
-    # For the one-sided cases, search among tasks in same-named columns
-    # (e.g. every project's "Todo") — that matches what the all-projects
-    # virtual kanban displays as one logical column and keeps single-
-    # project kanban correct too (only one such column exists there).
     if after and not before:
         bigger = (
-            Task.objects.filter(
-                position__gt=after.position,
-                column__name__iexact=column.name,
-            )
+            scope.filter(position__gt=after.position)
             .exclude(id=task_id)
             .order_by("position", "id")
             .values_list("position", flat=True)
@@ -1694,10 +1675,7 @@ def _compute_position(
         return (after.position + bigger) / 2.0
     if before and not after:
         smaller = (
-            Task.objects.filter(
-                position__lt=before.position,
-                column__name__iexact=column.name,
-            )
+            scope.filter(position__lt=before.position)
             .exclude(id=task_id)
             .order_by("-position", "-id")
             .values_list("position", flat=True)
@@ -1707,17 +1685,17 @@ def _compute_position(
             return before.position - 1000.0
         return (smaller + before.position) / 2.0
     # Append to bottom of the target column.
-    tail = column.tasks.exclude(id=task_id).aggregate(m=Max("position"))["m"]
+    tail = scope.exclude(id=task_id).aggregate(m=Max("position"))["m"]
     return (tail or 0) + 1000.0
 
 
-def _rebalance_if_tied(column: Column, *, exclude_task_id: int) -> None:
-    """Re-space positions in a column if any ties exist.
+def _rebalance_if_tied(scope, *, exclude_task_id: int) -> None:
+    """Re-space positions in the displayed group if any ties exist.
 
     Preserves the current (position, id) ordering — the user-visible layout
     doesn't change, midpoint math just gains room to bisect. One bulk UPDATE.
     """
-    neighbors = column.tasks.exclude(id=exclude_task_id)
+    neighbors = scope.exclude(id=exclude_task_id)
     positions = list(neighbors.values_list("position", flat=True))
     if len(positions) == len(set(positions)):
         return
@@ -1725,6 +1703,8 @@ def _rebalance_if_tied(column: Column, *, exclude_task_id: int) -> None:
     for i, t in enumerate(ordered, start=1):
         t.position = i * 1000.0
     Task.objects.bulk_update(ordered, ["position"])
+    for project_id in {task.project_id for task in ordered}:
+        transaction.on_commit(lambda pid=project_id: broadcast_task_event(pid, "task.updated", {}))
 
 
 # ---------------------------------------------------------------------------
