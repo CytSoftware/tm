@@ -26,6 +26,13 @@ export function boardColumns(project?: Project, columnName?: string | null): Col
     .sort((a, b) => a.order - b.order);
 }
 
+/** The shared "Other" stage is a catch-all: worth a track slot only while it
+ *  holds something. An unloaded column counts as empty so it never flashes in
+ *  and out on first paint. Real project columns always show, empty or not. */
+export function isEmptyOtherStage(column: Pick<Column, "id" | "kind">, taskCount: number): boolean {
+  return column.id < 0 && column.kind === "other" && taskCount === 0;
+}
+
 export function isCustomColumn(column: Pick<Column, "name" | "kind">): boolean {
   const stage = STANDARD_COLUMNS.find(c => c.kind === column.kind);
   return column.name.trim().toLowerCase() !== stage?.name.toLowerCase();

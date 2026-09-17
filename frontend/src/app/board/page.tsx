@@ -102,7 +102,7 @@ import { useIsMobile } from "@/hooks/use-media-query";
 import { useLongPress } from "@/hooks/use-long-press";
 import { ColumnPager } from "@/components/kanban/ColumnPager";
 import { toast } from "sonner";
-import { boardColumns, destinationColumns } from "@/lib/board-columns";
+import { boardColumns, destinationColumns, isEmptyOtherStage } from "@/lib/board-columns";
 import { MoveTaskSheet } from "@/components/kanban/MoveTaskSheet";
 import {
   copyTaskId,
@@ -564,6 +564,13 @@ function BoardPageContent() {
     return out;
   }, [tasksByColumn]);
 
+  // The pager maps a pill index onto a scroll offset, so it must list exactly
+  // the columns the track paints — an empty Other renders nothing below.
+  const pagerColumns = useMemo(
+    () => displayColumns.filter(c => !isEmptyOtherStage(c, columnCounts.get(c.id) ?? 0)),
+    [displayColumns, columnCounts],
+  );
+
   const moveToColumn = useCallback((task: Task, display: Column, before: Task | null, after: Task | null) => {
     const columns = destinationColumns(task, display, allProjects);
     if (!columns.length) {
@@ -662,7 +669,13 @@ function BoardPageContent() {
       while (
         ni >= 0 &&
         ni < displayColumns.length &&
-        collapsedColumns.has(displayColumns[ni].id)
+        (collapsedColumns.has(displayColumns[ni].id) ||
+          // An empty Other stage isn't painted, so it isn't a move target
+          // either — otherwise the task vanishes into an invisible column.
+          isEmptyOtherStage(
+            displayColumns[ni],
+            (tasksByColumn.get(displayColumns[ni].id) ?? []).length,
+          ))
       ) {
         ni += direction === "right" ? 1 : -1;
       }
@@ -1142,7 +1155,7 @@ function BoardPageContent() {
       />
       {viewKind !== "table" && (
         <ColumnPager
-          columns={displayColumns}
+          columns={pagerColumns}
           counts={columnCounts}
           scroller={boardScroller}
         />
@@ -1530,6 +1543,10 @@ function ColumnContainer({
   const handleLoadMore = useCallback(() => {
     fetchNextPage();
   }, [fetchNextPage]);
+
+  // Stay mounted so the query keeps polling: the stage reappears on its own
+  // the moment a task lands in a column no standard stage claims.
+  if (isEmptyOtherStage(column, tasks.length)) return null;
 
   if (isHidden) {
     return (

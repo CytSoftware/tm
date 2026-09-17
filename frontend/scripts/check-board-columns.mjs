@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { boardColumns, destinationColumns, isCustomColumn } from '../src/lib/board-columns.ts';
+import { boardColumns, destinationColumns, isCustomColumn, isEmptyOtherStage } from '../src/lib/board-columns.ts';
 const dev = { id: 10, project: 1, kind: 'in_progress', name: 'In Dev', order: 1 };
 const testing = { ...dev, id: 11, name: 'Testing', order: 2 };
 const review = { ...dev, id: 12, name: 'QA', kind: 'review', order: 3 };
@@ -29,3 +29,11 @@ assert.equal(boardColumns().find(c => c.kind === 'other').id, -6);
 assert.equal(boardColumns().find(c => c.kind === 'cancelled').id, -7);
 const cancelled = { id: 20, project: 1, name: 'Cancelled', kind: 'cancelled', order: 5 };
 assert.deepEqual(destinationColumns(task, { id: -7, kind: 'cancelled' }, [{ id: 1, columns: [cancelled] }]), [cancelled]);
+
+const otherStage = boardColumns().find(c => c.kind === 'other');
+assert.equal(isEmptyOtherStage(otherStage, 0), true);
+assert.equal(isEmptyOtherStage(otherStage, 3), false);
+// Real project columns keep their slot while empty, whatever their kind.
+assert.equal(isEmptyOtherStage({ id: 12, kind: 'other' }, 0), false);
+assert.equal(isEmptyOtherStage(boardColumns().find(c => c.kind === 'cancelled'), 0), false);
+console.log('Empty Other stage checks passed');
