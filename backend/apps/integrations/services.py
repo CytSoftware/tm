@@ -19,17 +19,21 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from functools import partial
 from datetime import datetime, timezone
 from typing import Any
 
 from django.db import transaction
+from django.db.models import F, Q, Sum
 from django.utils.dateparse import parse_datetime
 
 from apps.tasks.broadcast import broadcast_task_event
 from apps.tasks.models import Project, Task
 
 from . import rules
-from .models import ProjectRepository, TaskPullRequest
+from .models import ProjectRepository, PullRequestSnapshot, TaskPullRequest
+from .promotions import repository_reader, resolve_promotion
+from .github import GitHubUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +91,77 @@ class PullRequestEventResult:
     broadcasted_project_ids: set[int] = field(default_factory=set)
 
 
-def apply_pull_request_event(
-    payload: dict[str, Any], action: str = ""
+def _stale_pr(snapshot, pr):
+    if snapshot.payload.get("merged") and not pr.get("merged"):
+        return True
+    incoming = _parse_ts(pr.get("updated_at"))
+    return bool(snapshot.github_updated_at and (not incoming or incoming < snapshot.github_updated_at))
+
+
+def _pr_identity(pr):
+    return (
+        *(pr.get(k) for k in ("title", "body", "state", "merged", "merge_commit_sha")),
+        *((pr.get(branch) or {}).get(k) for branch in ("head", "base") for k in ("ref", "sha")),
+    )
+
+
+def apply_pull_request_event(payload: dict[str, Any], action: str = "") -> PullRequestEventResult:
+    pr = payload.get("pull_request") or {}
+    repo_id = (payload.get("repository") or {}).get("id")
+    number = pr.get("number")
+    if not isinstance(repo_id, int) or not isinstance(number, int) or number <= 0:
+        return PullRequestEventResult()
+    snapshots = PullRequestSnapshot.objects.filter(repo_id=repo_id)
+    for _ in range(3):
+        anchor = ProjectRepository.objects.filter(repo_id=repo_id).order_by("pk").first()
+        if anchor is None:
+            return PullRequestEventResult()
+        revision = snapshots.aggregate(total=Sum("revision", default=0))["total"]
+        snapshot = snapshots.filter(pr_number=number).first()
+        if snapshot and _stale_pr(snapshot, pr):
+            return PullRequestEventResult()
+        if not snapshot and not pr.get("merged") and TaskPullRequest.objects.filter(
+            repository__repo_id=repo_id, pr_number=number, merged=True,
+        ).exists():
+            with repository_reader(repo_id) as read:
+                pr = read(f"pulls/{number}")
+            if pr.get("number") != number or not pr.get("merged"):
+                raise GitHubUnavailable("Could not verify the existing merged PR.")
+        if (
+            snapshot and snapshot.github_updated_at
+            and snapshot.github_updated_at == _parse_ts(pr.get("updated_at"))
+            and _pr_identity(snapshot.payload) != _pr_identity(pr)
+        ):
+            # GitHub timestamps have second precision. Arrival order cannot
+            # resolve two different edits in the same second.
+            with repository_reader(repo_id) as read:
+                pr = read(f"pulls/{number}")
+            if pr.get("number") != number or _stale_pr(snapshot, pr):
+                raise GitHubUnavailable("Could not verify the latest PR state.")
+        inferred_ids, promoted = resolve_promotion(repo_id, pr)
+        with transaction.atomic():
+            # A no-op UPDATE takes a write lock on SQLite as well as Postgres.
+            # Hold it only during persistence, never during GitHub requests.
+            if not ProjectRepository.objects.filter(pk=anchor.pk).update(repo_id=F("repo_id")):
+                continue
+            if snapshots.aggregate(total=Sum("revision", default=0))["total"] != revision:
+                continue
+            snapshot, _ = snapshots.get_or_create(
+                pr_number=number,
+                defaults={"repo_id": repo_id, "payload": pr},
+            )
+            snapshot.payload = pr
+            snapshot.github_updated_at = _parse_ts(pr.get("updated_at"))
+            snapshot.revision += 1
+            snapshot.save(update_fields=["payload", "github_updated_at", "revision"])
+            return _apply_pull_request_event(
+                {**payload, "pull_request": pr, "_promoted_to_main": promoted}, action, inferred_ids,
+            )
+    raise GitHubUnavailable("Repository changed during promotion checks; retry this delivery.")
+
+
+def _apply_pull_request_event(
+    payload: dict[str, Any], action: str, inferred_ids: set[int]
 ) -> PullRequestEventResult:
     """Apply a parsed ``pull_request`` webhook event to the DB.
 
@@ -101,7 +174,8 @@ def apply_pull_request_event(
        match any key (handles a PR whose title was edited to remove a key).
     5. Apply the TAS-011 rule engine (:mod:`apps.integrations.rules`) per
        matched task — reviewer bookkeeping + column move for
-       ``review_requested`` / ``review_request_removed`` / merged-``closed``.
+       ``review_requested`` / ``review_request_removed`` / merged snapshots,
+       including references added by an edit after merge.
     6. Broadcast ``task.updated`` once per project so clients refetch.
     """
     pr = payload.get("pull_request") or {}
@@ -146,7 +220,7 @@ def apply_pull_request_event(
 
         keys = extract_task_keys(project, pr_title, pr_body, head_ref)
         matched_tasks = (
-            list(Task.objects.filter(project=project, key__in=keys)) if keys else []
+            list(Task.objects.select_for_update().filter(project=project).filter(Q(key__in=keys) | Q(id__in=inferred_ids)))
         )
         matched_ids = {t.id for t in matched_tasks}
 
@@ -177,14 +251,14 @@ def apply_pull_request_event(
             # One broadcast per project is enough — the frontend invalidates
             # the whole per-project task list on any event.
             anchor_task = matched_tasks[0] if matched_tasks else None
-            broadcast_task_event(
-                project.id,
+            transaction.on_commit(partial(
+                broadcast_task_event, project.id,
                 "task.updated",
                 {
                     "key": anchor_task.key if anchor_task else "",
                     "id": anchor_task.id if anchor_task else 0,
                 },
-            )
+            ))
             result.broadcasted_project_ids.add(project.id)
 
     return result

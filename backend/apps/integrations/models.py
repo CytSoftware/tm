@@ -87,6 +87,21 @@ class ProjectRepository(models.Model):
         return f"{self.project.prefix} ↔ {self.repo_full_name}"
 
 
+class PullRequestSnapshot(models.Model):
+    """Latest webhook state, including promotions that mention no task keys."""
+
+    repo_id = models.BigIntegerField()
+    pr_number = models.IntegerField()
+    payload = models.JSONField()
+    github_updated_at = models.DateTimeField(null=True, blank=True)
+    revision = models.PositiveBigIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["repo_id", "pr_number"], name="uniq_pr_snapshot"),
+        ]
+
+
 class TaskPullRequest(models.Model):
     """Association between a Task and a specific GitHub PR.
 

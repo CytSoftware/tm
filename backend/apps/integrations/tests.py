@@ -298,6 +298,15 @@ class WebhookViewTests(TestCase):
         self.assertEqual(resp2.status_code, 200)
         self.assertTrue(resp2.json().get("duplicate"))
 
+    def test_failed_delivery_can_be_retried(self):
+        from unittest.mock import patch
+        with patch("apps.integrations.webhooks.dispatch_event", side_effect=RuntimeError("temporary failure")):
+            self.assertEqual(self._post(_pr_payload(), delivery="retry").status_code, 500)
+        response = self._post(_pr_payload(), delivery="retry")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["tasks_linked"], 1)
+        self.assertFalse(response.json().get("duplicate", False))
+
     def test_unknown_repo_silently_ignored(self):
         resp = self._post(
             _pr_payload(repo_id=11111, repo_full_name="unknown/repo"),

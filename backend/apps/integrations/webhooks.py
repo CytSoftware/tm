@@ -57,7 +57,7 @@ def verify_signature(body: bytes, header: str | None) -> bool:
 
 
 def _already_processed(delivery_id: str | None) -> bool:
-    """Check and record a delivery UUID for idempotency.
+    """Check successfully processed delivery UUIDs for idempotency.
 
     Uses the default cache backend. Phase-1 ``locmem`` is fine for a single
     Daphne process; the worst failure mode on restart is a duplicate
@@ -69,7 +69,6 @@ def _already_processed(delivery_id: str | None) -> bool:
     key = f"{_DELIVERY_CACHE_PREFIX}{delivery_id}"
     if cache.get(key) is not None:
         return True
-    cache.set(key, 1, timeout=_DELIVERY_TTL_SECONDS)
     return False
 
 
@@ -142,6 +141,8 @@ def github_webhook_view(request: HttpRequest) -> JsonResponse:
         logger.exception("github webhook dispatch failed")
         return JsonResponse({"detail": "internal error"}, status=500)
 
+    if delivery:
+        cache.set(f"{_DELIVERY_CACHE_PREFIX}{delivery}", 1, timeout=_DELIVERY_TTL_SECONDS)
     return JsonResponse(result)
 
 

@@ -6,9 +6,8 @@ is the P1 rule engine that plugs in after the upsert step:
 
 * ``review_requested`` → move the linked task(s) to the project's ``REVIEW``
   kind column and track the requested reviewer.
-* PR ``approved`` (a ``pull_request_review`` event) **or** the PR being
-  merged (a ``pull_request`` ``closed`` event with ``merged: true``) → move
-  to the ``DONE`` kind column.
+* Merged into ``dev`` → the conventionally named ``In Dev`` column, if present.
+* Merged into ``main`` → ``DONE``. Approval alone never completes a task.
 * ``changes_requested`` → move back to the ``IN_PROGRESS`` kind column.
 
 Every public entry point (the ``apply_*`` functions) is wrapped so it never
@@ -44,24 +43,16 @@ User = get_user_model()
 
 
 def target_kind_for_pr_action(action: str, pr: dict[str, Any]) -> str | None:
-    """Return the ``ColumnKind`` a ``pull_request`` event action maps to.
-
-    ``ready_for_review`` and ``reopened`` are deliberately ignored — the
-    rule set only reacts to the transitions explicitly called out in TAS-011.
-    A ``closed`` action only moves the task when the PR was actually merged;
-    a closed-unmerged PR is not treated as "done".
-    """
+    """Resolve standard stages; named In Dev is handled by the merge rule."""
+    if pr.get("merged") is True and (pr.get("base") or {}).get("ref") == "main":
+        return ColumnKind.DONE
     if action == "review_requested":
         return ColumnKind.REVIEW
-    if action == "closed" and pr.get("merged") is True:
-        return ColumnKind.DONE
     return None
 
 
 def target_kind_for_review_state(state: str) -> str | None:
     """Return the ``ColumnKind`` a ``pull_request_review`` state maps to."""
-    if state == "approved":
-        return ColumnKind.DONE
     if state == "changes_requested":
         return ColumnKind.IN_PROGRESS
     return None
@@ -139,11 +130,12 @@ def move_task_to_column_kind(task: Task, kind: str) -> bool:
     if not task.project_id:
         return False
 
-    column = (
-        Column.objects.filter(project_id=task.project_id, kind=kind)
-        .order_by("order")
-        .first()
-    )
+    columns = Column.objects.filter(project_id=task.project_id, kind=kind).order_by("order")
+    if kind == ColumnKind.REVIEW:
+        columns = columns.exclude(name__iexact="In Dev")
+        column = columns.filter(name__iexact="In Review").first() or columns.first()
+    else:
+        column = columns.first()
     if column is None:
         logger.info(
             "github rules: project %s has no %r column, skipping move for %s",
@@ -153,11 +145,21 @@ def move_task_to_column_kind(task: Task, kind: str) -> bool:
         )
         return False
 
-    old_column = task.column
-    if old_column is not None and old_column.id == column.id:
-        return False
+    return move_task_to_column(task, column)
 
+
+def move_task_to_column(task: Task, column: Column) -> bool:
     with transaction.atomic():
+        task = Task.objects.select_for_update().get(pk=task.pk)
+        old_column = task.column
+        # GitHub events must not resurrect cancelled/completed work or undo a
+        # dev merge when a release PR requests review of the same task.
+        if old_column and (
+            old_column.id == column.id
+            or old_column.kind in (ColumnKind.DONE, ColumnKind.OTHER)
+            or (old_column.name.casefold() == "in dev" and not column.is_done)
+        ):
+            return False
         task.column = column
         task.position = _next_bottom_position(column)
         task.save(update_fields=["column", "position", "updated_at"])
@@ -170,21 +172,17 @@ def move_task_to_column_kind(task: Task, kind: str) -> bool:
             source=TransitionSource.GITHUB,
         )
 
-    broadcast_task_event(
-        task.project_id,
-        "task.moved",
-        {"key": task.key, "id": task.id, "column_id": column.id},
-    )
-    verb = "completed" if column.is_done else "moved"
-    notify_task_event(
-        task,
-        None,
-        verb,
-        payload={
-            "from_column": old_column.name if old_column else None,
-            "to_column": column.name,
-        },
-    )
+    def publish():
+        broadcast_task_event(
+            task.project_id, "task.moved",
+            {"key": task.key, "id": task.id, "column_id": column.id},
+        )
+        notify_task_event(
+            task, None, "completed" if column.is_done else "moved",
+            payload={"from_column": old_column.name if old_column else None, "to_column": column.name},
+        )
+
+    transaction.on_commit(publish)
     return True
 
 
@@ -235,6 +233,17 @@ def _apply_pr_action_rules(
             clear_reviewer_if_matches(tpr, task, login)
         return False
 
+    if tpr.merged:
+        if tpr.base_ref == "main" or payload.get("_promoted_to_main"):
+            return move_task_to_column_kind(task, ColumnKind.DONE)
+        if tpr.base_ref == "dev":
+            columns = list(Column.objects.filter(project_id=task.project_id, name__iexact="In Dev")[:2])
+            if len(columns) == 1:
+                return move_task_to_column(task, columns[0])
+        return False
+    if tpr.state != "open":
+        return False
+
     kind = target_kind_for_pr_action(action, pr)
     if kind is None:
         return False
@@ -273,15 +282,7 @@ def _apply_review_rules(task: Task, tpr: TaskPullRequest, review: dict[str, Any]
     if kind is None:
         return False
 
-    if (
-        state == "changes_requested"
-        and task.column_id
-        and task.column.is_done
-    ):
-        logger.info(
-            "github rules: moving Done task %s back to %r on changes_requested",
-            task.key,
-            kind,
-        )
+    if tpr.merged or tpr.state != "open":
+        return False
 
     return move_task_to_column_kind(task, kind)
