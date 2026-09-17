@@ -216,7 +216,7 @@ async def list_tasks(
     filters by a column's semantic role instead of its name/id — e.g.
     ``"review"`` matches tasks sitting in any review-kind column across the
     project, regardless of what that column is called (one of "backlog",
-    "todo", "in_progress", "review", "done", "other"). ``bet`` accepts a
+    "todo", "in_progress", "review", "done", "cancelled", "other"). ``bet`` accepts a
     bet id or name, or ``"none"`` for tasks not linked to any bet. ``done``
     filters by completion: ``true`` keeps only tasks in a done column,
     ``false`` keeps open tasks.
@@ -361,7 +361,7 @@ async def create_column(
 
     The new column lands at the rightmost position. ``kind`` sets its semantic
     role for analytics — one of "backlog", "todo", "in_progress", "review",
-    "done", "other" (default "other"). ``is_done`` is derived from ``kind``
+    "done", "cancelled", "other" (default "other"). ``is_done`` is derived from ``kind``
     ("done" ⇒ completed); the legacy ``is_done=True`` flag still works when
     ``kind`` is omitted."""
     return await _async(tools.create_column)(
@@ -379,7 +379,7 @@ async def update_column(
     """Rename a column or change its ``kind``.
 
     ``kind`` is one of "backlog", "todo", "in_progress", "review", "done",
-    "other" and drives the derived ``is_done`` flag. Refuses to demote the
+    "cancelled", "other" and drives the derived ``is_done`` flag. Refuses to demote the
     last "done" column in a project."""
     return await _async(tools.update_column)(
         column_id=column_id, name=name, kind=kind, is_done=is_done

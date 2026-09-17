@@ -368,15 +368,15 @@ def update_column(
         elif column.is_done:
             resolved_kind = ColumnKind.OTHER
     if resolved_kind is not None:
-        if column.is_done and resolved_kind != ColumnKind.DONE:
+        if column.kind in (ColumnKind.DONE, ColumnKind.CANCELLED) and resolved_kind != column.kind:
             others = (
-                column.project.columns.filter(is_done=True)
+                column.project.columns.filter(kind=column.kind)
                 .exclude(pk=column.pk)
                 .exists()
             )
             if not others:
                 raise ValueError(
-                    "At least one column must be marked as done."
+                    f"At least one column must be marked as {column.kind}."
                 )
         column.kind = resolved_kind
     column.save()
@@ -402,12 +402,12 @@ def delete_column(
             "Column has tasks. Pass move_tasks_to=<column_id> to relocate "
             "them before deletion."
         )
-    if column.is_done and not (
-        project.columns.filter(is_done=True).exclude(pk=column.pk).exists()
+    if column.kind in (ColumnKind.DONE, ColumnKind.CANCELLED) and not (
+        project.columns.filter(kind=column.kind).exclude(pk=column.pk).exists()
     ):
         raise ValueError(
-            "Cannot delete the last column marked as done. Mark another "
-            "column as done first."
+            f"Cannot delete the last column marked as {column.kind}. Mark another "
+            f"column as {column.kind} first."
         )
     if target is not None:
         next_pos = (target.tasks.aggregate(m=Max("position"))["m"] or 0) + 1000.0

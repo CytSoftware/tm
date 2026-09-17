@@ -16,7 +16,7 @@ assert.deepEqual(destinationColumns(task, testing, projects), [testing]);
 assert.deepEqual(destinationColumns(task, { ...dev, id: 99, project: 2 }, projects), []);
 assert.deepEqual(boardColumns(projects[0]).map(c => c.name), ['In Dev', 'Testing', 'QA', 'Blocked']);
 assert.deepEqual(boardColumns(projects[0], 'testing').map(c => c.id), [11]);
-assert.deepEqual(boardColumns().map(c => c.kind), ['backlog', 'todo', 'in_progress', 'review', 'done', 'other']);
+assert.deepEqual(boardColumns().map(c => c.kind), ['backlog', 'todo', 'in_progress', 'review', 'done', 'cancelled', 'other']);
 assert.ok(boardColumns().every(c => c.id < 0));
 assert.equal(boardColumns(projects[0], 'missing').length, 0);
 for (const column of boardColumns()) assert.equal(isCustomColumn(column), false);
@@ -24,3 +24,8 @@ assert.equal(isCustomColumn({ name: ' in review ', kind: 'review' }), false);
 assert.equal(isCustomColumn({ name: 'In Dev', kind: 'review' }), true);
 assert.equal(isCustomColumn({ name: 'In Review', kind: 'in_progress' }), true);
 console.log('Board columns and destination checks passed');
+
+assert.equal(boardColumns().find(c => c.kind === 'other').id, -6);
+assert.equal(boardColumns().find(c => c.kind === 'cancelled').id, -7);
+const cancelled = { id: 20, project: 1, name: 'Cancelled', kind: 'cancelled', order: 5 };
+assert.deepEqual(destinationColumns(task, { id: -7, kind: 'cancelled' }, [{ id: 1, columns: [cancelled] }]), [cancelled]);

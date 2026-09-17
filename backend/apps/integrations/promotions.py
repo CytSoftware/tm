@@ -56,7 +56,7 @@ def resolve_promotion(repo_id, pr):
     if is_promotion(pr):
         candidates = list(TaskPullRequest.objects.filter(
             repository__repo_id=repo_id, base_ref="dev", merged=True,
-        ).exclude(task__column__kind__in=["done", "other"]).values_list("pr_number", "task_id"))
+        ).exclude(task__column__kind__in=["done", "cancelled", "other"]).values_list("pr_number", "task_id"))
         existing_ids = set(TaskPullRequest.objects.filter(
             repository__repo_id=repo_id, pr_number=pr["number"], merged=True,
         ).values_list("task_id", flat=True))

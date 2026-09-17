@@ -46,7 +46,7 @@ export default function StalenessSettingsPage() {
     // Include every known non-done column name from every project.
     for (const p of projects) {
       for (const c of p.columns) {
-        if (!c.is_done) names.add(c.name);
+        if (!c.is_done && c.kind !== "cancelled") names.add(c.name);
       }
     }
     // Also keep any column the saved config mentions, even if no project
@@ -163,7 +163,7 @@ function StalenessForm({
 
         <ProjectColumnSettings />
         <h2 className="text-sm font-medium">Staleness thresholds</h2>
-        <p className="text-xs text-muted-foreground">Applied across projects by column name. Done columns are excluded.</p>
+        <p className="text-xs text-muted-foreground">Applied across projects by column name. Done and Cancelled columns are excluded.</p>
         <section className="rounded-lg border border-border bg-card">
           <div className="grid grid-cols-[1fr_90px_90px] max-lg:hidden items-center gap-3 px-4 py-2.5 border-b border-border/60 text-[11px] uppercase tracking-wide text-muted-foreground">
             <span>Column</span>

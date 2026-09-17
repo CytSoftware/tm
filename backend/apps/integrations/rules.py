@@ -156,7 +156,7 @@ def move_task_to_column(task: Task, column: Column) -> bool:
         # dev merge when a release PR requests review of the same task.
         if old_column and (
             old_column.id == column.id
-            or old_column.kind in (ColumnKind.DONE, ColumnKind.OTHER)
+            or old_column.kind in (ColumnKind.DONE, ColumnKind.CANCELLED, ColumnKind.OTHER)
             or (old_column.name.casefold() == "in dev" and not column.is_done)
         ):
             return False

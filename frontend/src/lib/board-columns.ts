@@ -7,7 +7,8 @@ const STANDARD_COLUMNS = [
   { name: "In Progress", order: 2, is_done: false, kind: "in_progress" },
   { name: "In Review", order: 3, is_done: false, kind: "review" },
   { name: "Done", order: 4, is_done: true, kind: "done" },
-  { name: "Other", order: 5, is_done: false, kind: "other" },
+  { name: "Other", order: 6, is_done: false, kind: "other" },
+  { name: "Cancelled", order: 5, is_done: false, kind: "cancelled" },
 ] as const satisfies readonly {
   name: string;
   order: number;
@@ -20,7 +21,9 @@ export function boardColumns(project?: Project, columnName?: string | null): Col
     return project.columns.filter(c => !columnName || c.name.toLowerCase() === columnName.toLowerCase())
       .sort((a, b) => a.order - b.order);
   }
-  return STANDARD_COLUMNS.map((column, i) => ({ ...column, id: -(i + 1), project: 0 }));
+  // IDs persist in visibility preferences; append new stages before sorting.
+  return STANDARD_COLUMNS.map((column, i) => ({ ...column, id: -(i + 1), project: 0 }))
+    .sort((a, b) => a.order - b.order);
 }
 
 export function isCustomColumn(column: Pick<Column, "name" | "kind">): boolean {

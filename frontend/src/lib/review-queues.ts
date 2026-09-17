@@ -15,7 +15,7 @@ export function reviewQueues(sources: Task[][], userId: number | undefined, proj
     // Independent polls can contain different snapshots after a review is claimed.
     if (!previous || Date.parse(task.updated_at) > Date.parse(previous.updated_at)) byId.set(task.id, task);
   }
-  const all = [...byId.values()].filter(task => !task.column?.is_done && (
+  const all = [...byId.values()].filter(task => !task.column?.is_done && task.column?.kind !== "cancelled" && (
     (userId != null && task.reviewer?.id === userId) || task.column?.kind === "review"
   )).sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at) || a.id - b.id);
   const filtered = all.filter(task =>

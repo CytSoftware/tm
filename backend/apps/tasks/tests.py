@@ -150,6 +150,7 @@ class ColumnKindMirrorTests(TestCase):
                 "In Progress": ColumnKind.IN_PROGRESS,
                 "In Review": ColumnKind.REVIEW,
                 "Done": ColumnKind.DONE,
+                "Cancelled": ColumnKind.CANCELLED,
             },
         )
 

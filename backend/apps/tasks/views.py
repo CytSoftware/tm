@@ -890,7 +890,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             open_task_count=models.Count(
                 "tasks",
                 filter=models.Q(tasks__column__isnull=True)
-                | models.Q(tasks__column__is_done=False),
+                | (models.Q(tasks__column__is_done=False) & ~models.Q(tasks__column__kind="cancelled")),
                 distinct=True,
             )
         )
@@ -999,18 +999,16 @@ class ColumnViewSet(viewsets.ModelViewSet):
                 {"project": "Cannot move a column between projects."}
             )
         new_kind = serializer.validated_data.get("kind", instance.kind)
-        if instance.is_done and new_kind != "done":
-            # Don't let the last done column get demoted — recurring task
-            # defaults and analytics rely on at least one existing. ``is_done``
-            # is derived from ``kind`` on save, so we gate on the incoming kind.
+        if instance.kind in ("done", "cancelled") and new_kind != instance.kind:
+            # Keep a destination for both completion and cancellation.
             others_done = (
-                instance.project.columns.filter(is_done=True)
+                instance.project.columns.filter(kind=instance.kind)
                 .exclude(pk=instance.pk)
                 .exists()
             )
             if not others_done:
                 raise ValidationError(
-                    {"kind": "At least one column must be marked as done."}
+                    {"kind": f"At least one column must be marked as {instance.kind}."}
                 )
         column = serializer.save()
         broadcast_task_event(
@@ -1045,12 +1043,12 @@ class ColumnViewSet(viewsets.ModelViewSet):
                         )
                     }
                 )
-            if column.is_done and not (
-                project.columns.filter(is_done=True).exclude(pk=column.pk).exists()
+            if column.kind in ("done", "cancelled") and not (
+                project.columns.filter(kind=column.kind).exclude(pk=column.pk).exists()
             ):
                 raise ValidationError(
-                    "Cannot delete the last column marked as done. Mark "
-                    "another column as done first."
+                    f"Cannot delete the last column marked as {column.kind}. Mark "
+                    f"another column as {column.kind} first."
                 )
             if target is not None:
                 # Append to the bottom of the target column. Reuse the

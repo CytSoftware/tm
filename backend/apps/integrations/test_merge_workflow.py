@@ -17,7 +17,7 @@ class MergeWorkflowTests(TestCase):
         self.user = get_user_model().objects.create_user('dev')
         self.project = Project.objects.create(name='Mowafeq', prefix='CYT')
         self.repo = ProjectRepository.objects.create(project=self.project, repo_id=999, repo_full_name='owner/repo')
-        self.dev = Column.objects.create(project=self.project, name='In Dev', kind='review', order=5)
+        self.dev = Column.objects.create(project=self.project, name='In Dev', kind='review', order=6)
         self.task = self.new_task('One')
         self.read = Mock(return_value={'status': 'ahead'})
         @contextmanager
@@ -134,7 +134,7 @@ class MergeWorkflowTests(TestCase):
         self.read.assert_called_once_with('compare/' + 'a'*40 + '...' + 'f'*40, params={'per_page':1})
 
     def test_cancelled_work_stays_cancelled(self):
-        self.task.column = Column.objects.create(project=self.project, name='Cancelled', kind='other', order=6)
+        self.task.column = self.project.columns.get(kind='cancelled')
         self.task.save()
         apply_pull_request_event(self.payload(base='main'), 'closed')
         self.assertEqual(self.column(), 'Cancelled')

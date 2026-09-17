@@ -115,6 +115,7 @@ class ColumnKind(models.TextChoices):
     IN_PROGRESS = "in_progress", "In progress"
     REVIEW = "review", "Review"
     DONE = "done", "Done"
+    CANCELLED = "cancelled", "Cancelled"
     OTHER = "other", "Other"
 
 
@@ -556,6 +557,7 @@ DEFAULT_COLUMNS = [
     {"name": "In Progress", "order": 2, "kind": ColumnKind.IN_PROGRESS},
     {"name": "In Review", "order": 3, "kind": ColumnKind.REVIEW},
     {"name": "Done", "order": 4, "kind": ColumnKind.DONE},
+    {"name": "Cancelled", "order": 5, "kind": ColumnKind.CANCELLED},
 ]
 
 

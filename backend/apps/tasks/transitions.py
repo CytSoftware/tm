@@ -26,6 +26,7 @@ from django.utils import timezone
 
 from .models import (
     Column,
+    ColumnKind,
     StaleThresholdConfig,
     StateTransition,
     Task,
@@ -132,7 +133,7 @@ def compute_staleness(
     lookup otherwise — used by the MCP tools which share the same queryset.
     """
     column = getattr(task, "column", None)
-    if column is None or column.is_done:
+    if column is None or column.kind in (ColumnKind.DONE, ColumnKind.CANCELLED):
         return None
 
     thresholds = thresholds if thresholds is not None else get_stale_thresholds()

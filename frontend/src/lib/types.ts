@@ -105,6 +105,7 @@ export type ColumnKind =
   | "in_progress"
   | "review"
   | "done"
+  | "cancelled"
   | "other";
 
 export const COLUMN_KIND_ORDER: ColumnKind[] = [
@@ -113,6 +114,7 @@ export const COLUMN_KIND_ORDER: ColumnKind[] = [
   "in_progress",
   "review",
   "done",
+  "cancelled",
   "other",
 ];
 
@@ -122,6 +124,7 @@ export const COLUMN_KIND_LABELS: Record<ColumnKind, string> = {
   in_progress: "In Progress",
   review: "In Review",
   done: "Done",
+  cancelled: "Cancelled",
   other: "Other",
 };
 
