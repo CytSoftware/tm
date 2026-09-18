@@ -14,6 +14,7 @@ import re
 from typing import Any, Iterable
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils.text import slugify
 
 from apps.tasks.models import Project, Task, TransitionEvent, TransitionSource
@@ -28,6 +29,8 @@ from .models import (
     Meeting,
     MeetingCategory,
     MeetingEntity,
+    MeetingLink,
+    MeetingLinkKind,
     MeetingRoute,
     MeetingTask,
     Tag,
@@ -298,6 +301,50 @@ def create_task_from_action_item(
     broadcast_task_event(proj.id, "task.created", {"key": task.key, "id": task.id})
     notify_task_event(task, user, "created", recipients=[])
     return task
+
+
+# ---------------------------------------------------------------------------
+# Explicit links
+# ---------------------------------------------------------------------------
+
+
+def _either_way(a: Meeting, b: Meeting) -> Q:
+    return Q(from_meeting=a, to_meeting=b) | Q(from_meeting=b, to_meeting=a)
+
+
+def link_meetings(
+    meeting: Meeting,
+    other: Meeting,
+    *,
+    kind: str = MeetingLinkKind.RELATED,
+    note: str = "",
+) -> MeetingLink:
+    """Link two meetings. A pair has one link whichever way round it's asked
+    for; ``meeting`` is the later one for a ``follow_up`` (it follows ``other``)."""
+    if meeting.pk == other.pk:
+        raise MeetingError("A meeting can't link to itself.")
+    if kind not in MeetingLinkKind.values:
+        raise MeetingError(
+            f"Unknown link kind {kind!r}. Use one of: {', '.join(MeetingLinkKind.values)}."
+        )
+    existing = MeetingLink.objects.filter(_either_way(meeting, other)).first()
+    if existing:
+        return existing
+    return MeetingLink.objects.create(
+        from_meeting=meeting, to_meeting=other, kind=kind, note=note[:300]
+    )
+
+
+def unlink_meetings(meeting: Meeting, other: Meeting) -> None:
+    MeetingLink.objects.filter(_either_way(meeting, other)).delete()
+
+
+def link_task(meeting: Meeting, task: Task) -> None:
+    MeetingTask.objects.get_or_create(meeting=meeting, task=task)
+
+
+def unlink_task(meeting: Meeting, task: Task) -> None:
+    MeetingTask.objects.filter(meeting=meeting, task=task).delete()
 
 
 # ---------------------------------------------------------------------------
