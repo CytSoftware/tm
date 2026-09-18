@@ -273,6 +273,7 @@ urlpatterns = [
     path("api/", include("apps.wiki.urls")),
     path("api/", include("apps.drive.urls")),          # /api/drive — B2 file browser
     path("api/", include("apps.knowledge.urls")),      # /api/knowledge — LLM wiki (read-only)
+    path("api/", include("apps.meetings.urls")),       # /api/meetings — recordings, entities, graph
     path("api/", include("apps.webhooks.urls")),       # /api/webhooks — outbound webhook endpoints
     path("api/", include("apps.mcp_server.urls")),     # /api/mcp, /api/oauth — MCP auth management
     path("api/integrations/", include("apps.integrations.urls")),

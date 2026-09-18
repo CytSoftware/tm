@@ -24,6 +24,9 @@ from channels.auth import AuthMiddlewareStack  # noqa: E402
 from channels.routing import URLRouter  # noqa: E402
 
 from apps.tasks.routing import websocket_urlpatterns  # noqa: E402
+from apps.meetings.routing import (  # noqa: E402
+    websocket_urlpatterns as meetings_ws_urlpatterns,
+)
 from apps.wiki.routing import (  # noqa: E402
     websocket_urlpatterns as wiki_ws_urlpatterns,
 )
@@ -43,7 +46,7 @@ mcp_authenticated_user: contextvars.ContextVar = contextvars.ContextVar(
 
 _channels_ws = AuthMiddlewareStack(
     URLRouter(
-        websocket_urlpatterns + wiki_ws_urlpatterns
+        websocket_urlpatterns + wiki_ws_urlpatterns + meetings_ws_urlpatterns
     )
 )
 

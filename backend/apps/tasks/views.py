@@ -636,6 +636,18 @@ def internal_broadcast(request):
         _wiki_local(event_type, payload)
         return Response({"ok": True})
 
+    if scope == "meetings":
+        # Meeting/entity broadcasts route into the global ``meetings`` group.
+        from apps.meetings.broadcast import _broadcast_local as _meetings_local
+
+        if not isinstance(event_type, str):
+            return Response(
+                {"detail": "Invalid payload."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        _meetings_local(event_type, payload)
+        return Response({"ok": True})
+
     if scope == "group":
         # Generic per-group push (e.g. notifications' user_<id> groups) —
         # see apps.tasks.broadcast.broadcast_to_group.

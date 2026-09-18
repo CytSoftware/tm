@@ -73,6 +73,7 @@ INSTALLED_APPS = [
     "apps.integrations",
     "apps.wiki",
     "apps.webhooks",
+    "apps.meetings",
 ]
 
 MIDDLEWARE = [
@@ -196,6 +197,11 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 200,
 }
+
+# Meeting ingest posts a full transcript + brief in one JSON body. Django's
+# 2.5 MB default is closer to a long transcript than is comfortable; match the
+# ~10 MB guard the MCP tools already apply to inline payloads.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Cyt Task Tracker API",
