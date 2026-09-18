@@ -10,7 +10,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { apiFetch } from "@/lib/api";
-import { llmWikiListKey, llmWikiPageKey } from "@/lib/query-keys";
+import { llmWikiGraphKey, llmWikiListKey, llmWikiPageKey } from "@/lib/query-keys";
 
 export type WikiPageMeta = {
   slug: string;
@@ -25,6 +25,12 @@ export type WikiPageDetail = {
   markdown: string;
   meta: Record<string, string | string[]>;
   updated_at: string | null;
+};
+
+/** Pages + resolved `[[wikilink]]` edges, for the graph view. */
+export type WikiGraph = {
+  nodes: { id: string; title: string; type: string | null }[];
+  links: { source: string; target: string }[];
 };
 
 export function useKnowledgeList() {
@@ -46,5 +52,12 @@ export function useKnowledgePage(slug: string | null) {
           .join("/")}/`,
       ),
     enabled: !!slug,
+  });
+}
+
+export function useKnowledgeGraph() {
+  return useQuery({
+    queryKey: llmWikiGraphKey(),
+    queryFn: () => apiFetch<WikiGraph>("/api/knowledge/graph/"),
   });
 }

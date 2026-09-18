@@ -1910,8 +1910,9 @@ def knowledge_write(slug: str, markdown: str, mcp_user=None) -> dict[str, Any]:
     b2.append_log("write", f"wrote {result['slug']}", [result["slug"]], _agent_name(mcp_user))
     try:
         b2.rebuild_index()
+        b2.update_graph(result["slug"], markdown)
     except Exception:
-        logging.getLogger("apps.drive").warning("rebuild_index failed", exc_info=True)
+        logging.getLogger("apps.drive").warning("index/graph rebuild failed", exc_info=True)
     if mcp_user is not None:
         logging.getLogger("apps.mcp_server").info(
             "knowledge_write by %s -> %s (%d bytes)",
@@ -1932,12 +1933,13 @@ def knowledge_delete(slug: str, mcp_user=None) -> dict[str, Any]:
     b2.append_log("delete", f"deleted {norm}", [norm], _agent_name(mcp_user))
     try:
         b2.rebuild_index()
+        b2.update_graph(norm, None)
     except Exception:
-        logging.getLogger("apps.drive").warning("rebuild_index failed", exc_info=True)
+        logging.getLogger("apps.drive").warning("index/graph rebuild failed", exc_info=True)
     return result
 
 
 def knowledge_reindex() -> dict[str, Any]:
     from apps.drive import b2
 
-    return b2.rebuild_index()
+    return {**b2.rebuild_index(), "graph": b2.rebuild_graph()}

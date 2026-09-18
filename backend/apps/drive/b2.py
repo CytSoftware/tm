@@ -534,6 +534,120 @@ def rebuild_index() -> dict[str, Any]:
     return {"ok": True, "pages": len(pages)}
 
 
+# ---------------------------------------------------------------------------
+# Link graph — ``_ingest/graph.json`` caches each page's title, type and RAW
+# ``[[wikilink]]`` targets, keyed by slug. Targets are resolved at read time
+# (``wiki_graph``) because resolution depends on the whole slug set: a page
+# written later can make an earlier dangling or ambiguous link resolve.
+# Writes patch one entry (1 GET + 1 PUT) instead of re-reading every page.
+# ---------------------------------------------------------------------------
+
+_WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
+
+
+def _graph_key() -> str:
+    return f"{_wiki_prefix()}{_INGEST_DIR}graph.json"
+
+
+def _graph_entry(slug: str, raw: str) -> dict[str, Any]:
+    meta, body = _split_frontmatter(raw)
+    return {
+        "title": str(meta.get("title") or _h1(body) or slug.split("/")[-1]),
+        "type": str(meta["type"]) if meta.get("type") else None,
+        "targets": sorted({m.split("|")[0].strip() for m in _WIKILINK_RE.findall(body)}),
+    }
+
+
+def _read_graph() -> dict[str, Any] | None:
+    import json
+    try:
+        r = client().get_object(Bucket=_bucket(), Key=_graph_key())
+        return json.loads(r["Body"].read().decode("utf-8"))
+    except Exception as exc:
+        resp = getattr(exc, "response", None) or {}
+        if (resp.get("ResponseMetadata") or {}).get("HTTPStatusCode") == 404:
+            return None
+        raise _upstream(exc) from exc
+
+
+def _put_graph(pages: dict[str, Any]) -> None:
+    import json
+    client().put_object(Bucket=_bucket(), Key=_graph_key(),
+                        Body=json.dumps({"version": 1, "pages": pages}).encode("utf-8"),
+                        ContentType="application/json")
+
+
+def rebuild_graph() -> dict[str, Any]:
+    """Re-read every page and rewrite ``graph.json`` from scratch."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    slugs = [p["slug"] for p in wiki_list() if p["slug"] not in RESERVED_SLUGS]
+    with ThreadPoolExecutor(max_workers=16) as pool:  # boto3 clients are thread-safe
+        raws = list(pool.map(_read_wiki_raw, slugs))
+    pages = {s: _graph_entry(s, raw) for s, raw in zip(slugs, raws) if raw is not None}
+    _put_graph(pages)
+    return {"ok": True, "pages": len(pages)}
+
+
+def update_graph(slug: str, markdown: str | None) -> None:
+    """Patch one page's entry (``markdown=None`` removes it).
+
+    ponytail: read-modify-write with no lock — two concurrent writes can drop
+    one entry. ``knowledge_reindex`` rebuilds it; fine for a single agent writer.
+    """
+    graph = _read_graph()
+    if graph is None:
+        rebuild_graph()
+        return
+    pages = graph.get("pages") or {}
+    norm = _wiki_norm(slug)
+    if markdown is None:
+        pages.pop(norm, None)
+    else:
+        pages[norm] = _graph_entry(norm, markdown)
+    _put_graph(pages)
+
+
+def _resolve_link(target: str, slugs: set[str], by_last: dict[str, list[str]]) -> str | None:
+    # Mirrors resolveWikilinks() in frontend/src/app/llm-wiki/page.tsx — keep in sync.
+    t = target.strip().lower()
+    if t.endswith(".md"):
+        t = t[:-3]
+    if t.startswith("wiki/"):
+        t = t[5:]
+    if t in slugs:
+        return t
+    matches = by_last.get(t.split("/")[-1], [])
+    return matches[0] if len(matches) == 1 else None
+
+
+def wiki_graph() -> dict[str, Any]:
+    """``{nodes, links}`` for the graph view; builds ``graph.json`` on first use."""
+    from collections import defaultdict
+
+    graph = _read_graph()
+    if graph is None:
+        rebuild_graph()
+        graph = _read_graph() or {}
+    pages: dict[str, Any] = graph.get("pages") or {}
+    slugs = set(pages)
+    by_last: dict[str, list[str]] = defaultdict(list)
+    for s in slugs:
+        by_last[s.split("/")[-1]].append(s)
+
+    edges: set[tuple[str, str]] = set()
+    for src, entry in pages.items():
+        for raw in entry.get("targets") or []:
+            dst = _resolve_link(raw, slugs, by_last)
+            if dst and dst != src:
+                edges.add((src, dst))
+    return {
+        "nodes": [{"id": s, "title": e.get("title") or s, "type": e.get("type")}
+                  for s, e in sorted(pages.items())],
+        "links": [{"source": a, "target": b} for a, b in sorted(edges)],
+    }
+
+
 def append_log(entry_type: str, description: str,
                pages: list[str] | None = None, agent: str = "mcp") -> None:
     """Append one entry to the activity ``log`` page (best-effort, never raises)."""

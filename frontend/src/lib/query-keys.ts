@@ -76,6 +76,7 @@ export const driveListKey = (prefix = "") => ["drive", "list", prefix] as const;
 export const llmWikiListKey = () => ["llm-wiki", "list"] as const;
 export const llmWikiPageKey = (slug: string) =>
   ["llm-wiki", "page", slug] as const;
+export const llmWikiGraphKey = () => ["llm-wiki", "graph"] as const;
 
 // Meetings — recordings pushed in by the pipeline (workspace-global).
 // Everything lives under ["meetings"] so the meetings socket can invalidate

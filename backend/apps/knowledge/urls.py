@@ -2,9 +2,10 @@
 
 from django.urls import path
 
-from .views import KnowledgePageDetailView, KnowledgePageListView
+from .views import KnowledgeGraphView, KnowledgePageDetailView, KnowledgePageListView
 
 urlpatterns = [
+    path("knowledge/graph/", KnowledgeGraphView.as_view(), name="knowledge-graph"),
     path("knowledge/pages/", KnowledgePageListView.as_view(), name="knowledge-list"),
     path(
         "knowledge/pages/<path:slug>/",

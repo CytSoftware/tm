@@ -1200,7 +1200,7 @@ async def knowledge_delete(slug: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def knowledge_reindex() -> dict[str, Any]:
-    """Rebuild the ``index`` catalog from the current pages (housekeeping/repair)."""
+    """Rebuild the ``index`` catalog and link graph from the current pages (housekeeping/repair)."""
     return await _async(tools.knowledge_reindex)()
 
 

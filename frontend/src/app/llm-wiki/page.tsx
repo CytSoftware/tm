@@ -13,17 +13,31 @@
  */
 
 import { useMemo, useState } from "react";
-import { ChevronRight, FileText, Folder, Sparkles } from "lucide-react";
+import dynamic from "next/dynamic";
+import {
+  ChevronRight,
+  FileText,
+  Folder,
+  Network,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Sparkles,
+} from "lucide-react";
 
 import { MasterDetail } from "@/components/layout/MasterDetail";
 
 import {
   type WikiPageMeta,
+  useKnowledgeGraph,
   useKnowledgeList,
   useKnowledgePage,
 } from "@/hooks/use-knowledge";
 import { md } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
+
+const WikiGraph = dynamic(() => import("@/components/llm-wiki/WikiGraph"), {
+  ssr: false,
+});
 
 // ── Tree ──────────────────────────────────────────────────────────────────
 type TreeNode = {
@@ -72,7 +86,9 @@ function buildTree(pages: WikiPageMeta[]): TreeNode[] {
 }
 
 // ── Wikilinks ───────────────────────────────────────────────────────────────
-/** Resolve [[target|label]] / [[target]] to in-app links (`#w/<slug>`). */
+/** Resolve [[target|label]] / [[target]] to in-app links (`#w/<slug>`).
+ *  The graph's edges use the same rule — `_resolve_link` in
+ *  backend/apps/drive/b2.py. Keep the two in sync. */
 function resolveWikilinks(
   body: string,
   slugSet: Set<string>,
@@ -100,9 +116,14 @@ function resolveWikilinks(
 // ── Component ────────────────────────────────────────────────────────────────
 export default function LlmWikiPage() {
   const [slug, setSlug] = useState<string | null>(null);
+  // Mobile only needs this: desktop already shows the graph when nothing is selected.
+  const [showGraph, setShowGraph] = useState(false);
+  const [localDepth, setLocalDepth] = useState(1);
+  const [railOpen, setRailOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const list = useKnowledgeList();
   const page = useKnowledgePage(slug);
+  const graph = useKnowledgeGraph();
 
   const tree = useMemo(() => buildTree(list.data ?? []), [list.data]);
 
@@ -168,9 +189,13 @@ export default function LlmWikiPage() {
   return (
     <MasterDetail
       railWidth="w-72"
-      hasSelection={slug != null}
-      onBack={() => setSlug(null)}
+      hasSelection={slug != null || showGraph}
+      onBack={() => {
+        setSlug(null);
+        setShowGraph(false);
+      }}
       backLabel="LLM Wiki"
+      railCollapsed={!railOpen}
       master={
         <>
         <header className="shrink-0 h-12 flex items-center gap-2 px-4 border-b border-border/80">
@@ -181,6 +206,32 @@ export default function LlmWikiPage() {
               {list.data.length}
             </span>
           )}
+          <button
+            type="button"
+            title="Graph view"
+            aria-label="Graph view"
+            onClick={() => {
+              setSlug(null);
+              setShowGraph(true);
+            }}
+            className={cn(
+              "tap-target shrink-0 grid place-items-center size-7 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground",
+              !list.data && "ml-auto",
+              slug == null && "lg:bg-accent lg:text-foreground",
+              showGraph && slug == null && "bg-accent text-foreground",
+            )}
+          >
+            <Network className="size-4" />
+          </button>
+          <button
+            type="button"
+            title="Hide sidebar"
+            aria-label="Hide sidebar"
+            onClick={() => setRailOpen(false)}
+            className="max-lg:hidden shrink-0 grid place-items-center size-7 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <PanelLeftClose className="size-4" />
+          </button>
         </header>
         <div className="flex-1 min-h-0 overflow-y-auto py-1">
           {list.isLoading ? (
@@ -210,12 +261,25 @@ export default function LlmWikiPage() {
         </>
       }
       detail={
-        <div className="flex-1 min-w-0 min-h-0 overflow-y-auto">
+        <div className="flex-1 min-w-0 min-h-0 flex">
         {!slug ? (
-          <div className="h-full grid place-items-center text-[13px] text-muted-foreground">
-            Select a page.
+          <div className="relative flex-1 min-w-0 min-h-0 flex">
+            {!railOpen && (
+              <div className="absolute left-3 top-3 z-10">
+                <ShowRailButton onClick={() => setRailOpen(true)} />
+              </div>
+            )}
+            <GraphPane graph={graph} onSelect={selectSlug} />
           </div>
-        ) : page.isLoading ? (
+        ) : (
+        <>
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+        <div className="shrink-0 h-12 flex items-center gap-2 px-3 border-b border-border/80 max-lg:hidden">
+          {!railOpen && <ShowRailButton onClick={() => setRailOpen(true)} />}
+          <span className="truncate text-[11px] font-mono text-muted-foreground/70">{slug}</span>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto">
+        {page.isLoading ? (
           <div className="p-6 text-[13px] text-muted-foreground">Loading…</div>
         ) : page.isError ? (
           <div className="p-6 text-[13px] text-destructive">
@@ -223,7 +287,7 @@ export default function LlmWikiPage() {
           </div>
         ) : page.data ? (
           <article className="mx-auto max-w-3xl px-4 py-6 lg:px-8 lg:py-8">
-            <div className="mb-1 text-[11px] text-muted-foreground/70 font-mono">
+            <div className="mb-1 text-[11px] text-muted-foreground/70 font-mono lg:hidden">
               {page.data.slug}
             </div>
             <MetaRow meta={page.data.meta} />
@@ -235,8 +299,86 @@ export default function LlmWikiPage() {
           </article>
         ) : null}
         </div>
+        </div>
+        {graph.data && (
+          // Half the pane. Needs room: from lg with the rail hidden, else xl.
+          <aside
+            className={cn(
+              "flex-1 min-w-0 border-l border-border flex flex-col min-h-0",
+              railOpen ? "max-xl:hidden" : "max-lg:hidden",
+            )}
+          >
+            <div className="shrink-0 h-12 flex items-center gap-2 px-3 border-b border-border/80">
+              <Network className="size-3.5 text-muted-foreground" />
+              <span className="text-[13px] font-medium">Local graph</span>
+              <div className="ml-auto flex rounded-md border border-border/70 text-[11px]">
+                {[1, 2].map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setLocalDepth(d)}
+                    className={cn(
+                      "px-2 py-0.5 tabular-nums text-muted-foreground",
+                      localDepth === d && "bg-accent text-foreground",
+                    )}
+                  >
+                    {d} hop{d > 1 ? "s" : ""}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex-1 min-h-0">
+              <WikiGraph data={graph.data} focus={slug} depth={localDepth} onSelect={selectSlug} />
+            </div>
+          </aside>
+        )}
+        </>
+        )}
+        </div>
       }
     />
+  );
+}
+
+function ShowRailButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      title="Show sidebar"
+      aria-label="Show sidebar"
+      onClick={onClick}
+      className="shrink-0 grid place-items-center size-7 rounded-md border border-border bg-background/80 text-muted-foreground shadow-sm backdrop-blur hover:bg-accent hover:text-foreground"
+    >
+      <PanelLeftOpen className="size-4" />
+    </button>
+  );
+}
+
+function GraphPane({
+  graph,
+  onSelect,
+}: {
+  graph: ReturnType<typeof useKnowledgeGraph>;
+  onSelect: (slug: string) => void;
+}) {
+  if (graph.isLoading)
+    return <div className="p-6 text-[13px] text-muted-foreground">Loading graph…</div>;
+  if (graph.isError)
+    return (
+      <div className="p-6 text-[13px] text-destructive">
+        {(graph.error as Error)?.message ?? "Failed to load graph."}
+      </div>
+    );
+  if (!graph.data?.nodes.length)
+    return (
+      <div className="flex-1 grid place-items-center text-[13px] text-muted-foreground">
+        No pages yet.
+      </div>
+    );
+  return (
+    <div className="flex-1 min-w-0 min-h-0">
+      <WikiGraph data={graph.data} onSelect={onSelect} />
+    </div>
   );
 }
 

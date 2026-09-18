@@ -15,6 +15,8 @@ type MasterDetailProps = {
   onBack: () => void;
   /** Label for the mobile back button, e.g. `"Wiki"`. */
   backLabel: string;
+  /** Hide the rail on desktop (mobile always shows it until a selection). */
+  railCollapsed?: boolean;
   master: ReactNode;
   detail: ReactNode;
   className?: string;
@@ -37,6 +39,7 @@ export function MasterDetail({
   hasSelection,
   onBack,
   backLabel,
+  railCollapsed = false,
   master,
   detail,
   className,
@@ -50,6 +53,7 @@ export function MasterDetail({
           // Mobile: the rail *is* the page until something is selected.
           "max-lg:w-full max-lg:border-r-0",
           hasSelection && "max-lg:hidden",
+          railCollapsed && "lg:hidden",
         )}
       >
         {master}

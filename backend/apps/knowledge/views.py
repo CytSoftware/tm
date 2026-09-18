@@ -46,3 +46,17 @@ class KnowledgePageDetailView(APIView):
             return Response(b2.wiki_read(slug))
         except b2.B2Error as exc:
             return Response({"detail": str(exc)}, status=getattr(exc, "status_code", 400))
+
+
+class KnowledgeGraphView(APIView):
+    """GET /api/knowledge/graph/ — ``{nodes, links}`` from resolved wikilinks."""
+
+    serializer_class = None
+
+    def get(self, request):
+        if not b2.is_configured():
+            return _not_configured()
+        try:
+            return Response(b2.wiki_graph())
+        except b2.B2Error as exc:
+            return Response({"detail": str(exc)}, status=getattr(exc, "status_code", 400))
