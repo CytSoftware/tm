@@ -187,7 +187,7 @@ type Link = { source: string | Node; target: string | Node };
 
 const endId = (end: string | Node) => (typeof end === "string" ? end : end.id);
 /** World-space size: grows with links, but gently, so hubs don't swamp. */
-const nodeRadius = (n: Node) => 6.5 + Math.sqrt(n.degree) * 1.1;
+const nodeRadius = (n: Node) => 8 + Math.sqrt(n.degree) * 1.3;
 const EMPTY = { nodes: [] as Node[], links: [] as Link[] };
 // A small graph fits at a huge zoom; cap it so nodes keep a sane size. The
 // local graph has few nodes, so it may zoom further to fill its pane.
@@ -287,12 +287,12 @@ export default function WikiGraph({
     // Repulsion only reaches nearby nodes, plus a centre pull (Obsidian's
     // "center force"). Otherwise unlinked pages are pushed away by the whole
     // cluster and zoom-to-fit shrinks every node to a dot.
-    fg.d3Force("charge")?.strength(focus ? -140 : -120).distanceMax(focus ? 300 : 180);
-    fg.d3Force("link")?.distance(focus ? 50 : 40);
+    fg.d3Force("charge")?.strength(focus ? -140 : -170).distanceMax(focus ? 300 : 220);
+    fg.d3Force("link")?.distance(focus ? 50 : 55);
     fg.d3Force("x", forceX(0).strength(0.08));
     fg.d3Force("y", forceY(0).strength(0.08));
     // Shapes never overlap; the gap leaves room to read a hub's label.
-    fg.d3Force("collide", forceCollide<NodeObject<Node>>((n) => nodeRadius(n) * 1.25 + 4));
+    fg.d3Force("collide", forceCollide<NodeObject<Node>>((n) => nodeRadius(n) * 1.25 + 9));
     const id = requestAnimationFrame(() => setLive(true));
     return () => cancelAnimationFrame(id);
   }, [ready, focus]);
@@ -374,10 +374,11 @@ export default function WikiGraph({
             drawNode(ctx, n.kind, x, y, r, scale, p, dark, n.id === focus);
             // Labels fade in with zoom (Obsidian-style); always shown for the
             // focused page, hubs, and the hovered neighbourhood.
-            // Hub labels need the node legible on screen, or a zoomed-out
+            // The local graph is small enough to label everything. Globally,
+            // hub labels need the node legible on screen, or a zoomed-out
             // graph turns into overlapping text.
             const labelAlpha =
-              n.id === focus || (hover && lit) || (!hover && n.degree > hubCut && r * scale >= 8)
+              focus || (hover && lit) || (!hover && n.degree > hubCut && r * scale >= 8)
                 ? 1
                 : Math.min(1, Math.max(0, (scale - 1.8) / 0.8));
             if (labelAlpha > 0 && lit) {
