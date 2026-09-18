@@ -5,7 +5,7 @@ work-related): transcript + summary + brief + action items, pushed in by the
 PLAUD pipeline over MCP, and explorable by time, by who/what was involved, and
 as a graph of how meetings connect.
 
-Status: **phase 1 (backend core) built** on the branch below; phases 2–6 not started. Tracked as **TAS-070**; branch
+Status: **backend core (phase 1) merged; UI (phases 4–5) built** on `feat/tas-070-meetings-ui`. Still to do: MCP tools (2), backfill (3), entity-merge UI (6). Tracked as **TAS-070**; branch
 `feat/tas-070-meetings`.
 
 ## Decisions (confirmed with Chris, 2026-09-18)
@@ -237,11 +237,22 @@ making a third copy. `html: false` stays.
 
 ### The graph
 
-New dependency: **`react-force-graph-2d`** (canvas, d3-force underneath).
-Canvas rather than an SVG/DOM graph lib (`@xyflow/react`) because a
-force-directed layout is the point — xyflow has no layout engine — and canvas
-stays smooth as nodes grow into the hundreds. It touches `window`, so load it
-with `next/dynamic(..., { ssr: false })`.
+**As built:** SVG rendered by React over a `d3-force` layout (the only new
+dependency), not `react-force-graph-2d` as first planned. At tens to a few
+hundred nodes SVG costs nothing and buys theme tokens that work in dark mode
+for free, crisp text, and focusable nodes for the keyboard. The simulation is
+ticked synchronously to completion instead of animated: the picture doesn't
+drift under the cursor, the same data lands in the same place every visit, and
+it doesn't depend on `requestAnimationFrame` (frozen in background tabs).
+Pan / wheel-zoom / pinch / node-drag are ~80 lines of pointer events.
+
+"Group by" (company · project · category · month · none) is a layout concern:
+each group gets an anchor on a ring, an x/y force pulls members in, and the
+enclosing circle is measured afterwards. Grouping by company picks the *rarest*
+company in the room — your own company attends everything and would otherwise
+swallow every meeting. Links that leave a cluster are drawn faint. Selecting a
+meeting lights its people/companies and, one step quieter, the other meetings
+they're in — its linked meetings.
 
 - Node types are visually distinct: meetings (small, coloured by category),
   people, companies (larger), projects. Colours from `lib/chart-colors.ts`,

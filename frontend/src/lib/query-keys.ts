@@ -77,6 +77,19 @@ export const llmWikiListKey = () => ["llm-wiki", "list"] as const;
 export const llmWikiPageKey = (slug: string) =>
   ["llm-wiki", "page", slug] as const;
 
+// Meetings — recordings pushed in by the pipeline (workspace-global).
+// Everything lives under ["meetings"] so the meetings socket can invalidate
+// the list, graph, facets and any open detail at once.
+export const meetingsListKey = (filtersKey = "") =>
+  ["meetings", "list", filtersKey] as const;
+export const meetingsGraphKey = (filtersKey = "") =>
+  ["meetings", "graph", filtersKey] as const;
+export const meetingsFacetsKey = () => ["meetings", "facets"] as const;
+export const meetingEntitiesKey = () => ["meetings", "entities"] as const;
+export const meetingKey = (key: string) => ["meetings", "detail", key] as const;
+export const meetingRelatedKey = (key: string) =>
+  ["meetings", "related", key] as const;
+
 // Notifications — per-user inbox. The list query's response also carries
 // `unread_count`, so `notificationsUnreadKey` is only used by the
 // standalone `/api/notifications/unread_count/` poll (WS fallback).
