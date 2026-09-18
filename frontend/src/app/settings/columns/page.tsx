@@ -19,7 +19,7 @@ import { Save, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ProjectColumnSettings } from "@/components/project/ProjectColumns";
+import { ProjectColumnSettings, useColumnDrafts } from "@/components/project/ProjectColumns";
 import { apiFetch } from "@/lib/api";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import type { Project, StalenessSettings } from "@/lib/types";
@@ -136,21 +136,24 @@ function StalenessForm({
     }));
   }
 
+  const columnDrafts = useColumnDrafts();
+
+  // One Save for the page: column renames/types and staleness thresholds.
   function handleSave() {
-    const payload = formToThresholds(values);
-    saveMutation.mutate(payload);
+    if (columnDrafts.dirty) void columnDrafts.save();
+    saveMutation.mutate(formToThresholds(values));
   }
 
   function resetToDefaults() {
     setValues(thresholdsToForm(data.defaults, columnNames));
   }
 
-  const saving = saveMutation.isPending;
+  const saving = saveMutation.isPending || columnDrafts.isPending;
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
-        <header className="flex items-center gap-3">
+        <header className="sticky top-0 z-10 -mx-6 -mt-8 px-6 pt-8 pb-3 flex items-center gap-3 bg-background">
           <div>
             <h1 className="text-[18px] font-semibold tracking-tight">
               Columns
@@ -159,9 +162,26 @@ function StalenessForm({
               Manage each project’s columns and task staleness thresholds.
             </p>
           </div>
+          <div className="ml-auto flex items-center gap-2">
+            {saveMutation.isError && (
+              <span className="text-[12px] text-destructive">
+                Couldn&apos;t save. Try again.
+              </span>
+            )}
+            {columnDrafts.dirty && !saving && (
+              <span className="text-[11px] text-muted-foreground">Unsaved changes</span>
+            )}
+            {saveMutation.isSuccess && !saving && !columnDrafts.dirty && (
+              <span className="text-[12px] text-muted-foreground">Saved.</span>
+            )}
+            <Button size="sm" onClick={handleSave} disabled={saving || columnDrafts.invalid}>
+              <Save className="size-3.5" />
+              {saving ? "Saving..." : "Save"}
+            </Button>
+          </div>
         </header>
 
-        <ProjectColumnSettings />
+        <ProjectColumnSettings drafts={columnDrafts} />
         <h2 className="text-sm font-medium">Staleness thresholds</h2>
         <p className="text-xs text-muted-foreground">Applied across projects by column name. Done and Cancelled columns are excluded.</p>
         <section className="rounded-lg border border-border bg-card">
@@ -210,7 +230,7 @@ function StalenessForm({
           })}
         </section>
 
-        <div className="flex items-center justify-between">
+        <div className="flex items-center">
           <Button
             variant="ghost"
             size="sm"
@@ -220,20 +240,6 @@ function StalenessForm({
             <RotateCcw className="size-3.5" />
             Reset to defaults
           </Button>
-          <div className="flex items-center gap-2">
-            {saveMutation.isError && (
-              <span className="text-[12px] text-destructive">
-                Couldn&apos;t save. Try again.
-              </span>
-            )}
-            {saveMutation.isSuccess && !saving && (
-              <span className="text-[12px] text-muted-foreground">Saved.</span>
-            )}
-            <Button size="sm" onClick={handleSave} disabled={saving}>
-              <Save className="size-3.5" />
-              {saving ? "Saving..." : "Save"}
-            </Button>
-          </div>
         </div>
       </div>
     </div>

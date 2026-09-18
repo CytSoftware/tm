@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Save, Trash2 } from "lucide-react";
 
 import { ProjectRepositories } from "@/components/integrations/ProjectRepositories";
-import { ProjectColumns } from "@/components/project/ProjectColumns";
+import { ProjectColumns, useColumnDrafts } from "@/components/project/ProjectColumns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -69,16 +69,20 @@ function ProjectSettingsForm({ project }: { project: Project }) {
   const [color, setColor] = useState(project.color);
   const [icon, setIcon] = useState(project.icon);
   const [archived, setArchived] = useState(project.archived);
+  const columnDrafts = useColumnDrafts();
 
-  const isDirty =
+  const projectDirty =
     name !== project.name ||
     description !== project.description ||
     color !== project.color ||
     icon !== project.icon ||
     archived !== project.archived;
+  const isDirty = projectDirty || columnDrafts.dirty;
+  const saving = updateProject.isPending || columnDrafts.isPending;
 
   function handleSave() {
-    if (!isDirty) return;
+    if (columnDrafts.dirty) void columnDrafts.save();
+    if (!projectDirty) return;
     updateProject.mutate({
       name,
       description,
@@ -156,11 +160,11 @@ function ProjectSettingsForm({ project }: { project: Project }) {
           <Button
             size="sm"
             className="h-8 text-[13px]"
-            disabled={!isDirty || updateProject.isPending}
+            disabled={!isDirty || saving || columnDrafts.invalid}
             onClick={handleSave}
           >
             <Save className="size-3.5" />
-            {updateProject.isPending ? "Saving..." : "Save"}
+            {saving ? "Saving..." : "Save"}
           </Button>
         </div>
       </header>
@@ -227,7 +231,7 @@ function ProjectSettingsForm({ project }: { project: Project }) {
           </div>
 
           <ProjectRepositories projectId={project.id} legacyRepo={project.github_repo} />
-          <ProjectColumns project={project} />
+          <ProjectColumns project={project} drafts={columnDrafts} />
 
           {/* Archive toggle */}
           <div className="flex items-center justify-between rounded-md border border-border/60 p-4">
