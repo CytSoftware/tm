@@ -5,8 +5,7 @@ work-related): transcript + summary + brief + action items, pushed in by the
 PLAUD pipeline over MCP, and explorable by time, by who/what was involved, and
 as a graph of how meetings connect.
 
-Status: **backend core (phase 1) merged; UI (phases 4–5) built** on `feat/tas-070-meetings-ui`. Still to do: MCP tools (2), backfill (3), entity-merge UI (6). Tracked as **TAS-070**; branch
-`feat/tas-070-meetings`.
+Status: **backend (1), MCP tools (2) and UI (4–5) built.** Still to do: pipeline wiring + backfill (3) — on clawdbot, see [`../meetings-pipeline.md`](../meetings-pipeline.md) — and an entity-merge screen (6; merging already works over MCP and REST).
 
 ## Decisions (confirmed with Chris, 2026-09-18)
 
@@ -180,7 +179,7 @@ Mirror `apps/wiki/broadcast.py`: one global `meetings` group, message type
 | `link_meetings` | W | Creates a `MeetingLink`. |
 | `update_entity` / `merge_entities` | W | |
 | `list_meetings` | R | Filters from `query.py`; light payload. |
-| `get_meeting` | R | By `key` or `stem`; `include_transcript: bool = True`. |
+| `get_meeting` | R | By `key` or `stem`. `include_transcript` defaults to **false** — a transcript is tens of thousands of tokens and an agent usually only needs the brief; the reply carries `transcript_chars` instead. |
 | `search_meetings` | R | `query` + filters; returns snippets. |
 | `get_related_meetings` | R | |
 | `list_entities` | R | So the pipeline can check existing names before pushing. |

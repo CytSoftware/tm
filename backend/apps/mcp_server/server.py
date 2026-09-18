@@ -94,7 +94,22 @@ E.g. a person goes to `entities/people/john-smith`, not `john-smith`.
 other pages with `[[path/to/page]]` wikilinks.
 - `knowledge_read` an existing page and UPDATE it in place rather than duplicating.
 - The `index` catalog and `log` are auto-maintained by the server — never write them.
-Never file secrets/credentials/tokens or personal (non-business) content in the wiki."""
+Never file secrets/credentials/tokens or personal (non-business) content in the wiki.
+
+MEETINGS (the *meeting* tools) hold recorded work conversations: transcript, brief, \
+action items, and the people/companies involved — which is what links meetings together.
+- Push a recording with `upsert_meeting`. It is keyed on the recording `stem`, so \
+re-pushing is always safe: the transcript/brief refresh, while anything a person \
+curated (title, category, project, merged people, ticked action items) is kept.
+- `started_at` MUST carry a UTC offset (`2026-09-16T15:50:09+03:00`). Recording \
+stems are local time with no zone; a naive value is rejected, not guessed.
+- Send the brief as MARKDOWN in `brief_md`. `brief_html` is stored but never shown.
+- Work recordings only — personal ones are refused; this workspace is shared.
+- Before pushing, call `list_meeting_entities` and reuse the existing spelling of a \
+person or company. `upsert_meeting` reports `new_entities`; if one is a duplicate \
+("Ali" vs "Ali K."), fix it with `merge_meeting_entities`.
+- To answer questions use `search_meetings` (returns the matching snippet) then \
+`get_meeting`; the transcript is large, so it is only returned on request."""
 
 #: Tools that only read. Everything else is treated as a write and requires the
 #: ``write`` scope.
@@ -107,6 +122,8 @@ READ_ONLY_TOOLS = frozenset({
     "drive_list",
     "drive_read",
     "get_bet",
+    "get_meeting",
+    "get_related_meetings",
     "get_task",
     "get_throughput",
     "get_weekly_completions",
@@ -121,6 +138,8 @@ READ_ONLY_TOOLS = frozenset({
     "list_columns",
     "list_focus",
     "list_labels",
+    "list_meeting_entities",
+    "list_meetings",
     "list_projects",
     "list_recurring_tasks",
     "list_tasks",
@@ -131,6 +150,7 @@ READ_ONLY_TOOLS = frozenset({
     "list_wiki_docs",
     "preview_recurring_task",
     "query_view",
+    "search_meetings",
 })
 
 
@@ -1243,6 +1263,351 @@ async def delete_routine(external_id: str) -> dict[str, Any]:
     """
     from apps.integrations.routines import delete_routine as impl
     return await _async(impl)(external_id, mcp_user=_get_mcp_user())
+
+
+# ---------------------------------------------------------------------------
+# Meetings (recordings pushed in by the pipeline)
+# ---------------------------------------------------------------------------
+#
+# Implementations live in apps/meetings/mcp_tools.py, next to the services
+# they wrap, rather than in this app's 2,000-line tools.py.
+
+
+@mcp.tool()
+async def upsert_meeting(
+    stem: str,
+    title: str | None = None,
+    started_at: str | None = None,
+    transcript_md: str | None = None,
+    brief_md: str | None = None,
+    summary: str | None = None,
+    category: str | None = None,
+    project: str | int | None = None,
+    people: list[str | dict[str, str]] | None = None,
+    companies: list[str] | None = None,
+    mentioned_people: list[str] | None = None,
+    mentioned_companies: list[str] | None = None,
+    tags: list[str] | None = None,
+    action_items: list[str | dict[str, Any]] | None = None,
+    duration_seconds: int | None = None,
+    language: str | None = None,
+    speaker_count: int | None = None,
+    gshr_url: str | None = None,
+    brief_html: str | None = None,
+    source_meta: dict[str, Any] | None = None,
+    route: str = "work",
+    overwrite_metadata: bool = False,
+) -> dict[str, Any]:
+    """Create or refresh the meeting for one recording. Safe to call repeatedly.
+
+    ``stem`` is the recording id (e.g. ``2026-09-16-155009-c896f4``) and the
+    upsert key. A new meeting also needs ``title`` and ``started_at``.
+
+    ``started_at`` is ISO-8601 **with a UTC offset**
+    (``2026-09-16T15:50:09+03:00``); a naive timestamp is rejected.
+    ``category`` is one of ``client``, ``internal``, ``pitch_feedback``,
+    ``sales``, ``interview``, ``other``. ``project`` is a prefix like ``MOW``.
+
+    ``people`` are the attendees: names, or ``{"name": ..., "company": ...}`` to
+    record an employer too. ``companies`` are the organisations in the meeting.
+    ``mentioned_people`` / ``mentioned_companies`` came up but weren't present.
+    Reuse existing spellings — check ``list_meeting_entities`` first.
+    ``action_items`` are strings or ``{"text", "owner", "id"}``; omit ``id`` and
+    one is derived from the text.
+
+    On a re-push: transcript, brief, summary, duration, ``gshr_url`` and
+    ``source_meta`` are refreshed from what you send. ``title``, ``category``,
+    ``project`` and ``started_at`` are only written if still unset — people
+    may have corrected them — unless ``overwrite_metadata=true``. People,
+    companies and tags are only ever *added*. Action items keep their done
+    state and linked task. Omitted arguments leave the stored value alone.
+
+    Returns the meeting (without the transcript) plus ``created``, its ``url``
+    and ``new_entities`` — any person/company this call created. If one of
+    those is a misspelling of an existing entity, ``merge_meeting_entities``.
+    Only ``route="work"`` is accepted.
+    """
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.upsert_meeting)(
+        stem,
+        title=title,
+        started_at=started_at,
+        transcript_md=transcript_md,
+        brief_md=brief_md,
+        summary=summary,
+        category=category,
+        project=project,
+        people=people,
+        companies=companies,
+        mentioned_people=mentioned_people,
+        mentioned_companies=mentioned_companies,
+        tags=tags,
+        action_items=action_items,
+        duration_seconds=duration_seconds,
+        language=language,
+        speaker_count=speaker_count,
+        gshr_url=gshr_url,
+        brief_html=brief_html,
+        source_meta=source_meta,
+        route=route,
+        overwrite_metadata=overwrite_metadata,
+        mcp_user=_get_mcp_user(),
+    )
+
+
+@mcp.tool()
+async def list_meetings(
+    project: str | int | None = None,
+    category: str | None = None,
+    person: str | None = None,
+    company: str | None = None,
+    tag: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """List meetings, newest first, without their transcript/brief bodies.
+
+    All filters are optional and combine. ``person`` / ``company`` take a name;
+    ``company`` also matches meetings its people attended. ``project`` is a
+    prefix, id, or ``"none"``. ``date_from`` / ``date_to`` are ISO dates and
+    both inclusive. To find meetings by what was *said*, use ``search_meetings``.
+    """
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.list_meetings)(
+        limit=limit,
+        project=project,
+        category=category,
+        person=person,
+        company=company,
+        tag=tag,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+
+@mcp.tool()
+async def search_meetings(
+    query: str,
+    project: str | int | None = None,
+    category: str | None = None,
+    person: str | None = None,
+    company: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Full-text search across titles, summaries, briefs, transcripts, people,
+    companies and tags. Same optional filters as ``list_meetings``.
+
+    Each hit carries a ``snippet`` — the text around the first match — so you
+    can tell why it matched before fetching it. Matching is a case-insensitive
+    substring, not semantic: search for a word that was actually said.
+    """
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.search_meetings)(
+        query,
+        limit=limit,
+        project=project,
+        category=category,
+        person=person,
+        company=company,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+
+@mcp.tool()
+async def get_meeting(meeting: str, include_transcript: bool = False) -> dict[str, Any]:
+    """One meeting in full: brief, action items, people, linked tasks.
+
+    ``meeting`` is a key (``MTG-014``) or a recording stem. The transcript can
+    run to tens of thousands of words, so it is left out unless
+    ``include_transcript=true``; ``transcript_chars`` says how big it is.
+    """
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.get_meeting)(
+        meeting, include_transcript=include_transcript
+    )
+
+
+@mcp.tool()
+async def get_related_meetings(meeting: str, limit: int = 12) -> list[dict[str, Any]]:
+    """Meetings connected to this one, best first, each with its ``reasons``
+    (the shared people, companies, project or tags). Explicitly linked
+    follow-ups come first and carry a ``link_kind``.
+    """
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.get_related_meetings)(meeting, limit=limit)
+
+
+@mcp.tool()
+async def list_meeting_entities(
+    kind: str | None = None, search: str | None = None, limit: int = 200
+) -> list[dict[str, Any]]:
+    """The people and companies meetings are linked by, busiest first, with
+    their ``aliases`` and ``meeting_count``. ``kind`` is ``person`` or
+    ``company``. Check this before ``upsert_meeting`` to reuse a spelling.
+    """
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.list_meeting_entities)(
+        kind=kind, search=search, limit=limit
+    )
+
+
+@mcp.tool()
+async def update_meeting(
+    meeting: str,
+    title: str | None = None,
+    category: str | None = None,
+    project: str | int | None = None,
+    clear_project: bool = False,
+    started_at: str | None = None,
+    summary: str | None = None,
+    gshr_url: str | None = None,
+    tags: list[str] | None = None,
+    people: list[str | dict[str, str]] | None = None,
+    companies: list[str] | None = None,
+    mentioned_people: list[str] | None = None,
+    mentioned_companies: list[str] | None = None,
+) -> dict[str, Any]:
+    """Correct a meeting's metadata, as a person would in the UI.
+
+    Unlike ``upsert_meeting`` this is **exact**, not additive: passing ``tags``
+    replaces the tag list, and passing any of the four people/company
+    arguments replaces the meeting's whole set of people and companies — so
+    send all four that apply. Omitted arguments are left alone. It never
+    touches the transcript or brief; re-push those with ``upsert_meeting``.
+    """
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.update_meeting)(
+        meeting,
+        title=title,
+        category=category,
+        project=project,
+        clear_project=clear_project,
+        started_at=started_at,
+        summary=summary,
+        gshr_url=gshr_url,
+        tags=tags,
+        people=people,
+        companies=companies,
+        mentioned_people=mentioned_people,
+        mentioned_companies=mentioned_companies,
+    )
+
+
+@mcp.tool()
+async def delete_meeting(meeting: str) -> dict[str, Any]:
+    """Permanently delete a meeting and its transcript. People, companies and
+    tasks it was linked to are kept. Not reversible — though the pipeline can
+    re-push the recording."""
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.delete_meeting)(meeting)
+
+
+@mcp.tool()
+async def set_meeting_action_item(
+    meeting: str, item_id: str, done: bool = True
+) -> dict[str, Any]:
+    """Tick (or untick) one of a meeting's action items. ``item_id`` comes from
+    ``get_meeting``'s ``action_items``."""
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.set_meeting_action_item)(meeting, item_id, done)
+
+
+@mcp.tool()
+async def create_task_from_meeting_action_item(
+    meeting: str, item_id: str, project: str | int | None = None
+) -> dict[str, Any]:
+    """Turn a meeting's action item into a real task, linked back to the meeting.
+
+    The task goes into the meeting's project; pass ``project`` if the meeting
+    has none. Deliberately one at a time — extracted action items are noisy,
+    so don't bulk-convert them without being asked to.
+    """
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.create_task_from_meeting_action_item)(
+        meeting, item_id, project=project, mcp_user=_get_mcp_user()
+    )
+
+
+@mcp.tool()
+async def link_meeting_task(
+    meeting: str, task: str, unlink: bool = False
+) -> dict[str, Any]:
+    """Attach an existing task (``CYT-012``) to a meeting, or detach it with
+    ``unlink=true``. Idempotent."""
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.link_meeting_task)(meeting, task, unlink=unlink)
+
+
+@mcp.tool()
+async def link_meetings(
+    meeting: str,
+    other: str,
+    kind: str = "follow_up",
+    note: str = "",
+    unlink: bool = False,
+) -> list[dict[str, Any]]:
+    """Record that two meetings belong together when their metadata can't show
+    it. ``kind`` is ``follow_up`` (``meeting`` followed ``other``) or
+    ``related``. Meetings sharing people, a company or a project are already
+    related automatically — don't link those. Returns the related list.
+    """
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.link_meetings)(
+        meeting, other, kind=kind, note=note, unlink=unlink
+    )
+
+
+@mcp.tool()
+async def update_meeting_entity(
+    entity: str | int,
+    kind: str | None = None,
+    name: str | None = None,
+    aliases: list[str] | None = None,
+    wiki_slug: str | None = None,
+    company: str | None = None,
+) -> dict[str, Any]:
+    """Fix up a person or company. ``entity`` is an id or a name; ``kind``
+    disambiguates a name shared by a person and a company.
+
+    Renaming keeps the old name as an alias, so later pushes of it still land
+    here. ``aliases`` replaces the alias list. ``wiki_slug`` points at the
+    LLM-wiki page (``entities/people/ali-k``). ``company`` sets a person's
+    employer (empty string clears it).
+    """
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.update_meeting_entity)(
+        entity, kind=kind, name=name, aliases=aliases, wiki_slug=wiki_slug, company=company
+    )
+
+
+@mcp.tool()
+async def merge_meeting_entities(
+    source: str | int, into: str | int, kind: str | None = None
+) -> dict[str, Any]:
+    """Fold a duplicate person/company (``source``) into the real one
+    (``into``): its meetings move across and its name becomes an alias, so the
+    duplicate doesn't reappear on the next push. ``source`` is deleted.
+    """
+    from apps.meetings import mcp_tools
+
+    return await _async(mcp_tools.merge_meeting_entities)(source, into, kind=kind)
 
 
 # ---------------------------------------------------------------------------

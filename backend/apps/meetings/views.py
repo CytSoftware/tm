@@ -7,7 +7,7 @@ all writes through ``services.py`` — the MCP tools use the same two modules.
 
 from __future__ import annotations
 
-from django.db.models import Count, Q
+from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -22,8 +22,6 @@ from .models import (
     Entity,
     Meeting,
     MeetingCategory,
-    MeetingLink,
-    MeetingTask,
     Tag,
 )
 from .query import base_meeting_queryset, filter_meetings
@@ -218,9 +216,9 @@ class MeetingViewSet(viewsets.ModelViewSet):
         meeting = self.get_object()
         task = get_object_or_404(Task, key=request.data.get("task", ""))
         if request.method == "POST":
-            MeetingTask.objects.get_or_create(meeting=meeting, task=task)
+            services.link_task(meeting, task)
         else:
-            MeetingTask.objects.filter(meeting=meeting, task=task).delete()
+            services.unlink_task(meeting, task)
         _announce(meeting)
         return self._detail(meeting)
 
@@ -230,17 +228,13 @@ class MeetingViewSet(viewsets.ModelViewSet):
         payload = MeetingLinkInputSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         other = get_object_or_404(Meeting, key=payload.validated_data["to"])
-        if other.pk == meeting.pk:
-            raise ValidationError({"to": "A meeting can't link to itself."})
-        either_way = Q(from_meeting=meeting, to_meeting=other) | Q(
-            from_meeting=other, to_meeting=meeting
-        )
         if request.method == "DELETE":
-            MeetingLink.objects.filter(either_way).delete()
-        elif not MeetingLink.objects.filter(either_way).exists():
-            MeetingLink.objects.create(
-                from_meeting=meeting,
-                to_meeting=other,
+            services.unlink_meetings(meeting, other)
+        else:
+            _guard(
+                services.link_meetings,
+                meeting,
+                other,
                 kind=payload.validated_data["kind"],
                 note=payload.validated_data["note"],
             )
