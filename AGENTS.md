@@ -112,6 +112,20 @@ The wiki structure/metadata MCP tools (`create/update/delete/list/get_wiki_doc`)
 
 `apply_content` (a coroutine — it must run on Daphne's event loop) reads the current state (the live in-memory room doc if the page is open, else the `DocState` blob), calls the encoder, and on success applies the diff to the shared room doc + pushes a `create_update_message` into the `wiki_doc_<key>` group so open editors converge live, then persists the new state + snapshot and broadcasts a `wiki.updated` tree event. The HTTP MCP transport (in-process) awaits it directly; the stdio MCP process routes through `/api/internal/wiki/apply/` (loopback + `CYT_BROADCAST_SECRET`), which re-enters the loop via `async_to_sync`. Note the stock `YjsConsumer` does **not** auto-forward server-side doc mutations — the explicit `group_send` is required.
 
+### Meetings (`apps/meetings/`, `/meetings`)
+
+Recorded conversations pushed in by the PLAUD pipeline; people only curate them. Plan + rationale: `docs/plans/meetings.md`.
+
+- `Meeting.stem` is the pipeline's natural key — `POST /api/meetings/` **upserts** on it (201 new / 200 refreshed). `Meeting.key` (`MTG-001`) is the human id and DRF lookup.
+- **A re-push must never undo curation.** `services.upsert_meeting` always refreshes pipeline-owned fields (transcript, brief, summary, duration…), but writes title/category/project/start only on create (or while still empty, or with `overwrite_metadata`); entity and tag links are *additive* on a re-push and *exact* on a UI `PATCH`; action items merge by id and keep `done`/`task_key`. Any new field needs a deliberate home in `PIPELINE_FIELDS` or `CURATED_FIELDS`.
+- People/companies are `Entity` rows (deduped by slug, then `aliases`; `merge_entities` folds duplicates and keeps the old name as an alias so the pipeline keeps resolving to the survivor). Links *between* meetings are **derived** in `related.py` from shared entities/project/tags — only explicit follow-ups are stored (`MeetingLink`).
+- `query.py` is the single filter/search path (same contract as `tasks/query.py`). Search is `icontains` on purpose — no SQLite-only SQL. List/graph queries `defer()` the body columns.
+- `brief_html` is stored but never serialized or rendered; the brief shown in-app is `brief_md` through `frontend/src/lib/markdown.ts` (the one `markdown-it` instance, `html: false` — don't add a second with `html: true`).
+- `started_at` refuses timestamps without a UTC offset (recording stems are naive local time). `route=personal` is refused — TM is shared.
+- Realtime: global `meetings` Channels group at `ws/meetings/` (`scope: "meetings"` on the internal broadcast bridge); the frontend invalidates the whole `["meetings"]` query namespace.
+- The graph (`components/meetings/MeetingsGraph.tsx` + `graph-layout.ts`) is SVG over a `d3-force` layout that is **ticked synchronously to completion, not animated** — stable, deterministic, and independent of `requestAnimationFrame`. Grouping is a layout concern (anchor forces + measured enclosing circles). There are deliberately no derived meeting↔meeting edges: meetings connect *through* shared person/company nodes. Category colors come from `lib/meeting-meta.ts` — only four hues pass the dataviz validator for an all-pairs form, so the other two categories use neutral inks.
+- All view state (`view`, `group`, filters, open meeting `m`) lives in the URL. `manage.py seed_demo_meetings` (DEBUG only) fills a dev DB with a realistic web of meetings.
+
 ### Frontend data flow
 
 `frontend/src/lib/api.ts` — `apiFetch` wrapper that auto-attaches the `csrftoken` cookie on unsafe methods and uses `credentials: "include"` throughout. Seed the CSRF cookie once on boot via `ensureCsrfCookie()` → `/api/auth/csrf/`.

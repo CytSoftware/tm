@@ -15,6 +15,7 @@ import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  AudioLines,
   BarChart3,
   BookText,
   Boxes,
@@ -403,6 +404,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
             collapsed={isCollapsed}
             onNavigate={() => {
               router.push("/llm-wiki");
+              onClose?.();
+            }}
+          />
+          <NavLink
+            icon={
+              <AudioLines
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="Meetings"
+            active={pathname.startsWith("/meetings")}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/meetings");
               onClose?.();
             }}
           />

@@ -13,7 +13,6 @@
  */
 
 import { useMemo, useState } from "react";
-import MarkdownIt from "markdown-it";
 import { ChevronRight, FileText, Folder, Sparkles } from "lucide-react";
 
 import { MasterDetail } from "@/components/layout/MasterDetail";
@@ -23,25 +22,8 @@ import {
   useKnowledgeList,
   useKnowledgePage,
 } from "@/hooks/use-knowledge";
+import { md } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
-
-const md = new MarkdownIt({ html: false, linkify: true, typographer: true });
-
-// With html:false the only injection surface left is link/image URL *schemes*.
-const DANGEROUS_SCHEME = /^(javascript|vbscript|data|file):/i;
-md.validateLink = (url: string) => {
-  let s = (url || "").trim();
-  try {
-    s = decodeURIComponent(s);
-  } catch {
-    // malformed encoding — fall through and test the raw string
-  }
-  // strip control chars / whitespace (avoids a control-char regex literal)
-  s = Array.from(s)
-    .filter((c) => c.charCodeAt(0) > 0x20)
-    .join("");
-  return !DANGEROUS_SCHEME.test(s) || s.startsWith("#w/");
-};
 
 // ── Tree ──────────────────────────────────────────────────────────────────
 type TreeNode = {
