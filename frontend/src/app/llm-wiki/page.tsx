@@ -190,10 +190,8 @@ export default function LlmWikiPage() {
     <MasterDetail
       railWidth="w-72"
       hasSelection={slug != null || showGraph}
-      onBack={() => {
-        setSlug(null);
-        setShowGraph(false);
-      }}
+      // Back from a page returns to the graph if you came from it.
+      onBack={() => (slug ? setSlug(null) : setShowGraph(false))}
       backLabel="LLM Wiki"
       railCollapsed={!railOpen}
       master={
@@ -276,6 +274,14 @@ export default function LlmWikiPage() {
         <div className="flex-1 min-w-0 min-h-0 flex flex-col">
         <div className="shrink-0 h-12 flex items-center gap-2 px-3 border-b border-border/80 max-lg:hidden">
           {!railOpen && <ShowRailButton onClick={() => setRailOpen(true)} />}
+          <button
+            type="button"
+            onClick={() => setSlug(null)}
+            className="shrink-0 flex items-center gap-1.5 h-7 px-2 rounded-md border border-border text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Network className="size-3.5" />
+            Full graph
+          </button>
           <span className="truncate text-[11px] font-mono text-muted-foreground/70">{slug}</span>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto">
