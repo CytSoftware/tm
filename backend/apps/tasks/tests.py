@@ -148,6 +148,7 @@ class ColumnKindMirrorTests(TestCase):
                 "Backlog": ColumnKind.BACKLOG,
                 "Todo": ColumnKind.TODO,
                 "In Progress": ColumnKind.IN_PROGRESS,
+                "Waiting": ColumnKind.WAITING,
                 "In Review": ColumnKind.REVIEW,
                 "Done": ColumnKind.DONE,
                 "Cancelled": ColumnKind.CANCELLED,
@@ -187,6 +188,48 @@ class ColumnKindMirrorTests(TestCase):
             is_done=True,
         )
         self.assertFalse(col.is_done)
+
+
+class WaitingColumnMigrationTests(TestCase):
+    """The 0031 data migration inserts "Waiting" into existing boards.
+
+    The insert has to shift every later column up one while the
+    ``(project, order)`` unique constraint is live, so the ordering is the
+    thing worth checking.
+    """
+
+    def setUp(self):
+        self.project = Project.objects.create(name="Cyt", prefix="CYT")
+        self._seed = importlib.import_module(
+            "apps.tasks.migrations.0031_seed_waiting_column"
+        ).seed_waiting_column
+        # A project created today is already seeded, so drop the column to get
+        # back to the pre-migration board.
+        self.project.columns.filter(kind=ColumnKind.WAITING).delete()
+
+    def _ordered_names(self):
+        return list(self.project.columns.order_by("order").values_list("name", flat=True))
+
+    def test_inserts_after_in_progress_and_keeps_order_contiguous(self):
+        self._seed(django_apps, None)
+        self.assertEqual(
+            self._ordered_names(),
+            ["Backlog", "Todo", "In Progress", "Waiting", "In Review", "Done", "Cancelled"],
+        )
+        orders = list(self.project.columns.order_by("order").values_list("order", flat=True))
+        self.assertEqual(orders, list(range(len(orders))))
+
+    def test_is_idempotent(self):
+        self._seed(django_apps, None)
+        self._seed(django_apps, None)
+        self.assertEqual(
+            self.project.columns.filter(kind=ColumnKind.WAITING).count(), 1
+        )
+
+    def test_appends_when_project_has_no_in_progress_column(self):
+        self.project.columns.filter(kind=ColumnKind.IN_PROGRESS).delete()
+        self._seed(django_apps, None)
+        self.assertEqual(self._ordered_names()[-1], "Waiting")
 
 
 class ColumnKindBackfillMigrationTests(TestCase):

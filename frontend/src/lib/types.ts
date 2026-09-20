@@ -103,6 +103,7 @@ export type ColumnKind =
   | "backlog"
   | "todo"
   | "in_progress"
+  | "waiting"
   | "review"
   | "done"
   | "cancelled"
@@ -112,6 +113,7 @@ export const COLUMN_KIND_ORDER: ColumnKind[] = [
   "backlog",
   "todo",
   "in_progress",
+  "waiting",
   "review",
   "done",
   "cancelled",
@@ -122,6 +124,7 @@ export const COLUMN_KIND_LABELS: Record<ColumnKind, string> = {
   backlog: "Backlog",
   todo: "Todo",
   in_progress: "In Progress",
+  waiting: "Waiting",
   review: "In Review",
   done: "Done",
   cancelled: "Cancelled",

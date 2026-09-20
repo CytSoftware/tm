@@ -113,6 +113,7 @@ class ColumnKind(models.TextChoices):
     BACKLOG = "backlog", "Backlog"
     TODO = "todo", "Todo"
     IN_PROGRESS = "in_progress", "In progress"
+    WAITING = "waiting", "Waiting"
     REVIEW = "review", "Review"
     DONE = "done", "Done"
     CANCELLED = "cancelled", "Cancelled"
@@ -548,16 +549,21 @@ def _create_user_profile(sender, instance, created, **kwargs):
 # Default columns for new projects
 # ---------------------------------------------------------------------------
 # A fresh Project gets a sensible default Kanban layout: Todo / In Progress /
-# In Review / Done. The "Done" column is marked is_done=True so analytics and
-# recurring defaults know which column means "completed".
+# Waiting / In Review / Done. The "Done" column is marked is_done=True so
+# analytics and recurring defaults know which column means "completed".
+#
+# "Waiting" is the state where the ball is in someone else's court — a client
+# owes a reply, a vendor owes a key. It is not active work, so it is its own
+# kind rather than IN_PROGRESS: analytics must not count it as started.
 
 DEFAULT_COLUMNS = [
     {"name": "Backlog", "order": 0, "kind": ColumnKind.BACKLOG},
     {"name": "Todo", "order": 1, "kind": ColumnKind.TODO},
     {"name": "In Progress", "order": 2, "kind": ColumnKind.IN_PROGRESS},
-    {"name": "In Review", "order": 3, "kind": ColumnKind.REVIEW},
-    {"name": "Done", "order": 4, "kind": ColumnKind.DONE},
-    {"name": "Cancelled", "order": 5, "kind": ColumnKind.CANCELLED},
+    {"name": "Waiting", "order": 3, "kind": ColumnKind.WAITING},
+    {"name": "In Review", "order": 4, "kind": ColumnKind.REVIEW},
+    {"name": "Done", "order": 5, "kind": ColumnKind.DONE},
+    {"name": "Cancelled", "order": 6, "kind": ColumnKind.CANCELLED},
 ]
 
 
@@ -712,6 +718,7 @@ DEFAULT_STALE_THRESHOLDS: dict[str, dict[str, int]] = {
     "Backlog": {"yellow_days": 14, "red_days": 30},
     "Todo": {"yellow_days": 5, "red_days": 10},
     "In Progress": {"yellow_days": 5, "red_days": 10},
+    "Waiting": {"yellow_days": 3, "red_days": 7},
     "In Review": {"yellow_days": 3, "red_days": 7},
 }
 
