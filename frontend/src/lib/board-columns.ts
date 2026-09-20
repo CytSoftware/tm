@@ -5,16 +5,29 @@ const STANDARD_COLUMNS = [
   { name: "Backlog", order: 0, is_done: false, kind: "backlog" },
   { name: "Todo", order: 1, is_done: false, kind: "todo" },
   { name: "In Progress", order: 2, is_done: false, kind: "in_progress" },
-  { name: "In Review", order: 3, is_done: false, kind: "review" },
-  { name: "Done", order: 4, is_done: true, kind: "done" },
-  { name: "Other", order: 6, is_done: false, kind: "other" },
-  { name: "Cancelled", order: 5, is_done: false, kind: "cancelled" },
+  { name: "In Review", order: 4, is_done: false, kind: "review" },
+  { name: "Done", order: 5, is_done: true, kind: "done" },
+  { name: "Other", order: 7, is_done: false, kind: "other" },
+  { name: "Cancelled", order: 6, is_done: false, kind: "cancelled" },
+  // Appended, not spliced in at order 3: the negative id below is derived from
+  // array position and persists in board_column_prefs, so inserting would
+  // repoint every later stage's saved visibility. `order` does the sorting.
+  { name: "Waiting", order: 3, is_done: false, kind: "waiting" },
 ] as const satisfies readonly {
   name: string;
   order: number;
   is_done: boolean;
   kind: ColumnKind;
 }[];
+
+// A ColumnKind with no stage here silently vanishes from the all-projects
+// board — that is exactly how "Waiting" went missing after it was added
+// backend-side. Exclude<> is non-empty when a kind is unstaged, and a
+// non-never type fails this alias, so `next build` breaks instead.
+type AssertNever<T extends never> = T;
+type _EveryKindHasAStage = AssertNever<
+  Exclude<ColumnKind, (typeof STANDARD_COLUMNS)[number]["kind"]>
+>;
 
 export function boardColumns(project?: Project, columnName?: string | null): Column[] {
   if (project) {
