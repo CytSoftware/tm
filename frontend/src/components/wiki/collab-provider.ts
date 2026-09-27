@@ -60,7 +60,14 @@ class WebsocketUnifiedProvider implements UnifiedProvider {
     this.provider.on("status", (event: { status: string }) => {
       this.isConnected = event.status === "connected";
       this.isConnectionPending = event.status === "connecting";
-      if (event.status === "connected") onConnect?.();
+      if (event.status === "connected") {
+        // pycrdt's YjsConsumer only relays — unlike the reference y-websocket
+        // server it never sends existing awareness to a joiner, so peers'
+        // cursors would stay invisible until their 15s renewal. Ask the room
+        // (messageQueryAwareness = 3); every peer replies with its states.
+        this.provider.ws?.send(new Uint8Array([3]));
+        onConnect?.();
+      }
       else if (event.status === "disconnected") onDisconnect?.();
     });
     this.provider.on("sync", (isSynced: boolean) => {

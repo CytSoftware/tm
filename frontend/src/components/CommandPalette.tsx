@@ -48,6 +48,7 @@ import { copyTaskId, copyTaskPrompt } from "@/lib/task-copy";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import { useUsersQuery } from "@/hooks/use-users";
 import { useLabelsQuery } from "@/hooks/use-labels";
+import { invalidateAll } from "@/hooks/use-tasks";
 import type {
   Label,
   Priority,
@@ -179,10 +180,7 @@ export function CommandPalette({ open, onClose }: Props) {
   // Refetch everything a command may have touched. Command handlers hit the
   // API directly (they don't go through the board's mutation hooks), so the
   // palette owns cache invalidation for them.
-  const invalidate = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["tasks"] });
-    queryClient.invalidateQueries({ queryKey: ["projects"] });
-  }, [queryClient]);
+  const invalidate = useCallback(() => invalidateAll(queryClient), [queryClient]);
 
   // Task-scoped commands for the board's selected task.
   const taskActions = useMemo<PaletteAction[]>(() => {

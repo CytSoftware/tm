@@ -232,7 +232,7 @@ type CreateTaskPayload = {
 };
 
 /** Invalidate every task-scoped query so the board + list refetch. */
-function invalidateAll(qc: QueryClient) {
+export function invalidateAll(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ["tasks"] });
   qc.invalidateQueries({ queryKey: ["tasks-infinite"] });
   qc.invalidateQueries({ queryKey: ["projects"] });
