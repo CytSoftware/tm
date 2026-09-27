@@ -20,6 +20,7 @@ import {
   BookText,
   Boxes,
   ChevronsLeft,
+  CircleHelp,
   FolderKanban,
   GitPullRequest,
   HardDrive,
@@ -45,6 +46,7 @@ import {
 } from "@/components/ui/popover";
 import { UserAvatar } from "@/components/UserAvatar";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
+import { ShortcutsHelpDialog } from "@/components/ShortcutsHelpDialog";
 import { ModeToggle } from "./ModeToggle";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
@@ -614,6 +616,7 @@ function UserFooter({
   const router = useRouter();
   const avatarFileRef = useRef<HTMLInputElement | null>(null);
   const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const uploadAvatar = useMutation({
     mutationFn: (file: File) => {
@@ -660,6 +663,22 @@ function UserFooter({
           />
           <TooltipContent side="right">Settings</TooltipContent>
         </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="rounded-md p-1 hover:bg-sidebar-accent/60 transition-colors"
+                onClick={() => setHelpOpen(true)}
+                aria-label="Keyboard shortcuts"
+              >
+                <CircleHelp className="size-4 text-muted-foreground/70" />
+              </button>
+            }
+          />
+          <TooltipContent side="right">Keyboard shortcuts</TooltipContent>
+        </Tooltip>
+        <ShortcutsHelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
         <Tooltip>
           <TooltipTrigger
             render={
@@ -773,6 +792,23 @@ function UserFooter({
         />
         <TooltipContent>Settings</TooltipContent>
       </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 text-muted-foreground/70"
+              onClick={() => setHelpOpen(true)}
+              aria-label="Keyboard shortcuts"
+            >
+              <CircleHelp className="size-3.5" />
+            </Button>
+          }
+        />
+        <TooltipContent>Keyboard shortcuts</TooltipContent>
+      </Tooltip>
+      <ShortcutsHelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
       <ModeToggle />
       <Button
         variant="ghost"

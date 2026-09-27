@@ -61,6 +61,7 @@ import { RecurringManager } from "@/components/recurring/RecurringManager";
 import { ListView } from "@/components/list/ListView";
 import { DeclutterDialog } from "@/components/declutter/DeclutterDialog";
 import { AssignDialog } from "@/components/declutter/AssignDialog";
+import { ShortcutsHelpDialog } from "@/components/ShortcutsHelpDialog";
 import {
   Dialog,
   DialogContent,
@@ -1359,68 +1360,6 @@ function BoardPageContent() {
         onClose={() => setMoveTarget(null)}
       />
     </div>
-  );
-}
-
-const SHORTCUT_ROWS: { keys: string[]; description: string }[] = [
-  { keys: ["↑", "↓", "←", "→"], description: "Move selection" },
-  { keys: ["Enter"], description: "Open selected task" },
-  { keys: ["Esc"], description: "Deselect / close palette" },
-  { keys: ["⌘K"], description: "Command palette & search" },
-  { keys: ["c"], description: "New task" },
-  { keys: ["⌘/Alt", "←", "→"], description: "Move task to prev/next column" },
-  { keys: ["⌘/Alt", "↑", "↓"], description: "Reorder task in column" },
-  { keys: ["1", "–", "4"], description: "Set priority P1–P4" },
-  { keys: ["0"], description: "Clear priority" },
-  { keys: ["d"], description: "Move to Done" },
-  { keys: ["p"], description: "Edit priority" },
-  { keys: ["a"], description: "Edit assignees" },
-  { keys: ["l"], description: "Edit labels" },
-  { keys: ["⌘C"], description: "Copy task ID" },
-  { keys: ["⌘⇧C"], description: "Copy prompt for Claude" },
-  { keys: ["?"], description: "Show this help" },
-];
-
-/** Compact keyboard-shortcut reference — opened via `?` on the board. Reuses
- *  the same Dialog primitives as the other board dialogs (e.g.
- *  DeleteColumnDialog). Two-column key/description rows only apply while a
- *  task is selected on a kanban (not table) view — see the board's keydown
- *  effect for the guards. */
-function ShortcutsHelpDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Keyboard shortcuts</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-1">
-          {SHORTCUT_ROWS.map((row) => (
-            <div
-              key={row.description}
-              className="flex items-center justify-between gap-3 text-[12px]"
-            >
-              <span className="text-muted-foreground">{row.description}</span>
-              <span className="flex items-center gap-1 shrink-0">
-                {row.keys.map((k, i) => (
-                  <kbd
-                    key={i}
-                    className="inline-flex items-center justify-center min-w-[1.5rem] px-1.5 py-0.5 rounded border border-border/60 bg-muted text-[10px] font-mono text-foreground"
-                  >
-                    {k}
-                  </kbd>
-                ))}
-              </span>
-            </div>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }
 
