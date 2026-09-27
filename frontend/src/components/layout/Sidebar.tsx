@@ -672,7 +672,7 @@ function UserFooter({
                 onClick={() => setHelpOpen(true)}
                 aria-label="Keyboard shortcuts"
               >
-                <CircleHelp className="size-4 text-muted-foreground/70" />
+                <CircleHelp className="size-4 text-muted-foreground" />
               </button>
             }
           />
@@ -798,7 +798,7 @@ function UserFooter({
             <Button
               variant="ghost"
               size="icon"
-              className="size-7 text-muted-foreground/70"
+              className="size-7"
               onClick={() => setHelpOpen(true)}
               aria-label="Keyboard shortcuts"
             >
