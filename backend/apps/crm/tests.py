@@ -113,6 +113,14 @@ class ContactTests(CrmTestCase):
         self.assertEqual(FollowUp.objects.get().entity, keep)
 
 
+    def test_unknown_relationship_is_refused(self):
+        p = self.person()
+        with self.assertRaises(services.CrmError):
+            services.update_contact(p, {"relationship": "customer"})
+        with self.assertRaises(ValueError):
+            mcp_tools.upsert_contact("Sami", relationship="customer")
+
+
 class DerivedDateTests(CrmTestCase):
     def test_last_contact_is_latest_of_meeting_and_touchpoint(self):
         p = self.person()
@@ -131,6 +139,11 @@ class DerivedDateTests(CrmTestCase):
         p = self.person()
         self.meeting(p, datetime(2026, 9, 1, tzinfo=DOHA), role="mentioned")
         self.assertIsNone(real_date(self.contact(p).last_contact_at))
+
+    def test_mentioned_meeting_is_not_in_timeline(self):
+        p = self.person()
+        self.meeting(p, datetime(2026, 9, 1, tzinfo=DOHA), role="mentioned")
+        self.assertEqual([i for i in entity_timeline(p) if i["type"] == "meeting"], [])
 
     def test_company_rolls_up_people(self):
         p = self.person()
@@ -189,6 +202,15 @@ class FollowUpTests(CrmTestCase):
         self.assertFalse(open_follow_ups().exists())
         services.reopen_follow_up(f, user=self.user)
         self.assertTrue(open_follow_ups().exists())
+
+    def test_reschedule_notifies_assignees(self):
+        p = self.person()
+        f = services.create_follow_up(p, "Call", user=self.user).crm_follow_up
+        services.notify_task_event.reset_mock()
+        services.reschedule_follow_up(f, "2026-11-01", user=self.user)
+        services.notify_task_event.assert_called_once_with(
+            f.task, self.user, "updated", payload={"changed_fields": ["due_at"]}
+        )
 
     def test_buckets_use_local_dates(self):
         p = self.person()
@@ -314,6 +336,22 @@ class RestTests(CrmTestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIn("timeline", res.data)
 
+    def test_create_with_existing_name_keeps_their_data(self):
+        p = self.person("Ramzi", phone="+974 1", headline="CTO", emails=["r@x.com"], owner=self.user)
+        # The create dialog sends every field; the untouched ones arrive blank.
+        res = self.client.post(
+            "/api/crm/contacts/",
+            {"kind": "person", "name": "ramzi", "relationship": "client", "owner": None,
+             "headline": "", "emails": ["r2@x.com"], "phone": "", "whatsapp": "",
+             "linkedin_url": "", "website": "", "wiki_slug": "", "company": None},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        p.refresh_from_db()
+        self.assertEqual((p.phone, p.headline, p.owner, p.company.name), ("+974 1", "CTO", self.user, "ECG"))
+        self.assertEqual(p.relationship, "client")
+        self.assertEqual(set(p.emails.values_list("email", flat=True)), {"r@x.com", "r2@x.com"})
+
     def test_inbox(self):
         p = self.person()
         self.client.post(
@@ -381,6 +419,22 @@ class McpTests(CrmTestCase):
 
         done = mcp_tools.update_follow_up(res["follow_up"], done=True, mcp_user=self.user)
         self.assertFalse(done["is_open"])
+
+    def test_rename_by_name_renames_in_place(self):
+        p = self.person("Ali K", company=None)
+        out = mcp_tools.upsert_contact("Ali K", rename_to="Ali Khan")
+        self.assertEqual((out["id"], out["name"], out["created"]), (p.pk, "Ali Khan", False))
+        self.assertEqual(Entity.objects.filter(name__startswith="Ali").count(), 1)
+
+    def test_update_company_by_id_under_default_kind(self):
+        company = self.person().company
+        out = mcp_tools.upsert_contact(str(company.pk), headline="Medtech")
+        self.assertEqual((out["id"], out["headline"]), (company.pk, "Medtech"))
+
+    def test_inbox_keeps_its_date(self):
+        inbox = mcp_tools.list_follow_ups()
+        self.assertIsInstance(inbox["date"], str)
+        self.assertIsInstance(inbox["today"], list)
 
     def test_read_tools_are_registered_read_only(self):
         from apps.mcp_server.server import READ_ONLY_TOOLS

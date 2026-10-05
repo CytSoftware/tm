@@ -148,7 +148,7 @@ Leads, deals and follow-ups, filled mostly by agents. Plan + rationale: `docs/pl
 - The inbox buckets by calendar day in the **browser's** timezone (`?tz=`); TM stores no per-user zone.
 - **Scope = TM projects** (Mowafeq, Cyt…), not a second "business" concept. `Entity.projects` (M2M) tags contacts; `Deal.project` tags deals and, on save, their company + contacts (`services.tag_projects`, additive). A person's projects also land on their company. Every list filter (`query.py`, REST, MCP) takes `project` (id/prefix/name); an unknown one matches nothing (MCP raises). The page keeps it in `?p=<prefix>`, the sidebar carries it across sections, and `/api/crm/projects/` lists the projects in use (the switcher's options).
 
-
+### Frontend data flow
 
 `frontend/src/lib/api.ts` — `apiFetch` wrapper that auto-attaches the `csrftoken` cookie on unsafe methods and uses `credentials: "include"` throughout. Seed the CSRF cookie once on boot via `ensureCsrfCookie()` → `/api/auth/csrf/`.
 

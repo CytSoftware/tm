@@ -1859,7 +1859,7 @@ async def list_follow_ups(
 ) -> dict[str, Any]:
     """The CRM inbox: open follow-ups bucketed overdue / today / week (next 7
     days) / later, plus ``no_next_step`` — CRM contacts with nothing
-    scheduled. ``owner`` is a username; ``tz`` an IANA zone (default
+    scheduled — and ``date``, today in ``tz``. ``owner`` is a username; ``tz`` an IANA zone (default
     Asia/Qatar); ``project`` (e.g. ``MOW``) scopes to one business."""
     from apps.crm import mcp_tools
 

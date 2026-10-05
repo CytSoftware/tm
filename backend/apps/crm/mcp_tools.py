@@ -301,8 +301,6 @@ def upsert_contact(
     if emails is not None:
         # Additive: an agent rarely knows every address a person has.
         data["add_emails"] = emails
-    if rename_to:
-        data["name"] = rename_to
     # Additive, like emails: tagging "MOW" never drops "CYT".
     if projects:
         data["add_projects"] = [_project(p) for p in projects]
@@ -311,11 +309,16 @@ def upsert_contact(
 
     text = str(name).strip()
     if text.isdigit() or "@" in text:
-        entity = _entity(text, kind)
+        # An id or address names one entity already; ``kind`` only
+        # disambiguates names, so a company id works under the default.
+        entity, created = _entity(text), False
         _guard(services.update_contact, entity, data)
-        created = False
     else:
         entity, created = _guard(services.create_contact, {"name": text, **data})
+    # Rename after resolving: passing the new name to create_contact would
+    # look *it* up and create a second entity.
+    if rename_to:
+        _guard(services.update_contact, entity, {"name": rename_to})
     return {"created": created, **_contact(entity)}
 
 
@@ -441,7 +444,7 @@ def list_follow_ups(
         filter_contacts({"no_next_step": True, **scope})
     )
     return {
-        "today": today.isoformat(),
+        "date": today.isoformat(),  # not "today": that's a bucket
         **buckets,
         "no_next_step": [{"id": e.id, "name": e.name, "relationship": e.relationship} for e in no_next],
     }

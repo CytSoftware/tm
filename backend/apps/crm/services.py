@@ -241,6 +241,13 @@ def update_contact(entity: Entity, data: dict[str, Any]) -> Entity:
     name and only applies to people. ``projects`` (ids, prefixes or names)
     replaces the contact's scope; a person's projects also go on their
     company."""
+    relationship = data.get("relationship")
+    if relationship and relationship not in RelationshipType.values:
+        raise CrmError(
+            f"Unknown relationship {relationship!r}; use one of: "
+            + ", ".join(RelationshipType.values)
+            + "."
+        )
     for field in CONTACT_FIELDS:
         if field in data and data[field] is not None:
             setattr(entity, field, data[field])
@@ -314,6 +321,14 @@ def create_contact(data: dict[str, Any]) -> tuple[Entity, bool]:
     entity = resolve_entity(kind, name)
     created = Entity.objects.filter(kind=kind).count() > before
     fields = {k: v for k, v in data.items() if k not in ("kind", "name")}
+    if not created:
+        # The name matched someone we already know: the form's untouched
+        # fields arrive blank, and must not wipe what that contact has.
+        # Emails and projects add to the existing sets.
+        fields = {k: v for k, v in fields.items() if v not in (None, "", [])}
+        for key in ("emails", "projects"):
+            if key in fields:
+                fields[f"add_{key}"] = fields.pop(key)
     if not fields.get("relationship") and not entity.relationship:
         fields["relationship"] = RelationshipType.LEAD
     update_contact(entity, fields)
@@ -456,6 +471,7 @@ def reschedule_follow_up(
     task.due_at = parse_due(due, tz)
     task.save(update_fields=["due_at", "updated_at"])
     broadcast_task_event(task.project_id, "task.updated", {"key": task.key, "id": task.id})
+    notify_task_event(task, user, "updated", payload={"changed_fields": ["due_at"]})
     broadcast_crm_event(
         "follow_up.changed", {"entity": follow_up.entity_id, "task": task.key}
     )

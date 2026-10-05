@@ -94,7 +94,10 @@ def entity_timeline(entity: Entity, *, limit: int = DEFAULT_LIMIT) -> list[dict[
     items: list[dict[str, Any]] = []
 
     meetings = (
-        Meeting.objects.filter(entity_links__entity_id__in=ids)
+        # Attended, like last_contact_at — a mention isn't contact.
+        Meeting.objects.filter(
+            entity_links__entity_id__in=ids, entity_links__role=EntityRole.ATTENDEE
+        )
         .distinct()
         .defer(*BODY_FIELDS)
         .prefetch_related("entity_links__entity")
