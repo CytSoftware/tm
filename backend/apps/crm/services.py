@@ -282,7 +282,10 @@ def update_contact(entity: Entity, data: dict[str, Any]) -> Entity:
         entity.projects.add(*[resolve_project(p) for p in data["add_projects"]])
     if data.get("remove_projects"):
         entity.projects.remove(*[resolve_project(p) for p in data["remove_projects"]])
-    if company is not None:
+    # Only when projects or the company changed — otherwise untagging a
+    # company would silently come back on the next edit of any employee.
+    project_keys = ("projects", "add_projects", "remove_projects", "company")
+    if company is not None and any(k in data for k in project_keys):
         tag_projects([company], *entity.projects.all())
 
     if data.get("emails") is not None:

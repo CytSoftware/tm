@@ -538,6 +538,10 @@ class ProjectScopeTests(CrmTestCase):
         services.update_contact(mohamed, {"projects": ["CYT"]})
         mohamed.company.refresh_from_db()
         self.assertEqual(list(mohamed.company.projects.all()), [self.cyt])
+        # Untagging the company sticks through unrelated edits to its people.
+        services.update_contact(mohamed.company, {"projects": []})
+        services.update_contact(mohamed, {"phone": "+974 5555"})
+        self.assertEqual(list(mohamed.company.projects.all()), [])
 
     def test_inbox_and_activity_scope(self):
         mow_person = self.person("Firoz", company="Sharq", projects=["MOW"])
