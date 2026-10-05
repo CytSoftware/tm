@@ -464,39 +464,7 @@ class CompanyRollupTests(CrmTestCase):
         self.assertEqual((person["people_count"], person["open_deal_count"]), (0, 0))
 
 
-class SitePreviewTests(TestCase):
-    HEAD = (
-        "<html><head><title>Acme — Build faster | Home</title>"
-        '<meta name="description" content="Acme makes  &amp; ships widgets.">'
-        "</head><body>ignored</body></html>"
-    )
-
-    def test_reads_name_and_description(self):
-        from .site_preview import preview_site
-
-        with mock.patch(
-            "apps.crm.site_preview._fetch_head", return_value=("https://www.acme.com/", self.HEAD)
-        ):
-            out = preview_site("acme.com")
-        self.assertEqual(out["domain"], "acme.com")
-        self.assertEqual(out["name"], "Acme")
-        self.assertEqual(out["description"], "Acme makes & ships widgets.")
-
-    def test_refuses_non_public_addresses(self):
-        from .site_preview import PreviewError, preview_site
-
-        for url in ("http://127.0.0.1:8000/", "localhost", "http://169.254.169.254/", "ftp://x.com"):
-            with self.assertRaises(PreviewError, msg=url):
-                preview_site(url)
-
-    def test_endpoint_reports_errors_as_validation(self):
-        user = get_user_model().objects.create_user("preview-user")
-        client = APIClient()
-        client.force_authenticate(user)
-        res = client.get("/api/crm/site-preview/", {"url": "http://127.0.0.1/"})
-        self.assertEqual(res.status_code, 400)
-        self.assertIn("url", res.data)
-
+class BareUrlTests(TestCase):
     def test_website_without_scheme_is_accepted(self):
         user = get_user_model().objects.create_user("site-user")
         client = APIClient()

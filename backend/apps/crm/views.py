@@ -19,7 +19,6 @@ from apps.meetings.models import Entity, EntityKind, EntityRole
 from apps.tasks.models import Project
 
 from . import services
-from .site_preview import PreviewError, preview_site
 from .models import Deal, FollowUp, Pipeline, Stage, Touchpoint
 from .query import (
     base_contact_queryset,
@@ -314,18 +313,6 @@ class CrmProjectsView(APIView):
         return Response(
             [{"id": p.id, "prefix": p.prefix, "name": p.name, "color": p.color} for p in projects]
         )
-
-
-class SitePreviewView(APIView):
-    """``GET /api/crm/site-preview/?url=acme.com`` — name + one-line
-    description read off a company's website, for the edit dialog to offer.
-    Stores nothing."""
-
-    def get(self, request):
-        try:
-            return Response(preview_site(request.query_params.get("url", "")))
-        except PreviewError as e:
-            raise ValidationError({"url": str(e)})
 
 
 # ---------------------------------------------------------------------------

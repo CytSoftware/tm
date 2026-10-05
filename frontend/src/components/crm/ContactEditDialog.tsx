@@ -9,7 +9,6 @@
  */
 
 import { useState } from "react";
-import { Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -27,7 +26,6 @@ import {
   type Relationship,
   useCreateContact,
   useCrmProjects,
-  useSitePreview,
   useUpdateContact,
 } from "@/hooks/use-crm";
 import { useProjectsQuery } from "@/hooks/use-projects";
@@ -134,28 +132,8 @@ function Body({
   const create = useCreateContact();
   const update = useUpdateContact();
   const users = useUsersQuery();
-  const preview = useSitePreview();
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
   const saving = create.isPending || update.isPending;
-
-  // Reads the site's name + description; fills an empty name and replaces the
-  // headline (an explicit click), which the person can still edit before saving.
-  const fillFromWebsite = () =>
-    preview.mutate(form.website, {
-      onSuccess: (site) => {
-        if (!site.name && !site.description) {
-          toast.message(`Nothing to read on ${site.domain}.`);
-          return;
-        }
-        setForm((f) => ({
-          ...f,
-          name: f.name.trim() ? f.name : site.name,
-          headline: site.description || f.headline,
-        }));
-        toast.success(`Filled from ${site.domain}`);
-      },
-      onError: (e) => toast.error(errorMessage(e)),
-    });
 
   const submit = () => {
     const body: ContactWrite = {
@@ -310,31 +288,7 @@ function Body({
         </div>
         <Field label={form.kind === "company" ? "Website" : "LinkedIn"}>
           {form.kind === "company" ? (
-            <div className="flex gap-1.5">
-              <input
-                value={form.website}
-                onChange={(e) => set("website", e.target.value)}
-                placeholder="https://"
-                className={inputCls}
-              />
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault(); // inside a <label>
-                  fillFromWebsite();
-                }}
-                disabled={!form.website.trim() || preview.isPending}
-                title="Fill name and headline from the website"
-                className="tap-target inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-              >
-                {preview.isPending ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Sparkles className="size-3.5" />
-                )}
-                Fill
-              </button>
-            </div>
+            <input value={form.website} onChange={(e) => set("website", e.target.value)} placeholder="https://" className={inputCls} />
           ) : (
             <input
               value={form.linkedin_url}

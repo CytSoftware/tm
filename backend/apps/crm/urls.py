@@ -6,7 +6,6 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ActivityView,
     CrmProjectsView,
-    SitePreviewView,
     ContactViewSet,
     DealViewSet,
     FollowUpInboxView,
@@ -25,7 +24,6 @@ router.register(r"follow-ups", FollowUpViewSet, basename="crm-follow-up")
 urlpatterns = [
     path("inbox/", FollowUpInboxView.as_view(), name="crm-inbox"),
     path("activity/", ActivityView.as_view(), name="crm-activity"),
-    path("site-preview/", SitePreviewView.as_view(), name="crm-site-preview"),
     path("projects/", CrmProjectsView.as_view(), name="crm-projects"),
     path("", include(router.urls)),
 ]
