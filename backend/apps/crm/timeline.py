@@ -18,7 +18,7 @@ from apps.meetings.models import Entity, EntityKind, EntityRole, Meeting
 from apps.meetings.query import BODY_FIELDS
 
 from .models import FollowUp, Touchpoint
-from .query import CLOSED_COLUMN_KINDS, CRM_RELATIONSHIPS
+from .query import CLOSED_COLUMN_KINDS, CRM_RELATIONSHIPS, project_id
 
 DEFAULT_LIMIT = 100
 
@@ -121,11 +121,18 @@ def entity_timeline(entity: Entity, *, limit: int = DEFAULT_LIMIT) -> list[dict[
     return _sorted(items, limit)
 
 
-def crm_activity(*, days: int = 14, limit: int = DEFAULT_LIMIT) -> list[dict[str, Any]]:
+def crm_activity(
+    *, days: int = 14, limit: int = DEFAULT_LIMIT, project: Any = None
+) -> list[dict[str, Any]]:
     """Everything that happened with CRM contacts in the last ``days``:
-    recorded meetings they attended, touchpoints, and follow-ups closed."""
+    recorded meetings they attended, touchpoints, and follow-ups closed.
+    ``project`` (id/prefix/name) narrows it to that project's contacts and
+    deals."""
     since = timezone.now() - timedelta(days=max(1, days))
     in_crm = Q(relationship__in=CRM_RELATIONSHIPS)
+    pid = project_id(project)
+    if pid is not None:
+        in_crm &= Q(projects__id=pid)
     crm_ids = set(Entity.objects.filter(in_crm).values_list("pk", flat=True))
     items: list[dict[str, Any]] = []
 
@@ -144,6 +151,8 @@ def crm_activity(*, days: int = 14, limit: int = DEFAULT_LIMIT) -> list[dict[str
 
     touchpoints = (
         Touchpoint.objects.filter(occurred_at__gte=since)
+        .filter(Q() if pid is None else Q(entities__id__in=crm_ids) | Q(deal__project_id=pid))
+        .distinct()
         .select_related("deal", "created_by")
         .prefetch_related("entities")
         .order_by("-occurred_at")[:limit]
@@ -154,6 +163,7 @@ def crm_activity(*, days: int = 14, limit: int = DEFAULT_LIMIT) -> list[dict[str
         FollowUp.objects.filter(
             task__updated_at__gte=since, task__column__kind__in=CLOSED_COLUMN_KINDS
         )
+        .filter(Q() if pid is None else Q(entity_id__in=crm_ids) | Q(deal__project_id=pid))
         .select_related("task__column", "deal", "entity")
         .order_by("-task__updated_at")[:limit]
     )

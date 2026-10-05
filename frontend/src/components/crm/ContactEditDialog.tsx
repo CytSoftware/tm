@@ -26,11 +26,14 @@ import {
   type EntityKind,
   type Relationship,
   useCreateContact,
+  useCrmProjects,
   useSitePreview,
   useUpdateContact,
 } from "@/hooks/use-crm";
+import { useProjectsQuery } from "@/hooks/use-projects";
 import { useUsersQuery } from "@/hooks/use-users";
 import {
+  CRM_PROJECT_PREFIX,
   RELATIONSHIP_META,
   RELATIONSHIP_ORDER,
   errorMessage,
@@ -53,9 +56,14 @@ type Form = {
   linkedin_url: string;
   website: string;
   wiki_slug: string;
+  projects: number[];
 };
 
-function initial(contact?: ContactDetail, kind: EntityKind = "person"): Form {
+function initial(
+  contact?: ContactDetail,
+  kind: EntityKind = "person",
+  defaultProjects: number[] = [],
+): Form {
   return {
     kind: contact?.kind ?? kind,
     name: contact?.name ?? "",
@@ -69,6 +77,7 @@ function initial(contact?: ContactDetail, kind: EntityKind = "person"): Form {
     linkedin_url: contact?.linkedin_url ?? "",
     website: contact?.website ?? "",
     wiki_slug: contact?.wiki_slug ?? "",
+    projects: contact ? contact.projects.map((p) => p.id) : defaultProjects,
   };
 }
 
@@ -77,6 +86,7 @@ export function ContactEditDialog({
   onOpenChange,
   contact,
   defaultKind,
+  defaultProjects,
   onCreated,
 }: {
   open: boolean;
@@ -84,6 +94,8 @@ export function ContactEditDialog({
   /** Absent = create. */
   contact?: ContactDetail;
   defaultKind?: EntityKind;
+  /** New contacts start in these projects (the CRM's current scope). */
+  defaultProjects?: number[];
   onCreated?: (id: number) => void;
 }) {
   return (
@@ -95,6 +107,7 @@ export function ContactEditDialog({
             key={contact?.id ?? "new"}
             contact={contact}
             defaultKind={defaultKind}
+            defaultProjects={defaultProjects}
             onClose={() => onOpenChange(false)}
             onCreated={onCreated}
           />
@@ -107,15 +120,17 @@ export function ContactEditDialog({
 function Body({
   contact,
   defaultKind,
+  defaultProjects,
   onClose,
   onCreated,
 }: {
   contact?: ContactDetail;
   defaultKind?: EntityKind;
+  defaultProjects?: number[];
   onClose: () => void;
   onCreated?: (id: number) => void;
 }) {
-  const [form, setForm] = useState<Form>(() => initial(contact, defaultKind));
+  const [form, setForm] = useState<Form>(() => initial(contact, defaultKind, defaultProjects));
   const create = useCreateContact();
   const update = useUpdateContact();
   const users = useUsersQuery();
@@ -157,6 +172,7 @@ function Body({
       linkedin_url: form.linkedin_url.trim(),
       website: form.website.trim(),
       wiki_slug: form.wiki_slug.trim(),
+      projects: form.projects,
     };
     if (form.kind === "person") body.company = form.company.trim() || null;
     const opts = {
@@ -246,6 +262,9 @@ function Body({
             </select>
           </Field>
         </div>
+        <Field label="Projects">
+          <ProjectPicker value={form.projects} onChange={(v) => set("projects", v)} />
+        </Field>
         <Field label="Headline">
           <input
             value={form.headline}
@@ -344,6 +363,65 @@ function Body({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+/** Which of our businesses a contact is for. The CRM's projects (any in use)
+ *  are one-click chips; any other project can be added from the menu. */
+function ProjectPicker({
+  value,
+  onChange,
+}: {
+  value: number[];
+  onChange: (ids: number[]) => void;
+}) {
+  const crmProjects = useCrmProjects();
+  const all = useProjectsQuery({ includeArchived: false });
+  const everything = (all.data?.results ?? []).filter((p) => p.prefix !== CRM_PROJECT_PREFIX);
+  const chips = everything.filter(
+    (p) => value.includes(p.id) || crmProjects.data?.some((c) => c.id === p.id),
+  );
+  const rest = everything.filter((p) => !chips.includes(p));
+  const toggle = (id: number) =>
+    onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {chips.map((p) => {
+        const on = value.includes(p.id);
+        return (
+          <button
+            key={p.id}
+            type="button"
+            aria-pressed={on}
+            onClick={(e) => {
+              e.preventDefault(); // inside a <label>
+              toggle(p.id);
+            }}
+            className={cn(
+              "inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[12px] text-muted-foreground hover:bg-accent/50",
+              on && "border-foreground/40 bg-accent text-foreground",
+            )}
+          >
+            <span className="size-1.5 rounded-full" style={{ background: p.color }} />
+            {p.name}
+          </button>
+        );
+      })}
+      {rest.length > 0 && (
+        <select
+          value=""
+          onChange={(e) => e.target.value && toggle(Number(e.target.value))}
+          className="h-7 rounded-md border border-dashed border-border bg-transparent px-1.5 text-[12px] text-muted-foreground outline-none"
+        >
+          <option value="">{chips.length ? "+ Other…" : "+ Add project…"}</option>
+          {rest.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
   );
 }
 

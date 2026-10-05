@@ -50,16 +50,19 @@ export function DealsBoard({
   pipeline,
   deals,
   selectedKey,
+  project = "",
   onOpen,
   onNewDeal,
 }: {
   pipeline: Pipeline;
   deals: Deal[];
   selectedKey: string | null;
+  /** Project prefix scope — part of the cache key the optimistic move edits. */
+  project?: string;
   onOpen: (key: string) => void;
   onNewDeal: (stageId: number) => void;
 }) {
-  const move = useMoveDeal(pipeline.id);
+  const move = useMoveDeal(pipeline.id, project);
   const [touchMove, setTouchMove] = useState<Deal | null>(null);
 
   const byStage = useMemo(() => {
@@ -308,12 +311,12 @@ function DealCard({
           <span className="ml-auto shrink-0 tabular-nums">{formatMoney(deal.value, deal.currency)}</span>
         )}
       </div>
-      {(deal.product_project || deal.expected_close) && (
+      {(deal.project || deal.expected_close) && (
         <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground/80">
-          {deal.product_project && (
+          {deal.project && (
             <span className="inline-flex items-center gap-1">
-              <span className="size-1.5 rounded-full" style={{ background: deal.product_project.color }} />
-              {deal.product_project.name}
+              <span className="size-1.5 rounded-full" style={{ background: deal.project.color }} />
+              {deal.project.name}
             </span>
           )}
           {deal.expected_close && (

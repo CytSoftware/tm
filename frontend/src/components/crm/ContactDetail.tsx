@@ -31,6 +31,7 @@ import {
   type TouchpointKind,
   useContact,
   useLogTouchpoint,
+  useCrmProjects,
   useUpdateContact,
 } from "@/hooks/use-crm";
 import { useUsersQuery } from "@/hooks/use-users";
@@ -287,6 +288,12 @@ export function ContactDetail({
 function StateBar({ contact: c }: { contact: Detail }) {
   const update = useUpdateContact();
   const users = useUsersQuery();
+  const crmProjects = useCrmProjects();
+  // The contact's projects plus the CRM's others, so tagging is one click.
+  const projectChips = [
+    ...c.projects,
+    ...(crmProjects.data ?? []).filter((p) => !c.projects.some((q) => q.id === p.id)),
+  ];
   const save = (patch: Parameters<typeof update.mutate>[0]) =>
     update.mutate(patch, { onError: (e) => toast.error(errorMessage(e)) });
 
@@ -332,6 +339,38 @@ function StateBar({ contact: c }: { contact: Detail }) {
           ))}
         </select>
       </label>
+      {projectChips.map((p) => {
+        const on = c.projects.some((q) => q.id === p.id);
+        return (
+          <button
+            key={p.id}
+            type="button"
+            aria-pressed={on}
+            disabled={update.isPending}
+            title={on ? `Remove from ${p.name}` : `Add to ${p.name}`}
+            onClick={() =>
+              save({
+                id: c.id,
+                projects: on
+                  ? c.projects.filter((q) => q.id !== p.id).map((q) => q.id)
+                  : [...c.projects.map((q) => q.id), p.id],
+              })
+            }
+            className={cn(
+              "tap-target inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-[11px]",
+              on
+                ? "border-border text-foreground"
+                : "border-dashed border-border text-muted-foreground/70 hover:text-foreground",
+            )}
+          >
+            <span
+              className={cn("size-1.5 rounded-full", !on && "opacity-40")}
+              style={{ background: p.color }}
+            />
+            {p.name}
+          </button>
+        );
+      })}
       <span className="ml-auto text-[12px] text-muted-foreground">
         {c.last_contact_at
           ? `Last contact ${relativeDay(c.last_contact_at)}`

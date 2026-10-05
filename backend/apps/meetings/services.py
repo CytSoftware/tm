@@ -182,6 +182,7 @@ def merge_entities(source: Entity, target: Entity) -> Entity:
     if target.owner_id is None:
         target.owner_id = source.owner_id
     source.emails.update(entity=target)
+    target.projects.add(*source.projects.all())
     _repoint_crm_links(source, target)
 
     aliases = list(target.aliases)

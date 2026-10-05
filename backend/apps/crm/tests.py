@@ -509,3 +509,69 @@ class SitePreviewTests(TestCase):
             )
         self.assertIn(res.status_code, (200, 201), res.data)
         self.assertEqual(Entity.objects.get(name="Acme").website, "https://acme.com")
+
+
+class ProjectScopeTests(CrmTestCase):
+    def setUp(self):
+        super().setUp()
+        from apps.tasks.models import Project
+
+        self.mow = Project.objects.create(name="mowafeq", prefix="MOW")
+        self.cyt = Project.objects.create(name="Cyt", prefix="CYT")
+
+    def ids(self, filters):
+        return set(filter_contacts({"relationship": "any", **filters}).values_list("pk", flat=True))
+
+    def test_deal_project_tags_company_and_people(self):
+        mohamed = self.person()
+        services.create_deal(
+            {"title": "ECG pilot", "pipeline": self.sales, "company": mohamed.company,
+             "contacts": [mohamed], "project": self.mow},
+            user=self.user,
+        )
+        self.assertEqual(self.ids({"project": "mow"}), {mohamed.pk, mohamed.company_id})
+        self.assertEqual(self.ids({"project": "CYT"}), set())
+        self.assertEqual(self.ids({"project": "nope"}), set())  # unknown → nothing, not everything
+
+    def test_person_projects_reach_their_company(self):
+        mohamed = self.person()
+        services.update_contact(mohamed, {"projects": ["CYT"]})
+        mohamed.company.refresh_from_db()
+        self.assertEqual(list(mohamed.company.projects.all()), [self.cyt])
+
+    def test_inbox_and_activity_scope(self):
+        mow_person = self.person("Firoz", company="Sharq", projects=["MOW"])
+        cyt_person = self.person("Haider", company="QSTP", projects=["CYT"])
+        services.create_follow_up(mow_person, "Send pricing", user=self.user)
+        services.create_follow_up(cyt_person, "Book demo", user=self.user)
+        titles = {f.task.title for f in open_follow_ups({"project": "MOW"})}
+        self.assertEqual(titles, {"Send pricing"})
+        services.log_touchpoint(
+            {"kind": "note", "summary": "Cyt note"}, entities=[cyt_person], user=self.user
+        )
+        from .timeline import crm_activity
+
+        summaries = [i.get("summary") for i in crm_activity(project="MOW")]
+        self.assertNotIn("Cyt note", summaries)
+
+    def test_merge_unions_projects(self):
+        a = self.person("Ali K", company="", projects=["MOW"])
+        b = self.person("Ali Kh", company="", projects=["CYT"])
+        merged = meeting_services.merge_entities(a, b)
+        self.assertEqual(set(merged.projects.all()), {self.mow, self.cyt})
+
+    def test_mcp_scope_and_tagging(self):
+        out = mcp_tools.upsert_contact("Sami", projects=["MOW"])
+        self.assertEqual([p["prefix"] for p in out["projects"]], ["MOW"])
+        mcp_tools.upsert_contact("Sami", projects=["CYT"])  # additive
+        self.assertEqual(
+            {p["prefix"] for p in mcp_tools.get_contact("Sami")["projects"]}, {"MOW", "CYT"}
+        )
+        self.assertEqual([c["name"] for c in mcp_tools.search_contacts(project="CYT")], ["Sami"])
+        with self.assertRaises(ValueError):
+            mcp_tools.search_contacts(project="typo")
+
+    def test_projects_endpoint_lists_used_projects(self):
+        self.person(projects=["MOW"])
+        res = self.client.get("/api/crm/projects/")
+        self.assertEqual([p["prefix"] for p in res.data], ["MOW"])

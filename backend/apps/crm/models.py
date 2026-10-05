@@ -93,13 +93,13 @@ class Deal(TimestampedModel):
     )
     value = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     currency = models.CharField(max_length=3, default="QAR")
-    product_project = models.ForeignKey(
+    project = models.ForeignKey(
         "tasks.Project",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="crm_deals",
-        help_text="Which product this deal is for (Mowafeq, Services…).",
+        help_text="Which of our businesses this deal is for (Mowafeq, Cyt…).",
     )
     expected_close = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True, default="")

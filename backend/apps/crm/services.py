@@ -205,10 +205,42 @@ def _resolve_company(value: Any) -> Entity | None:
 
 
 @transaction.atomic
+def resolve_project(ref: Any) -> Project:
+    """A project by instance, id, prefix or name ("MOW", "mowafeq", 3)."""
+    if isinstance(ref, Project):
+        return ref
+    text = str(ref or "").strip()
+    project = (
+        Project.objects.filter(pk=int(text)).first()
+        if text.isdigit()
+        else Project.objects.filter(prefix__iexact=text).first()
+        or Project.objects.filter(name__iexact=text).first()
+    )
+    if project is None:
+        raise CrmError(f"No project {ref!r}.")
+    return project
+
+
+def tag_projects(entities: Iterable[Entity | None], *projects: Project | None) -> None:
+    """Add projects to contacts — additive, never removes. A person's
+    employer gets them too, so a company is in every scope its people are."""
+    projects = tuple(p for p in projects if p is not None)
+    if not projects:
+        return
+    seen: set[int] = set()
+    for entity in entities:
+        while entity is not None and entity.pk not in seen:
+            seen.add(entity.pk)
+            entity.projects.add(*projects)
+            entity = entity.company if entity.kind == EntityKind.PERSON else None
+
+
 def update_contact(entity: Entity, data: dict[str, Any]) -> Entity:
     """Apply CRM/contact fields. ``emails`` replaces the set;
     ``add_emails`` / ``remove_emails`` edit it. ``company`` takes an id or a
-    name and only applies to people."""
+    name and only applies to people. ``projects`` (ids, prefixes or names)
+    replaces the contact's scope; a person's projects also go on their
+    company."""
     for field in CONTACT_FIELDS:
         if field in data and data[field] is not None:
             setattr(entity, field, data[field])
@@ -243,6 +275,15 @@ def update_contact(entity: Entity, data: dict[str, Any]) -> Entity:
         if company.owner_id is None:
             company.owner_id = entity.owner_id
         company.save(update_fields=["relationship", "owner", "updated_at"])
+
+    if data.get("projects") is not None:
+        entity.projects.set([resolve_project(p) for p in data["projects"]])
+    if data.get("add_projects"):
+        entity.projects.add(*[resolve_project(p) for p in data["add_projects"]])
+    if data.get("remove_projects"):
+        entity.projects.remove(*[resolve_project(p) for p in data["remove_projects"]])
+    if company is not None:
+        tag_projects([company], *entity.projects.all())
 
     if data.get("emails") is not None:
         set_emails(entity, data["emails"], replace=True)
@@ -606,7 +647,7 @@ def create_deal(data: dict[str, Any], *, user) -> Deal:
         owner=data.get("owner"),
         value=data.get("value"),
         currency=data.get("currency") or "QAR",
-        product_project=data.get("product_project"),
+        project=data.get("project"),
         expected_close=data.get("expected_close"),
         notes=data.get("notes") or "",
         position=_position_in(stage, None),
@@ -616,6 +657,8 @@ def create_deal(data: dict[str, Any], *, user) -> Deal:
     deal.save()
     if data.get("contacts"):
         deal.contacts.set(data["contacts"])
+    # A Mowafeq deal makes its company and people Mowafeq contacts.
+    tag_projects([deal.company, *deal.contacts.all()], deal.project)
     broadcast_crm_event("deal.created", {"key": deal.key})
     return deal
 
@@ -626,7 +669,7 @@ DEAL_FIELDS = (
     "owner",
     "value",
     "currency",
-    "product_project",
+    "project",
     "expected_close",
     "notes",
     "lost_reason",
@@ -659,6 +702,7 @@ def update_deal(deal: Deal, data: dict[str, Any]) -> Deal:
     deal.save()
     if data.get("contacts") is not None:
         deal.contacts.set(data["contacts"])
+    tag_projects([deal.company, *deal.contacts.all()], deal.project)
     broadcast_crm_event("deal.updated", {"key": deal.key})
     return deal
 

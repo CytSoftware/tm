@@ -41,12 +41,15 @@ const BUCKETS = [
 
 export function InboxView({
   owner,
+  project = "",
   onOpenContact,
 }: {
   owner: string;
+  /** Project prefix scope ("" = all). */
+  project?: string;
   onOpenContact: (id: number) => void;
 }) {
-  const inbox = useCrmInbox(owner);
+  const inbox = useCrmInbox(owner, project);
 
   if (inbox.isLoading) return <Empty>Loading…</Empty>;
   if (inbox.isError) return <Empty tone="error">Couldn’t load the inbox.</Empty>;

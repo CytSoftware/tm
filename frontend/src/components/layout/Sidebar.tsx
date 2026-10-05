@@ -641,6 +641,8 @@ function CrmNav({
   const current = inCrm
     ? (CRM_SECTIONS.find((s) => s.id === rawTab)?.id ?? "inbox")
     : null;
+  // The project scope and Mine toggle survive switching sections.
+  const keep = inCrm ? { p: params.get("p"), mine: params.get("mine") } : {};
 
   return (
     <>
@@ -658,7 +660,7 @@ function CrmNav({
               key={s.id}
               type="button"
               onClick={() => {
-                router.push(crmSectionHref(s.id));
+                router.push(crmSectionHref(s.id, keep));
                 onClose?.();
               }}
               aria-current={current === s.id ? "page" : undefined}
@@ -671,7 +673,7 @@ function CrmNav({
             >
               <s.icon className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="truncate">{s.label}</span>
-              {s.id === "inbox" && <CrmDueBadge />}
+              {s.id === "inbox" && <CrmDueBadge project={keep.p ?? ""} />}
             </button>
           ))}
         </div>
@@ -753,8 +755,8 @@ function CrmNavLink({
 }
 
 /** Overdue + due-today follow-ups (shared cache with the CRM page). */
-function CrmDueBadge() {
-  const inbox = useCrmInbox("");
+function CrmDueBadge({ project }: { project: string }) {
+  const inbox = useCrmInbox("", project);
   const overdue = inbox.data?.buckets.overdue.length ?? 0;
   const today = inbox.data?.buckets.today.length ?? 0;
   if (overdue + today === 0) return null;

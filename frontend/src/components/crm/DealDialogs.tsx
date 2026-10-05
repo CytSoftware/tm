@@ -32,7 +32,7 @@ import {
 } from "@/hooks/use-crm";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import { useUsersQuery } from "@/hooks/use-users";
-import { STAGE_KIND_LABEL, errorMessage, userLabel } from "@/lib/crm-meta";
+import { CRM_PROJECT_PREFIX, STAGE_KIND_LABEL, errorMessage, userLabel } from "@/lib/crm-meta";
 
 import { inputCls } from "./shared";
 
@@ -40,6 +40,8 @@ export type NewDealDefaults = {
   pipeline?: number;
   stage?: number;
   company?: { id: number; name: string } | null;
+  /** Project id — the CRM's current scope. */
+  project?: number;
 };
 
 export function NewDealDialog({
@@ -85,7 +87,7 @@ function NewDealBody({
   const [company, setCompany] = useState<string>(defaults.company ? String(defaults.company.id) : "");
   const [value, setValue] = useState("");
   const [owner, setOwner] = useState("");
-  const [product, setProduct] = useState("");
+  const [project, setProject] = useState(defaults.project ? String(defaults.project) : "");
   const [close, setClose] = useState("");
 
   const stages = pipeline?.stages ?? [];
@@ -101,7 +103,7 @@ function NewDealBody({
         company: company ? Number(company) : null,
         value: value.trim() || null,
         owner: owner ? Number(owner) : null,
-        product_project: product ? Number(product) : null,
+        project: project ? Number(project) : null,
         expected_close: close || null,
       },
       {
@@ -191,14 +193,16 @@ function NewDealBody({
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Product">
-            <select value={product} onChange={(e) => setProduct(e.target.value)} className={inputCls}>
+          <Field label="Project">
+            <select value={project} onChange={(e) => setProject(e.target.value)} className={inputCls}>
               <option value="">—</option>
-              {(projects.data?.results ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
+              {(projects.data?.results ?? [])
+                .filter((p) => p.prefix !== CRM_PROJECT_PREFIX)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
             </select>
           </Field>
           <Field label="Owner">

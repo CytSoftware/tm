@@ -290,7 +290,12 @@ function CrmRow({ meeting }: { meeting: Meeting }) {
           disabled={promote.isPending}
           onClick={() =>
             promote.mutate(
-              { id: e.id, relationship: "lead" },
+              {
+                id: e.id,
+                relationship: "lead",
+                // A lead met in a Mowafeq meeting is a Mowafeq contact.
+                ...(meeting.project ? { add_projects: [meeting.project.id] } : {}),
+              },
               {
                 onSuccess: () => toast.success(`${e.name} added to the CRM as a lead`),
                 onError: (err) => toast.error(errorMessage(err)),

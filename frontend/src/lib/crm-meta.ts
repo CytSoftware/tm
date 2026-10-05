@@ -28,6 +28,9 @@ import {
 import type { Relationship, StageKind, TouchpointKind } from "@/hooks/use-crm";
 import { ApiError } from "@/lib/api";
 
+/** Prefix of the project follow-up tasks live in (not a business scope). */
+export const CRM_PROJECT_PREFIX = "FUP";
+
 /** The CRM's sections, in order — rendered as sub-items under CRM in the
  *  sidebar and selected by `/crm?tab=<id>` (`inbox` is the bare `/crm`). */
 export const CRM_SECTIONS = [
@@ -40,8 +43,15 @@ export const CRM_SECTIONS = [
 
 export type CrmSection = (typeof CRM_SECTIONS)[number]["id"];
 
-export function crmSectionHref(id: CrmSection): string {
-  return id === "inbox" ? "/crm" : `/crm?tab=${id}`;
+export function crmSectionHref(
+  id: CrmSection,
+  keep: Record<string, string | null | undefined> = {},
+): string {
+  const qs = new URLSearchParams();
+  if (id !== "inbox") qs.set("tab", id);
+  for (const [k, v] of Object.entries(keep)) if (v) qs.set(k, v);
+  const query = qs.toString();
+  return query ? `/crm?${query}` : "/crm";
 }
 
 export const RELATIONSHIP_META: Record<

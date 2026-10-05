@@ -122,6 +122,9 @@ people/companies — an entity is in the CRM once it has a `relationship`.
 `external_id` so re-runs don't duplicate; `summary` is the subject plus a one-line gist \
 — never the email body.
 - Meetings already appear on a contact's timeline — don't also log them as touchpoints.
+- The CRM is split by business with TM projects (e.g. `MOW` = Mowafeq): every read \
+tool takes `project` to scope to one; `upsert_contact(projects=[...])` tags a contact \
+(additive), and a deal's `project` tags its company and people automatically.
 - Keep contacts current: anything learned about someone goes in as `add_contact_note` \
 (or a typed `log_touchpoint`); fix a wrong entry with `update_touchpoint`. `get_contact` \
 returns the full history; `list_crm_activity` is the recent cross-contact feed."""
@@ -1650,6 +1653,7 @@ async def search_contacts(
     company: str | int | None = None,
     no_next_step: bool = False,
     overdue: bool = False,
+    project: str | None = None,
     sort: str = "last_contact",
     limit: int = 50,
 ) -> list[dict[str, Any]]:
@@ -1660,7 +1664,9 @@ async def search_contacts(
     investor, other — default is everyone in the CRM; ``any`` also returns
     entities that are only in meetings. ``owner`` is a username.
     ``no_next_step`` = in the CRM but no open follow-up; ``overdue`` = next
-    follow-up is past due. ``sort``: last_contact, next_follow_up, name, created.
+    follow-up is past due. ``project`` (prefix/name, e.g. ``MOW``) scopes to
+    one business. ``sort``: last_contact, next_follow_up, name, created,
+    open_deals.
     """
     from apps.crm import mcp_tools
 
@@ -1672,6 +1678,7 @@ async def search_contacts(
         company=company,
         no_next_step=no_next_step,
         overdue=overdue,
+        project=project,
         sort=sort,
         limit=limit,
     )
@@ -1718,6 +1725,8 @@ async def upsert_contact(
     website: str | None = None,
     wiki_slug: str | None = None,
     rename_to: str | None = None,
+    projects: list[str] | None = None,
+    remove_projects: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create or update a CRM contact. Safe to repeat.
 
@@ -1728,7 +1737,9 @@ async def upsert_contact(
     (meetings keep it). ``company`` (people only) is a company name or id,
     created if new. ``emails`` are added, never replaced. ``wiki_slug`` is the
     LLM-wiki page (``entities/people/jane-doe``). ``rename_to`` renames and
-    keeps the old name as an alias.
+    keeps the old name as an alias. ``projects`` (prefixes, e.g. ``["MOW"]``)
+    tags which of our businesses the contact is for — added, never replaced;
+    ``remove_projects`` untags. A person's projects also go on their company.
     """
     from apps.crm import mcp_tools
 
@@ -1746,6 +1757,8 @@ async def upsert_contact(
         website=website,
         wiki_slug=wiki_slug,
         rename_to=rename_to,
+        projects=projects,
+        remove_projects=remove_projects,
     )
 
 
@@ -1841,14 +1854,16 @@ async def update_follow_up(
 
 
 @mcp.tool()
-async def list_follow_ups(owner: str | None = None, tz: str | None = None) -> dict[str, Any]:
+async def list_follow_ups(
+    owner: str | None = None, tz: str | None = None, project: str | None = None
+) -> dict[str, Any]:
     """The CRM inbox: open follow-ups bucketed overdue / today / week (next 7
     days) / later, plus ``no_next_step`` — CRM contacts with nothing
     scheduled. ``owner`` is a username; ``tz`` an IANA zone (default
-    Asia/Qatar)."""
+    Asia/Qatar); ``project`` (e.g. ``MOW``) scopes to one business."""
     from apps.crm import mcp_tools
 
-    return await _async(mcp_tools.list_follow_ups)(owner=owner, tz=tz)
+    return await _async(mcp_tools.list_follow_ups)(owner=owner, tz=tz, project=project)
 
 
 @mcp.tool()
@@ -1866,15 +1881,22 @@ async def search_deals(
     status: str | None = None,
     contact: str | int | None = None,
     owner: str | None = None,
+    project: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     """Deals, by pipeline and stage order. ``status``: open, won, lost,
     closed. ``contact`` matches the company, a contact on the deal, or a
-    person at the company."""
+    person at the company. ``project`` (e.g. ``MOW``) scopes to one business."""
     from apps.crm import mcp_tools
 
     return await _async(mcp_tools.search_deals)(
-        query=query, pipeline=pipeline, status=status, contact=contact, owner=owner, limit=limit
+        query=query,
+        pipeline=pipeline,
+        status=status,
+        contact=contact,
+        owner=owner,
+        project=project,
+        limit=limit,
     )
 
 
@@ -1896,14 +1918,15 @@ async def create_deal(
     owner: str | None = None,
     value: float | str | None = None,
     currency: str | None = None,
-    product: str | None = None,
+    project: str | None = None,
     expected_close: str | None = None,
     notes: str | None = None,
 ) -> dict[str, Any]:
     """Open a deal. ``pipeline`` and ``stage`` are names (see
     ``list_pipelines``; stage defaults to the first open one). ``company`` /
     ``contacts`` are existing contacts. ``value`` in ``currency`` (QAR).
-    ``product`` is a project prefix (which product the deal is for).
+    ``project`` is which of our businesses it's for (prefix, e.g. ``MOW``);
+    it also tags the company and contacts with that project.
     ``expected_close`` is a date."""
     from apps.crm import mcp_tools
 
@@ -1916,7 +1939,7 @@ async def create_deal(
         owner=owner,
         value=value,
         currency=currency,
-        product=product,
+        project=project,
         expected_close=expected_close,
         notes=notes,
         mcp_user=_get_mcp_user(),
@@ -1934,7 +1957,7 @@ async def update_deal(
     owner: str | None = None,
     value: float | str | None = None,
     currency: str | None = None,
-    product: str | None = None,
+    project: str | None = None,
     expected_close: str | None = None,
     notes: str | None = None,
     lost_reason: str | None = None,
@@ -1953,7 +1976,7 @@ async def update_deal(
         owner=owner,
         value=value,
         currency=currency,
-        product=product,
+        project=project,
         expected_close=expected_close,
         notes=notes,
         lost_reason=lost_reason,
@@ -2026,13 +2049,16 @@ async def delete_touchpoint(touchpoint_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def list_crm_activity(days: int = 14, limit: int = 100) -> list[dict[str, Any]]:
+async def list_crm_activity(
+    days: int = 14, limit: int = 100, project: str | None = None
+) -> list[dict[str, Any]]:
     """What happened with CRM contacts in the last ``days``, newest first:
     recorded meetings they attended, logged touchpoints/notes, and closed
-    follow-ups — each with the people involved. Good for a weekly recap."""
+    follow-ups — each with the people involved. Good for a weekly recap.
+    ``project`` (e.g. ``MOW``) scopes to one business."""
     from apps.crm import mcp_tools
 
-    return await _async(mcp_tools.list_crm_activity)(days=days, limit=limit)
+    return await _async(mcp_tools.list_crm_activity)(days=days, limit=limit, project=project)
 
 
 @mcp.tool()

@@ -28,6 +28,7 @@ import {
   crmDealKey,
   crmDealsKey,
   crmInboxKey,
+  crmProjectsKey,
   crmPipelinesKey,
 } from "@/lib/query-keys";
 import type { User } from "@/lib/types";
@@ -45,6 +46,9 @@ export type EntityKind = "person" | "company";
 
 export type EntityRef = { id: number; kind: EntityKind; name: string; website?: string };
 
+/** One of our businesses (a TM project) — what the CRM is scoped by. */
+export type ProjectRef = { id: number; prefix: string; name: string; color: string };
+
 export type Contact = {
   id: number;
   kind: EntityKind;
@@ -56,6 +60,7 @@ export type Contact = {
   headline: string;
   company: EntityRef | null;
   emails: string[];
+  projects: ProjectRef[];
   phone: string;
   whatsapp: string;
   linkedin_url: string;
@@ -120,7 +125,7 @@ export type Deal = {
   owner: User | null;
   value: string | null;
   currency: string;
-  product_project: { id: number; prefix: string; name: string; color: string } | null;
+  project: ProjectRef | null;
   expected_close: string | null;
   notes: string;
   position: number;
@@ -213,6 +218,8 @@ export type ContactFilters = {
   owner?: string;
   no_next_step?: string;
   sort?: string;
+  /** Project prefix ("MOW") — the CRM scope. */
+  project?: string;
 };
 
 type Page<T> = { count: number; results: T[] };
@@ -230,22 +237,30 @@ const stableKey = (f: Record<string, string | undefined>) =>
 
 // ── Reads ───────────────────────────────────────────────────────────────────
 
-export function useCrmInbox(owner: string) {
+export function useCrmInbox(owner: string, project = "") {
   return useQuery({
-    queryKey: crmInboxKey(owner),
+    queryKey: crmInboxKey(`${owner}|${project}`),
     queryFn: () =>
       apiFetch<Inbox>("/api/crm/inbox/", {
-        query: { tz: browserTz(), owner },
+        query: { tz: browserTz(), owner, project },
       }),
   });
 }
 
-export function useCrmActivity(days: number, enabled = true) {
+export function useCrmActivity(days: number, project = "", enabled = true) {
   return useQuery({
-    queryKey: crmActivityKey(days),
+    queryKey: crmActivityKey(days, project),
     queryFn: () =>
-      apiFetch<TimelineItem[]>("/api/crm/activity/", { query: { days } }),
+      apiFetch<TimelineItem[]>("/api/crm/activity/", { query: { days, project } }),
     enabled,
+  });
+}
+
+/** Projects the CRM is split by (any a contact or deal is tagged with). */
+export function useCrmProjects() {
+  return useQuery({
+    queryKey: crmProjectsKey(),
+    queryFn: () => apiFetch<ProjectRef[]>("/api/crm/projects/"),
   });
 }
 
@@ -270,12 +285,15 @@ export function useContact(id: number | null) {
   });
 }
 
-export function useDeals(pipeline: number | null) {
+const dealsKey = (pipeline: number | null, project: string) =>
+  crmDealsKey(`${pipeline ?? ""}|${project}`);
+
+export function useDeals(pipeline: number | null, project = "") {
   return useQuery({
-    queryKey: crmDealsKey(String(pipeline ?? "")),
+    queryKey: dealsKey(pipeline, project),
     queryFn: () =>
       apiFetch<Page<Deal>>("/api/crm/deals/", {
-        query: { pipeline: pipeline ?? undefined, limit: 1000 },
+        query: { pipeline: pipeline ?? undefined, project, limit: 1000 },
       }),
     select: (page) => page.results,
     enabled: pipeline != null,
@@ -333,6 +351,10 @@ export type ContactWrite = Partial<{
   linkedin_url: string;
   website: string;
   wiki_slug: string;
+  /** Project ids or prefixes; replaces the contact's set. */
+  projects: (string | number)[];
+  /** Added to the contact's projects, keeping the rest. */
+  add_projects: (string | number)[];
 }>;
 
 export function useCreateContact() {
@@ -431,7 +453,7 @@ export type DealWrite = Partial<{
   owner: number | null;
   value: string | null;
   currency: string;
-  product_project: number | null;
+  project: number | null;
   expected_close: string | null;
   notes: string;
   lost_reason: string;
@@ -457,9 +479,9 @@ export function useDeleteDeal() {
 
 /** Optimistic: the card jumps columns immediately, then the server's
  *  position wins on refetch. Rolls back on error. */
-export function useMoveDeal(pipeline: number | null) {
+export function useMoveDeal(pipeline: number | null, project = "") {
   const qc = useQueryClient();
-  const key = crmDealsKey(String(pipeline ?? ""));
+  const key = dealsKey(pipeline, project);
   return useMutation({
     mutationFn: ({ dealKey, stage, index }: { dealKey: string; stage: number; index?: number }) =>
       apiFetch<DealDetail>(`/api/crm/deals/${dealKey}/move/`, {

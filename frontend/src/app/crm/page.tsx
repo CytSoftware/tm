@@ -40,6 +40,7 @@ import {
   type ContactFilters,
   useContacts,
   useCrmActivity,
+  useCrmProjects,
   useDeals,
   usePipelines,
 } from "@/hooks/use-crm";
@@ -95,6 +96,12 @@ function Crm() {
   const dealKey = params.get("d");
   const mine = params.get("mine") === "1";
   const owner = mine ? "me" : "";
+  // Scope: one of our businesses (project prefix, e.g. MOW) or everything.
+  const crmProjects = useCrmProjects();
+  const scope = params.get("p") ?? "";
+  const scopeProject = crmProjects.data?.find(
+    (p) => p.prefix.toLowerCase() === scope.toLowerCase(),
+  );
 
   const setParams = useCallback(
     (patch: Record<string, string | null>, opts?: { push?: boolean }) => {
@@ -147,9 +154,10 @@ function Crm() {
       kind: tab === "companies" ? "company" : "person",
       no_next_step: params.get("nonext") ?? "",
       owner,
+      project: scope,
       sort: params.get("sort") ?? "last_contact",
     }),
-    [urlSearch, params, owner, tab],
+    [urlSearch, params, owner, tab, scope],
   );
   const contacts = useContacts(filters, listTab);
 
@@ -158,11 +166,11 @@ function Crm() {
   const pipelineParam = params.get("pipeline");
   const pipeline =
     pipelines.data?.find((p) => String(p.id) === pipelineParam) ?? pipelines.data?.[0] ?? null;
-  const deals = useDeals(tab === "deals" ? (pipeline?.id ?? null) : null);
+  const deals = useDeals(tab === "deals" ? (pipeline?.id ?? null) : null, scope);
 
   // ── Activity ────────────────────────────────────────────────────────────
   const days = Number(params.get("days")) || 14;
-  const activity = useCrmActivity(days, tab === "activity");
+  const activity = useCrmActivity(days, scope, tab === "activity");
 
   // ── Dialogs ─────────────────────────────────────────────────────────────
   const [newContact, setNewContact] = useState(false);
@@ -174,13 +182,42 @@ function Crm() {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       <header className={cn("shrink-0 border-b border-border/80", detailOpen && "max-lg:hidden")}>
-        <div className="flex min-h-12 items-center gap-2 px-4">
+        <div className="flex min-h-12 items-center gap-2 px-4 max-sm:flex-wrap max-sm:py-2">
           <section.icon className="size-4 shrink-0 text-muted-foreground" />
           <h1 className="flex min-w-0 items-center gap-1.5 text-[13px]">
             <span className="text-muted-foreground max-sm:hidden">CRM</span>
             <span className="text-muted-foreground/50 max-sm:hidden">/</span>
             <span className="truncate font-medium">{section.label}</span>
           </h1>
+
+          {(crmProjects.data?.length ?? 0) > 0 && (
+            // Own line on phones so the section title isn't squeezed out.
+            <nav
+              aria-label="Project"
+              className="ml-2 flex shrink-0 rounded-md border border-border p-0.5 max-sm:order-last max-sm:ml-0"
+            >
+              {[{ id: 0, prefix: "", name: "All", color: "" }, ...crmProjects.data!].map((p) => {
+                const active = (scopeProject?.prefix ?? "") === p.prefix;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setParams({ p: p.prefix || null })}
+                    className={cn(
+                      "tap-target flex h-6 items-center gap-1.5 rounded px-2 text-[12px] text-muted-foreground hover:text-foreground",
+                      active && "bg-accent text-foreground",
+                    )}
+                  >
+                    {p.color && (
+                      <span className="size-1.5 rounded-full" style={{ background: p.color }} />
+                    )}
+                    {p.name}
+                  </button>
+                );
+              })}
+            </nav>
+          )}
 
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
             <div className="flex rounded-md border border-border p-0.5">
@@ -206,7 +243,7 @@ function Crm() {
               <button
                 type="button"
                 className={primaryBtnCls}
-                onClick={() => setNewDeal({ pipeline: pipeline?.id })}
+                onClick={() => setNewDeal({ pipeline: pipeline?.id, project: scopeProject?.id })}
                 disabled={!pipeline}
               >
                 <Plus className="size-3.5" />
@@ -350,7 +387,7 @@ function Crm() {
       <div className="flex min-h-0 min-w-0 flex-1">
         <main className={cn("min-h-0 min-w-0 flex-1", detailOpen && "max-lg:hidden")}>
           {tab === "inbox" ? (
-            <InboxView owner={owner} onOpenContact={openContact} />
+            <InboxView owner={owner} project={scope} onOpenContact={openContact} />
           ) : tab === "activity" ? (
             activity.isLoading ? (
               <Empty>Loading…</Empty>
@@ -409,7 +446,10 @@ function Crm() {
               deals={deals.data ?? []}
               selectedKey={dealKey}
               onOpen={openDeal}
-              onNewDeal={(stage) => setNewDeal({ pipeline: pipeline.id, stage })}
+              project={scope}
+              onNewDeal={(stage) =>
+                setNewDeal({ pipeline: pipeline.id, stage, project: scopeProject?.id })
+              }
             />
           )}
         </main>
@@ -432,7 +472,7 @@ function Crm() {
                   onClose={closeDetail}
                   onOpenContact={openContact}
                   onOpenDeal={openDeal}
-                  onNewDeal={(company) => setNewDeal({ company })}
+                  onNewDeal={(company) => setNewDeal({ company, project: scopeProject?.id })}
                 />
               ) : (
                 <DealDetail
@@ -451,6 +491,7 @@ function Crm() {
         open={newContact}
         onOpenChange={setNewContact}
         defaultKind={tab === "companies" ? "company" : "person"}
+        defaultProjects={scopeProject ? [scopeProject.id] : []}
         onCreated={openContact}
       />
       <NewDealDialog

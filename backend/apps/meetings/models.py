@@ -132,6 +132,12 @@ class Entity(TimestampedModel):
     whatsapp = models.CharField(max_length=40, blank=True, default="")
     linkedin_url = models.URLField(max_length=300, blank=True, default="")
     website = models.URLField(max_length=300, blank=True, default="")
+    projects = models.ManyToManyField(
+        "tasks.Project",
+        blank=True,
+        related_name="crm_entities",
+        help_text="Which of our businesses this contact is for (Mowafeq, Cyt…) — the CRM's scope.",
+    )
 
     class Meta:
         ordering = ["kind", "name"]

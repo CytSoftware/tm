@@ -117,19 +117,17 @@ def _deal(ref: str) -> Deal:
     return deal
 
 
+def _scope(ref: str | int | None) -> int | None:
+    """A project filter for the read tools — unknown names raise, so an agent
+    learns about a typo instead of getting an empty list."""
+    project = _project(ref)
+    return project.pk if project else None
+
+
 def _project(ref: str | int | None) -> Project | None:
     if ref in (None, ""):
         return None
-    text = str(ref)
-    project = (
-        Project.objects.filter(pk=int(text)).first()
-        if text.isdigit()
-        else Project.objects.filter(prefix__iexact=text).first()
-        or Project.objects.filter(name__iexact=text).first()
-    )
-    if project is None:
-        raise ValueError(f"No project {ref!r}.")
-    return project
+    return _guard(services.resolve_project, ref)
 
 
 def _money(value: Any) -> Decimal | None:
@@ -225,6 +223,7 @@ def search_contacts(
     company: str | int | None = None,
     no_next_step: bool = False,
     overdue: bool = False,
+    project: str | None = None,
     sort: str = "last_contact",
     limit: int = 50,
 ) -> list[dict[str, Any]]:
@@ -235,6 +234,7 @@ def search_contacts(
         "owner": owner,
         "no_next_step": no_next_step,
         "overdue": overdue,
+        "project": _scope(project),
     }
     if company not in (None, ""):
         filters["company"] = _entity(company, EntityKind.COMPANY).pk
@@ -278,6 +278,8 @@ def upsert_contact(
     website: str | None = None,
     wiki_slug: str | None = None,
     rename_to: str | None = None,
+    projects: list[str] | None = None,
+    remove_projects: list[str] | None = None,
 ) -> dict[str, Any]:
     if kind not in EntityKind.values:
         raise ValueError("kind must be 'person' or 'company'.")
@@ -301,6 +303,11 @@ def upsert_contact(
         data["add_emails"] = emails
     if rename_to:
         data["name"] = rename_to
+    # Additive, like emails: tagging "MOW" never drops "CYT".
+    if projects:
+        data["add_projects"] = [_project(p) for p in projects]
+    if remove_projects:
+        data["remove_projects"] = [_project(p) for p in remove_projects]
 
     text = str(name).strip()
     if text.isdigit() or "@" in text:
@@ -424,13 +431,14 @@ def update_follow_up(
     return _follow_up(follow_up)
 
 
-def list_follow_ups(owner: str | None = None, tz: str | None = None) -> dict[str, Any]:
-    today, grouped = bucket_follow_ups(
-        open_follow_ups({"owner": owner} if owner else None), services.resolve_tz(tz)
-    )
+def list_follow_ups(
+    owner: str | None = None, tz: str | None = None, project: str | None = None
+) -> dict[str, Any]:
+    scope = {"owner": owner, "project": _scope(project)}
+    today, grouped = bucket_follow_ups(open_follow_ups(scope), services.resolve_tz(tz))
     buckets = {name: [_follow_up(f) for f in rows] for name, rows in grouped.items()}
     no_next = without_listed_companies_people(
-        filter_contacts({"no_next_step": True, "owner": owner})
+        filter_contacts({"no_next_step": True, **scope})
     )
     return {
         "today": today.isoformat(),
@@ -456,9 +464,15 @@ def search_deals(
     status: str | None = None,
     contact: str | int | None = None,
     owner: str | None = None,
+    project: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    filters: dict[str, Any] = {"search": query, "status": status, "owner": owner}
+    filters: dict[str, Any] = {
+        "search": query,
+        "status": status,
+        "owner": owner,
+        "project": _scope(project),
+    }
     if pipeline:
         filters["pipeline"] = _pipeline(pipeline).pk
     if contact not in (None, ""):
@@ -488,7 +502,7 @@ def _deal_data(
     owner=None,
     value=None,
     currency=None,
-    product=None,
+    project=None,
     expected_close=None,
     notes=None,
     lost_reason=None,
@@ -506,8 +520,8 @@ def _deal_data(
         data["value"] = _money(value)
     if currency is not None:
         data["currency"] = currency.upper()[:3]
-    if product is not None:
-        data["product_project"] = _project(product)
+    if project is not None:
+        data["project"] = _project(project)
     if expected_close is not None:
         data["expected_close"] = _date(expected_close)
     if notes is not None:
@@ -526,7 +540,7 @@ def create_deal(
     owner: str | None = None,
     value: float | str | None = None,
     currency: str | None = None,
-    product: str | None = None,
+    project: str | None = None,
     expected_close: str | None = None,
     notes: str | None = None,
     mcp_user=None,
@@ -539,7 +553,7 @@ def create_deal(
         owner=owner,
         value=value,
         currency=currency,
-        product=product,
+        project=project,
         expected_close=expected_close,
         notes=notes,
     )
@@ -560,7 +574,7 @@ def update_deal(
     owner: str | None = None,
     value: float | str | None = None,
     currency: str | None = None,
-    product: str | None = None,
+    project: str | None = None,
     expected_close: str | None = None,
     notes: str | None = None,
     lost_reason: str | None = None,
@@ -573,7 +587,7 @@ def update_deal(
         owner=owner,
         value=value,
         currency=currency,
-        product=product,
+        project=project,
         expected_close=expected_close,
         notes=notes,
         lost_reason=lost_reason,
@@ -674,10 +688,16 @@ def delete_touchpoint(touchpoint_id: int) -> dict[str, Any]:
     return {"ok": True, "id": touchpoint_id}
 
 
-def list_crm_activity(days: int = 14, limit: int = 100) -> list[dict[str, Any]]:
+def list_crm_activity(
+    days: int = 14, limit: int = 100, project: str | None = None
+) -> list[dict[str, Any]]:
     from .timeline import crm_activity
 
-    return _json(crm_activity(days=days, limit=max(1, min(limit, MAX_LIST_LIMIT))))
+    return _json(
+        crm_activity(
+            days=days, limit=max(1, min(limit, MAX_LIST_LIMIT)), project=_scope(project)
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

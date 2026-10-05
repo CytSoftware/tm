@@ -36,6 +36,12 @@ def entity_ref(entity: Entity | None) -> dict | None:
     return {"id": entity.id, "kind": entity.kind, "name": entity.name, "website": entity.website}
 
 
+def project_ref(p) -> dict | None:
+    if p is None:
+        return None
+    return {"id": p.id, "prefix": p.prefix, "name": p.name, "color": p.color}
+
+
 def follow_up_dict(f: FollowUp, *, context=None) -> dict:
     task = f.task
     kind = task.column.kind if task.column_id else None
@@ -62,6 +68,7 @@ class ContactSerializer(serializers.ModelSerializer):
     owner = UserSerializer(read_only=True)
     company = serializers.SerializerMethodField()
     emails = serializers.SerializerMethodField()
+    projects = serializers.SerializerMethodField()
     last_contact_at = serializers.SerializerMethodField()
     last_activity = serializers.SerializerMethodField()
     next_follow_up_at = serializers.DateTimeField(read_only=True)
@@ -86,6 +93,7 @@ class ContactSerializer(serializers.ModelSerializer):
             "headline",
             "company",
             "emails",
+            "projects",
             "phone",
             "whatsapp",
             "linkedin_url",
@@ -107,6 +115,9 @@ class ContactSerializer(serializers.ModelSerializer):
 
     def get_emails(self, obj):
         return [e.email for e in obj.emails.all()]
+
+    def get_projects(self, obj):
+        return [project_ref(p) for p in obj.projects.all()]
 
     def get_last_activity(self, obj):
         item = last_activity(obj)
@@ -151,6 +162,9 @@ class ContactWriteSerializer(serializers.Serializer):
     linkedin_url = BareUrlField(max_length=300, required=False, allow_blank=True)
     website = BareUrlField(max_length=300, required=False, allow_blank=True)
     wiki_slug = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    # Project ids, prefixes or names ("MOW"); replaces the contact's set.
+    projects = serializers.ListField(child=serializers.CharField(), required=False)
+    add_projects = serializers.ListField(child=serializers.CharField(), required=False)
 
 
 class StageSerializer(serializers.ModelSerializer):
@@ -182,7 +196,7 @@ class DealSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
     stage = serializers.SerializerMethodField()
     pipeline = serializers.SerializerMethodField()
-    product_project = serializers.SerializerMethodField()
+    project = serializers.SerializerMethodField()
 
     class Meta:
         model = Deal
@@ -196,7 +210,7 @@ class DealSerializer(serializers.ModelSerializer):
             "owner",
             "value",
             "currency",
-            "product_project",
+            "project",
             "expected_close",
             "notes",
             "position",
@@ -220,11 +234,8 @@ class DealSerializer(serializers.ModelSerializer):
         p = obj.pipeline
         return {"id": p.id, "name": p.name, "slug": p.slug}
 
-    def get_product_project(self, obj):
-        p = obj.product_project
-        if p is None:
-            return None
-        return {"id": p.id, "prefix": p.prefix, "name": p.name, "color": p.color}
+    def get_project(self, obj):
+        return project_ref(obj.project)
 
 
 class TouchpointSerializer(serializers.ModelSerializer):
@@ -339,7 +350,7 @@ class DealWriteSerializer(serializers.Serializer):
         max_digits=14, decimal_places=2, required=False, allow_null=True
     )
     currency = serializers.CharField(max_length=3, required=False)
-    product_project = serializers.PrimaryKeyRelatedField(
+    project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.all(), required=False, allow_null=True
     )
     expected_close = serializers.DateField(required=False, allow_null=True)

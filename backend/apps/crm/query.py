@@ -40,7 +40,7 @@ from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
 
 from apps.meetings.models import Entity, EntityRole, Meeting, RelationshipType
-from apps.tasks.models import ColumnKind
+from apps.tasks.models import ColumnKind, Project
 
 from .models import Deal, FollowUp, StageKind, Touchpoint
 
@@ -162,8 +162,25 @@ def last_activity(entity: Entity) -> dict[str, Any] | None:
 
 def base_contact_queryset() -> QuerySet[Entity]:
     return annotate_contacts(
-        Entity.objects.select_related("company", "owner").prefetch_related("emails")
+        Entity.objects.select_related("company", "owner").prefetch_related("emails", "projects")
     )
+
+
+def project_id(value: Any) -> int | None:
+    """The CRM scope filter: a project id, prefix or name ("MOW", "mowafeq").
+    Blank → no scope (None); unknown → -1, which matches nothing rather than
+    silently showing everything."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+    pk = (
+        Project.objects.filter(Q(prefix__iexact=text) | Q(name__iexact=text))
+        .values_list("pk", flat=True)
+        .first()
+    )
+    return pk if pk is not None else -1
 
 
 def _relationship_q(value: Any) -> Q | None:
@@ -187,6 +204,10 @@ def apply_contact_filters(
 
     if filters.get("kind"):
         qs = qs.filter(kind=filters["kind"])
+
+    pid = project_id(filters.get("project"))
+    if pid is not None:
+        qs = qs.filter(projects__id=pid)
 
     owner = filters.get("owner")
     if owner not in (None, ""):
@@ -252,7 +273,7 @@ def filter_contacts(
 
 def base_deal_queryset() -> QuerySet[Deal]:
     return Deal.objects.select_related(
-        "pipeline", "stage", "company", "owner", "product_project"
+        "pipeline", "stage", "company", "owner", "project"
     ).prefetch_related("contacts")
 
 
@@ -269,6 +290,10 @@ def apply_deal_filters(qs: QuerySet[Deal], filters: dict[str, Any] | None) -> Qu
         )
     if filters.get("stage"):
         qs = qs.filter(stage_id=int(filters["stage"]))
+
+    pid = project_id(filters.get("project"))
+    if pid is not None:
+        qs = qs.filter(project_id=pid)
 
     status = (filters.get("status") or "").lower()
     if status == "open":
@@ -343,6 +368,9 @@ def open_follow_ups(filters: dict[str, Any] | None = None) -> QuerySet[FollowUp]
             Q(entity_id=int(filters["entity"]))
             | Q(entity__company_id=int(filters["entity"]))
         )
+    pid = project_id(filters.get("project"))
+    if pid is not None:
+        qs = qs.filter(Q(entity__projects__id=pid) | Q(deal__project_id=pid))
     return qs.distinct().order_by(F("task__due_at").asc(nulls_last=True), "id")
 
 

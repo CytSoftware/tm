@@ -224,6 +224,16 @@ The list opens by default while you're in the CRM; its chevron overrides that.
 All view state in the URL (`tab`, filters, open `c=<entity>` / `d=<deal>`),
 like meetings.
 
+**Project scope (Mowafeq / Cyt).** One CRM, split by TM project rather than a
+new concept: a header switcher **All · Cyt · Mowafeq** (`?p=MOW`, only shown
+once something is tagged) filters every section. Contacts carry
+`Entity.projects`; deals have `project`, and saving a deal tags its company
+and people. A person's projects reach their company; promoting a meeting
+attendee tags the meeting's project; new contacts/deals default to the
+current scope. On the contact pane the projects are one-click chips. Follow-up
+tasks stay in the CRM project (not the business's board). Under a scope, deals
+without a project are hidden — not lost.
+
 - **Inbox (default tab).** Overdue / Today / This week / Later, one row per
   follow-up: contact, company, task title, due, owner. Row actions: done,
   snooze (+1d / +1w / pick), log touch, open contact. "No next step" section

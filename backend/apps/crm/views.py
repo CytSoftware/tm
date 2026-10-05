@@ -7,7 +7,7 @@ tools use the same two modules.
 
 from __future__ import annotations
 
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -16,6 +16,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.meetings.models import Entity, EntityKind, EntityRole
+from apps.tasks.models import Project
 
 from . import services
 from .site_preview import PreviewError, preview_site
@@ -52,8 +53,9 @@ CONTACT_FILTER_KEYS = (
     "search",
     "no_next_step",
     "overdue",
+    "project",
 )
-DEAL_FILTER_KEYS = ("pipeline", "stage", "status", "entity", "owner", "search")
+DEAL_FILTER_KEYS = ("pipeline", "stage", "status", "entity", "owner", "search", "project")
 
 
 def _filters(request, keys) -> dict[str, str]:
@@ -165,7 +167,7 @@ class FollowUpInboxView(APIView):
 
     def get(self, request):
         tz = services.resolve_tz(request.query_params.get("tz"))
-        filters = _filters(request, ("owner",))
+        filters = _filters(request, ("owner", "project"))
         ctx = {"request": request}
         today, grouped = bucket_follow_ups(open_follow_ups(filters), tz)
         buckets = {
@@ -294,7 +296,24 @@ class ActivityView(APIView):
             days = int(request.query_params.get("days", 14))
         except ValueError:
             raise ValidationError({"days": "Must be a number."})
-        return Response(crm_activity(days=min(days, 365)))
+        return Response(
+            crm_activity(days=min(days, 365), project=request.query_params.get("project"))
+        )
+
+
+class CrmProjectsView(APIView):
+    """``GET /api/crm/projects/`` — the projects the CRM is split by (any
+    project a contact or deal is tagged with): the scope switcher's options."""
+
+    def get(self, request):
+        projects = (
+            Project.objects.filter(Q(crm_entities__isnull=False) | Q(crm_deals__isnull=False))
+            .distinct()
+            .order_by("name")
+        )
+        return Response(
+            [{"id": p.id, "prefix": p.prefix, "name": p.name, "color": p.color} for p in projects]
+        )
 
 
 class SitePreviewView(APIView):
