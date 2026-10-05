@@ -617,3 +617,24 @@ class BroadcastTests(TestCase):
 
         with mock.patch("apps.crm.broadcast.broadcast_to_group", side_effect=RuntimeError):
             broadcast_crm_event("deal.moved")
+
+
+class McpFollowUpAvatarTests(CrmTestCase):
+    """Production regression: every MCP tool that serialized a follow-up
+    failed with "'NoneType' object has no attribute 'get'" once the assignee
+    had an uploaded avatar (a relative /media/ path needs the request)."""
+
+    def test_follow_up_tools_with_uploaded_avatar(self):
+        from apps.tasks.models import UserProfile
+
+        UserProfile.objects.update_or_create(
+            user=self.user, defaults={"avatar_image": "avatars/me.png"}
+        )
+        self.person()
+        out = mcp_tools.create_follow_up(
+            "Mohamed Mohsen", "Send the pilot scope", due="2026-10-08", mcp_user=self.user
+        )
+        self.assertEqual(out["assignees"], [self.user.username])
+        inbox = mcp_tools.list_follow_ups()
+        self.assertEqual(sum(len(inbox[b]) for b in ("overdue", "today", "week", "later")), 1)
+        self.assertEqual(len(mcp_tools.get_contact("Mohamed Mohsen")["open_follow_ups"]), 1)

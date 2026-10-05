@@ -53,7 +53,10 @@ def follow_up_dict(f: FollowUp, *, context=None) -> dict:
         "due_at": task.due_at,
         "column": task.column.name if task.column_id else None,
         "is_open": kind not in CLOSED_COLUMN_KINDS,
-        "assignees": UserSerializer(task.assignees.all(), many=True, context=context).data,
+        # `or {}`: the MCP tools call this without a request, and DRF keeps an
+        # explicit None as the context — an uploaded avatar then crashed on
+        # `self.context.get("request")`.
+        "assignees": UserSerializer(task.assignees.all(), many=True, context=context or {}).data,
         "entity": entity_ref(f.entity),
         "company": entity_ref(f.entity.company) if f.entity.company_id else None,
         "deal": {"key": f.deal.key, "title": f.deal.title} if f.deal_id else None,
