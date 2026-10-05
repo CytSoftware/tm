@@ -32,7 +32,8 @@ User = get_user_model()
 def entity_ref(entity: Entity | None) -> dict | None:
     if entity is None:
         return None
-    return {"id": entity.id, "kind": entity.kind, "name": entity.name}
+    # website rides along so any company reference can show its logo.
+    return {"id": entity.id, "kind": entity.kind, "name": entity.name, "website": entity.website}
 
 
 def follow_up_dict(f: FollowUp, *, context=None) -> dict:

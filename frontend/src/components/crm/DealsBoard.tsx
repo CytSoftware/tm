@@ -20,7 +20,7 @@ import {
   attachClosestEdge,
   extractClosestEdge,
 } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
-import { Building2, Check, Plus } from "lucide-react";
+import { Check, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { UserAvatar } from "@/components/UserAvatar";
@@ -33,8 +33,10 @@ import {
 } from "@/components/ui/sheet";
 import { useLongPress } from "@/hooks/use-long-press";
 import { type Deal, type Pipeline, type Stage, useMoveDeal } from "@/hooks/use-crm";
-import { errorMessage, formatMoney, shortDate } from "@/lib/crm-meta";
+import { companyDomain, errorMessage, formatMoney, shortDate } from "@/lib/crm-meta";
 import { cn } from "@/lib/utils";
+
+import { CompanyMark } from "./shared";
 
 type DragData = { type: "crm-deal"; key: string; stageId: number };
 type ColumnData = { type: "crm-stage"; stageId: number };
@@ -298,7 +300,7 @@ function DealCard({
       <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
         {deal.company && (
           <span className="inline-flex min-w-0 items-center gap-1 truncate">
-            <Building2 className="size-3 shrink-0" />
+            <CompanyMark domain={companyDomain(deal.company.website)} />
             <span className="truncate">{deal.company.name}</span>
           </span>
         )}

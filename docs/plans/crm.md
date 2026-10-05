@@ -217,8 +217,12 @@ never log email bodies, always pass `external_id` for Gmail/Calendar.
 
 ## 4. UI — `/crm`
 
-Sidebar entry "CRM" in the Workspace group (after To Review). All view state in the URL
-(`tab`, filters, open `c=<entity>` / `d=<deal>`), like meetings.
+Sidebar entry "CRM" in the Workspace group (after To Review), expandable into
+its sections — Inbox (with an overdue + due-today count), People, Companies,
+Deals, Activity — so the page itself has no tab strip, just "CRM / <section>".
+The list opens by default while you're in the CRM; its chevron overrides that.
+All view state in the URL (`tab`, filters, open `c=<entity>` / `d=<deal>`),
+like meetings.
 
 - **Inbox (default tab).** Overdue / Today / This week / Later, one row per
   follow-up: contact, company, task title, due, owner. Row actions: done,
@@ -232,6 +236,12 @@ Sidebar entry "CRM" in the Workspace group (after To Review). All view state in 
   people's. Annotations in `query.py`, no extra endpoint; the detail pane is
   the contact pane (people, deals, combined timeline). A CRM person's employer
   joins the CRM with the person's type, so it shows up here.
+  **Logos:** a company's domain (its website, else its first non-webmail
+  address) is looked up through Google's favicon service in the browser —
+  nothing fetched or stored server-side. The 16px placeholder it returns for
+  unknown domains counts as "no logo", so the initials tile shows instead.
+  Same logo on deal cards and a person's employer link (`entity_ref` carries
+  `website`).
 - **Contact detail.** Header: name, relationship pill, company, owner,
   headline, channel buttons (call / WhatsApp / email / LinkedIn), "Open in
   wiki" if `wiki_slug`. Sections: Follow-ups (open), Deals, Timeline

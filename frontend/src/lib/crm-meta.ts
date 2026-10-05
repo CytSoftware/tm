@@ -11,17 +11,38 @@ import {
   isThisYear,
 } from "date-fns";
 import {
+  Building2,
   CalendarDays,
+  History,
+  Inbox,
+  Kanban,
   Mail,
   MessageCircle,
   NotebookPen,
   Phone,
   Sparkle,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
 import type { Relationship, StageKind, TouchpointKind } from "@/hooks/use-crm";
 import { ApiError } from "@/lib/api";
+
+/** The CRM's sections, in order — rendered as sub-items under CRM in the
+ *  sidebar and selected by `/crm?tab=<id>` (`inbox` is the bare `/crm`). */
+export const CRM_SECTIONS = [
+  { id: "inbox", label: "Inbox", icon: Inbox },
+  { id: "people", label: "People", icon: Users },
+  { id: "companies", label: "Companies", icon: Building2 },
+  { id: "deals", label: "Deals", icon: Kanban },
+  { id: "activity", label: "Activity", icon: History },
+] as const satisfies readonly { id: string; label: string; icon: LucideIcon }[];
+
+export type CrmSection = (typeof CRM_SECTIONS)[number]["id"];
+
+export function crmSectionHref(id: CrmSection): string {
+  return id === "inbox" ? "/crm" : `/crm?tab=${id}`;
+}
 
 export const RELATIONSHIP_META: Record<
   Relationship,
@@ -160,4 +181,35 @@ export function errorMessage(err: unknown): string {
 /** wa.me wants digits only, with country code. */
 export function whatsappUrl(number: string): string {
   return `https://wa.me/${number.replace(/[^\d]/g, "")}`;
+}
+
+/** Personal-mail hosts: an address there says nothing about the company. */
+const FREE_MAIL = new Set([
+  "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+  "yahoo.com", "icloud.com", "me.com", "proton.me", "protonmail.com", "aol.com",
+]);
+
+/** The domain a company's logo is looked up by: its website, else the first
+ *  work address on file. Empty when there's nothing to go on. */
+export function companyDomain(website?: string | null, emails: string[] = []): string {
+  const site = (website ?? "").trim();
+  if (site) {
+    try {
+      const url = new URL(/^[a-z]+:\/\//i.test(site) ? site : `https://${site}`);
+      return url.hostname.replace(/^www\./, "").toLowerCase();
+    } catch {
+      // fall through to email
+    }
+  }
+  for (const email of emails) {
+    const host = email.split("@")[1]?.toLowerCase();
+    if (host && !FREE_MAIL.has(host)) return host;
+  }
+  return "";
+}
+
+/** Favicon-service URL for a domain. Unknown domains come back as a 16px
+ *  placeholder globe, which `CompanyLogo` treats as "no logo". */
+export function logoUrl(domain: string, px = 64): string {
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${px}`;
 }

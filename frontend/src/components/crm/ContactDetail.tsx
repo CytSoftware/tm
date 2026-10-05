@@ -12,7 +12,6 @@
 import { useState } from "react";
 import {
   AudioLines,
-  Building2,
   CheckCircle2,
   Globe,
   BriefcaseBusiness,
@@ -40,6 +39,7 @@ import {
   RELATIONSHIP_ORDER,
   TOUCHPOINT_META,
   TOUCHPOINT_ORDER,
+  companyDomain,
   errorMessage,
   formatMoney,
   isOverdue,
@@ -54,6 +54,7 @@ import { ActivityTimeline } from "./ActivityTimeline";
 import { ContactEditDialog } from "./ContactEditDialog";
 import { FollowUpRow, QuickFollowUp } from "./InboxView";
 import {
+  CompanyMark,
   ContactAvatar,
   KindIcon,
   RelationshipPill,
@@ -97,7 +98,12 @@ export function ContactDetail({
     <div className="flex h-full min-h-0 flex-col bg-background">
       <header className="shrink-0 border-b border-border px-4 pb-3 pt-3">
         <div className="flex items-start gap-3">
-          <ContactAvatar name={c.name} kind={c.kind} size="lg" />
+          <ContactAvatar
+            name={c.name}
+            kind={c.kind}
+            domain={companyDomain(c.website, c.emails)}
+            size="lg"
+          />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <KindIcon kind={c.kind} className="size-3" />
@@ -123,7 +129,7 @@ export function ContactDetail({
                     onClick={() => onOpenContact(c.company!.id)}
                     className="inline-flex min-w-0 items-center gap-1 truncate hover:text-foreground hover:underline"
                   >
-                    <Building2 className="size-3 shrink-0" />
+                    <CompanyMark domain={companyDomain(c.company.website)} />
                     {c.company.name}
                   </button>
                 )}

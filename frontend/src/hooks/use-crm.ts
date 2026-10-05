@@ -43,7 +43,7 @@ export type Relationship =
 
 export type EntityKind = "person" | "company";
 
-export type EntityRef = { id: number; kind: EntityKind; name: string };
+export type EntityRef = { id: number; kind: EntityKind; name: string; website?: string };
 
 export type Contact = {
   id: number;

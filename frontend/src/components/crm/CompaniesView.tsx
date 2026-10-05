@@ -10,7 +10,7 @@
 
 import { UserAvatar } from "@/components/UserAvatar";
 import type { Contact } from "@/hooks/use-crm";
-import { formatMoney, isOverdue, relativeDay, shortDate } from "@/lib/crm-meta";
+import { companyDomain, formatMoney, isOverdue, relativeDay, shortDate } from "@/lib/crm-meta";
 import { cn } from "@/lib/utils";
 
 import { ContactAvatar, RelationshipPill } from "./shared";
@@ -55,7 +55,11 @@ export function CompaniesView({
             >
               <Td className="w-full max-w-0 pl-4">
                 <div className="flex min-w-0 items-center gap-2.5">
-                  <ContactAvatar name={c.name} kind="company" />
+                  <ContactAvatar
+                    name={c.name}
+                    kind="company"
+                    domain={companyDomain(c.website, c.emails)}
+                  />
                   <div className="min-w-0">
                     <div className="truncate font-medium">{c.name}</div>
                     <div className="truncate text-[12px] text-muted-foreground">

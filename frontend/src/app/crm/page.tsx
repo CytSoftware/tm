@@ -4,9 +4,10 @@
  * CRM — who we're talking to, where each opportunity stands, what we owe
  * whom next. Plan + rationale: docs/plans/crm.md.
  *
- * Three tabs over the same people: the follow-up **Inbox** (home), the
- * **Contacts** table and the **Deals** board. Opening a contact or deal
- * slides a detail pane in beside whichever tab you're on.
+ * Five sections over the same people — the follow-up **Inbox** (home),
+ * **People**, **Companies**, the **Deals** board and **Activity** — picked
+ * from the sidebar (sub-items under CRM; `?tab=`). Opening a contact or deal
+ * slides a detail pane in beside whichever section you're on.
  *
  * Everything that defines what you're looking at — tab, filters, pipeline,
  * the open contact (`c`) or deal (`d`) — lives in the URL, so any state is a
@@ -19,19 +20,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  ChevronLeft,
-  Building2,
-  Handshake,
-  History,
-  Inbox as InboxIcon,
-  Kanban,
-  Plus,
-  Search,
-  Settings2,
-  Users,
-  X,
-} from "lucide-react";
+import { ChevronLeft, Plus, Search, Settings2, X } from "lucide-react";
 
 import { ActivityTimeline } from "@/components/crm/ActivityTimeline";
 import { CompaniesView } from "@/components/crm/CompaniesView";
@@ -51,24 +40,19 @@ import {
   type ContactFilters,
   useContacts,
   useCrmActivity,
-  useCrmInbox,
   useDeals,
   usePipelines,
 } from "@/hooks/use-crm";
 import { connectCrmSocket } from "@/lib/crm-ws";
-import { RELATIONSHIP_META, RELATIONSHIP_ORDER } from "@/lib/crm-meta";
+import {
+  CRM_SECTIONS,
+  type CrmSection,
+  RELATIONSHIP_META,
+  RELATIONSHIP_ORDER,
+} from "@/lib/crm-meta";
 import { connectMeetingsSocket } from "@/lib/meetings-ws";
 import { cn } from "@/lib/utils";
 
-type Tab = "inbox" | "people" | "companies" | "deals" | "activity";
-
-const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
-  { id: "inbox", label: "Inbox", icon: InboxIcon },
-  { id: "people", label: "People", icon: Users },
-  { id: "companies", label: "Companies", icon: Building2 },
-  { id: "deals", label: "Deals", icon: Kanban },
-  { id: "activity", label: "Activity", icon: History },
-];
 
 const ACTIVITY_WINDOWS = [7, 14, 30, 90];
 
@@ -104,7 +88,8 @@ function Crm() {
 
   // "contacts" is the pre-split name of the People tab; old links keep working.
   const rawTab = params.get("tab") === "contacts" ? "people" : params.get("tab");
-  const tab = (TABS.find((t) => t.id === rawTab)?.id ?? "inbox") as Tab;
+  const section = CRM_SECTIONS.find((t) => t.id === rawTab) ?? CRM_SECTIONS[0];
+  const tab: CrmSection = section.id;
   const listTab = tab === "people" || tab === "companies";
   const contactId = params.get("c") ? Number(params.get("c")) : null;
   const dealKey = params.get("d");
@@ -167,8 +152,6 @@ function Crm() {
     [urlSearch, params, owner, tab],
   );
   const contacts = useContacts(filters, listTab);
-  const inbox = useCrmInbox(owner);
-  const overdueCount = inbox.data?.buckets.overdue.length ?? 0;
 
   // ── Deals ───────────────────────────────────────────────────────────────
   const pipelines = usePipelines();
@@ -192,31 +175,12 @@ function Crm() {
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       <header className={cn("shrink-0 border-b border-border/80", detailOpen && "max-lg:hidden")}>
         <div className="flex min-h-12 items-center gap-2 px-4">
-          <Handshake className="size-4 shrink-0 text-muted-foreground" />
-          <h1 className="text-[13px] font-medium">CRM</h1>
-
-          <nav className="ml-2 flex shrink-0 rounded-md border border-border p-0.5">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                aria-pressed={tab === t.id}
-                onClick={() => setParams({ tab: t.id === "inbox" ? null : t.id })}
-                className={cn(
-                  "tap-target flex h-6 items-center gap-1.5 rounded px-2 text-[12px] text-muted-foreground hover:text-foreground",
-                  tab === t.id && "bg-accent text-foreground",
-                )}
-              >
-                <t.icon className="size-3.5" />
-                <span className="max-sm:hidden">{t.label}</span>
-                {t.id === "inbox" && overdueCount > 0 && (
-                  <span className="rounded-full bg-destructive/15 px-1 text-[10px] tabular-nums text-destructive">
-                    {overdueCount}
-                  </span>
-                )}
-              </button>
-            ))}
-          </nav>
+          <section.icon className="size-4 shrink-0 text-muted-foreground" />
+          <h1 className="flex min-w-0 items-center gap-1.5 text-[13px]">
+            <span className="text-muted-foreground max-sm:hidden">CRM</span>
+            <span className="text-muted-foreground/50 max-sm:hidden">/</span>
+            <span className="truncate font-medium">{section.label}</span>
+          </h1>
 
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
             <div className="flex rounded-md border border-border p-0.5">

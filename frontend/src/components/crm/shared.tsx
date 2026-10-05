@@ -2,10 +2,11 @@
 
 /** Small pieces every CRM view shares: pills, section headers, controls. */
 
+import { useState } from "react";
 import { Building2, User as UserIcon } from "lucide-react";
 
 import type { EntityKind, Relationship } from "@/hooks/use-crm";
-import { RELATIONSHIP_META } from "@/lib/crm-meta";
+import { RELATIONSHIP_META, logoUrl } from "@/lib/crm-meta";
 import { cn } from "@/lib/utils";
 
 export const controlCls =
@@ -110,14 +111,18 @@ export function Empty({
 }
 
 /** Initials tile — round for people, rounded-square for companies, so the
- *  two read apart at a glance even in a dense list. */
+ *  two read apart at a glance even in a dense list. A company with a known
+ *  domain shows its logo instead, falling back to the initials. */
 export function ContactAvatar({
   name,
   kind,
+  domain,
   size = "md",
 }: {
   name: string;
   kind: EntityKind;
+  /** See `companyDomain()`; only used for companies. */
+  domain?: string;
   size?: "sm" | "md" | "lg";
 }) {
   const initials =
@@ -132,7 +137,7 @@ export function ContactAvatar({
     <span
       aria-hidden
       className={cn(
-        "grid shrink-0 place-items-center border border-border bg-muted font-medium text-muted-foreground",
+        "relative grid shrink-0 place-items-center overflow-hidden border border-border bg-muted font-medium text-muted-foreground",
         kind === "company" ? "rounded-md" : "rounded-full",
         size === "sm" && "size-6 text-[10px]",
         size === "md" && "size-8 text-[11px]",
@@ -140,6 +145,62 @@ export function ContactAvatar({
       )}
     >
       {initials}
+      {kind === "company" && domain && (
+        <LogoImg key={domain} domain={domain} className="absolute inset-0 size-full bg-white p-[12%]" />
+      )}
     </span>
+  );
+}
+
+/** Inline company glyph for references ("Acme" on a deal card, a person's
+ *  employer): the logo when we have a domain, else the building icon. */
+export function CompanyMark({ domain, className }: { domain?: string; className?: string }) {
+  const [failedFor, setFailedFor] = useState("");
+  const cls = cn("size-3 shrink-0", className);
+  if (!domain || failedFor === domain) return <Building2 className={cls} aria-hidden />;
+  return (
+    <LogoImg
+      key={domain}
+      domain={domain}
+      px={32}
+      onFail={() => setFailedFor(domain)}
+      className={cn(cls, "rounded-[3px] bg-white")}
+    />
+  );
+}
+
+function LogoImg({
+  domain,
+  px = 64,
+  className,
+  onFail,
+}: {
+  domain: string;
+  px?: number;
+  className?: string;
+  onFail?: () => void;
+}) {
+  const [hidden, setHidden] = useState(false);
+  if (hidden) return null;
+  const fail = () => {
+    setHidden(true);
+    onFail?.();
+  };
+  return (
+    // A third-party favicon service; next/image would need it allow-listed.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={logoUrl(domain, px)}
+      alt=""
+      aria-hidden
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      className={cn("object-contain", className)}
+      onError={fail}
+      // Unknown domains return a 16px placeholder globe — treat as no logo.
+      onLoad={(e) => {
+        if (e.currentTarget.naturalWidth <= 16) fail();
+      }}
+    />
   );
 }
