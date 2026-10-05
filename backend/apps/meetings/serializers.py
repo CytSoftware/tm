@@ -81,6 +81,8 @@ def _entity_links(meeting: Meeting) -> list[dict]:
             "slug": link.entity.slug,
             "role": link.role,
             "company_id": link.entity.company_id,
+            # Blank = not in the CRM; lets the meeting offer "Add to CRM".
+            "relationship": link.entity.relationship,
         }
         for link in meeting.entity_links.all()  # prefetched, ordered
     ]

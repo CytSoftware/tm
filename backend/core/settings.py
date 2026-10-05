@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     "apps.wiki",
     "apps.webhooks",
     "apps.meetings",
+    "apps.crm",
 ]
 
 MIDDLEWARE = [

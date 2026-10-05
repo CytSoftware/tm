@@ -1,21 +1,18 @@
 /**
- * Global subscriber for meetings.
+ * Global subscriber for the CRM.
  *
- * One socket per mounted /meetings view. Meetings span projects, so they have
- * their own `meetings` group instead of riding the per-project task socket.
- * Events are tiny (`{type, key}`); every one just invalidates the whole
- * ["meetings"] namespace — list, graph, facets and the open detail.
+ * One socket per mounted /crm view, on the `crm` group (contacts, deals,
+ * touchpoints, pipelines, follow-up changes made through the CRM). Events are
+ * tiny; every one just invalidates the whole ["crm"] namespace. Meeting
+ * events matter too — a new recording moves a contact's "last contact" — so
+ * the page also mounts the meetings socket.
  */
 
 import type { QueryClient } from "@tanstack/react-query";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
 
-export function connectMeetingsSocket(
-  queryClient: QueryClient,
-  /** Extra namespaces a meeting change affects (the CRM's "last contact"). */
-  alsoInvalidate: string[] = [],
-): () => void {
+export function connectCrmSocket(queryClient: QueryClient): () => void {
   let socket: WebSocket | null = null;
   let reconnectAttempts = 0;
   let disposed = false;
@@ -23,7 +20,7 @@ export function connectMeetingsSocket(
 
   function connect() {
     if (disposed) return;
-    socket = new WebSocket(`${WS_URL}/ws/meetings/`);
+    socket = new WebSocket(`${WS_URL}/ws/crm/`);
 
     socket.onopen = () => {
       reconnectAttempts = 0;
@@ -33,9 +30,7 @@ export function connectMeetingsSocket(
       try {
         const data = JSON.parse(evt.data) as { type: string };
         if (data.type !== "connected") {
-          queryClient.invalidateQueries({ queryKey: ["meetings"] });
-          for (const root of alsoInvalidate)
-            queryClient.invalidateQueries({ queryKey: [root] });
+          queryClient.invalidateQueries({ queryKey: ["crm"] });
         }
       } catch {
         // ignore malformed payloads

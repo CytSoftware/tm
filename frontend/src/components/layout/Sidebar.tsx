@@ -16,6 +16,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AudioLines,
+  Handshake,
   BarChart3,
   BookText,
   Boxes,
@@ -306,6 +307,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
             badge={toReviewCount > 0 ? toReviewCount : undefined}
             onNavigate={() => {
               router.push("/reviews");
+              onClose?.();
+            }}
+          />
+          <NavLink
+            icon={
+              <Handshake
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="CRM"
+            active={pathname.startsWith("/crm")}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/crm");
               onClose?.();
             }}
           />
