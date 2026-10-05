@@ -41,6 +41,8 @@ export type MeetingEntityRef = {
   slug: string;
   role: "attendee" | "mentioned";
   company_id: number | null;
+  /** CRM relationship; "" = not in the CRM. */
+  relationship: string;
 };
 
 export type MeetingProjectRef = {

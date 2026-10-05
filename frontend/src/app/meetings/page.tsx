@@ -16,8 +16,7 @@
  * root is ``h-full flex`` and every scroll surface carries ``min-h-0``.
  */
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   AudioLines,
@@ -45,6 +44,7 @@ import {
   useMeetingGraph,
   useMeetings,
 } from "@/hooks/use-meetings";
+import { useUrlParams, useUrlSearch } from "@/hooks/use-url-params";
 import { connectMeetingsSocket } from "@/lib/meetings-ws";
 import { cn } from "@/lib/utils";
 
@@ -94,9 +94,7 @@ export default function MeetingsPage() {
 }
 
 function Meetings() {
-  const router = useRouter();
-  const pathname = usePathname();
-  const params = useSearchParams();
+  const { params, setParams } = useUrlParams();
   const queryClient = useQueryClient();
 
   useEffect(() => connectMeetingsSocket(queryClient), [queryClient]);
@@ -111,43 +109,8 @@ function Meetings() {
   const entityParam = params.get("entity");
   const showMentioned = params.get("mentioned") === "1";
 
-  const setParams = useCallback(
-    (patch: Record<string, string | null>, opts?: { push?: boolean }) => {
-      const next = new URLSearchParams(params.toString());
-      for (const [k, v] of Object.entries(patch)) {
-        if (v == null || v === "") next.delete(k);
-        else next.set(k, v);
-      }
-      const qs = next.toString();
-      const url = qs ? `${pathname}?${qs}` : pathname;
-      // Opening a meeting is a navigation (back closes it); tweaking a filter isn't.
-      if (opts?.push) router.push(url, { scroll: false });
-      else router.replace(url, { scroll: false });
-    },
-    [params, pathname, router],
-  );
-
   // The search box is local state, debounced into the URL.
-  const urlSearch = params.get("q") ?? "";
-  const [search, setSearch] = useState(urlSearch);
-  // Follow the URL when it changes underneath us (back button, shared link)
-  // — but not when the change is just our own debounced write landing.
-  // `router.replace` is async: without this guard, a character typed while it
-  // is in flight would be overwritten by the older value coming back.
-  const [sync, setSync] = useState({ seen: urlSearch, sent: urlSearch });
-  if (sync.seen !== urlSearch) {
-    setSync({ seen: urlSearch, sent: urlSearch });
-    if (urlSearch !== sync.sent) setSearch(urlSearch);
-  }
-  useEffect(() => {
-    const next = search.trim();
-    if (next === urlSearch) return;
-    const t = setTimeout(() => {
-      setSync((s) => ({ ...s, sent: next }));
-      setParams({ q: next || null });
-    }, 250);
-    return () => clearTimeout(t);
-  }, [search, urlSearch, setParams]);
+  const { urlSearch, search, setSearch } = useUrlSearch(params, setParams);
 
   const filters: MeetingFilters = useMemo(
     () => ({

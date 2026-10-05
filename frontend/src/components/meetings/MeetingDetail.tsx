@@ -15,6 +15,7 @@ import {
   ArrowUpRight,
   Check,
   ExternalLink,
+  Handshake,
   Link2,
   Link2Off,
   Plus,
@@ -34,6 +35,7 @@ import {
   useToggleActionItem,
   useUpdateMeeting,
 } from "@/hooks/use-meetings";
+import { useUpdateContact } from "@/hooks/use-crm";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import { ApiError } from "@/lib/api";
 import { md } from "@/lib/markdown";
@@ -253,6 +255,60 @@ function MetaBar({
           ))}
         </div>
       )}
+      <CrmRow meeting={meeting} />
+    </div>
+  );
+}
+
+// ── CRM: who from this meeting is tracked, and one click to add the rest ────
+
+function CrmRow({ meeting }: { meeting: Meeting }) {
+  const promote = useUpdateContact();
+  const attendees = meeting.entities.filter((e) => e.role === "attendee");
+  if (attendees.length === 0) return null;
+  const tracked = attendees.filter((e) => e.relationship && e.relationship !== "internal");
+  const untracked = attendees.filter((e) => !e.relationship);
+  if (tracked.length === 0 && untracked.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+      <Handshake className="size-3 shrink-0" />
+      {tracked.map((e) => (
+        <a
+          key={e.id}
+          href={`/crm?tab=${e.kind === "company" ? "companies" : "people"}&c=${e.id}`}
+          className="rounded-full px-1.5 py-0.5 hover:bg-accent hover:text-foreground"
+          title={`Open ${e.name} in the CRM`}
+        >
+          {e.name}
+        </a>
+      ))}
+      {untracked.map((e) => (
+        <button
+          key={e.id}
+          type="button"
+          disabled={promote.isPending}
+          onClick={() =>
+            promote.mutate(
+              {
+                id: e.id,
+                relationship: "lead",
+                // A lead met in a Mowafeq meeting is a Mowafeq contact.
+                ...(meeting.project ? { add_projects: [meeting.project.id] } : {}),
+              },
+              {
+                onSuccess: () => toast.success(`${e.name} added to the CRM as a lead`),
+                onError: (err) => toast.error(errorMessage(err)),
+              },
+            )
+          }
+          className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-border px-1.5 py-0.5 hover:border-foreground/40 hover:text-foreground"
+          title={`Add ${e.name} to the CRM`}
+        >
+          <Plus className="size-2.5" />
+          {e.name}
+        </button>
+      ))}
     </div>
   );
 }

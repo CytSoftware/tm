@@ -47,13 +47,36 @@ class EntityRole(models.TextChoices):
     MENTIONED = "mentioned", "Mentioned"
 
 
+class RelationshipType(models.TextChoices):
+    """What an entity is to us, for the CRM (``apps.crm``).
+
+    Blank means "not in the CRM": meetings auto-create an entity for everyone
+    who speaks or is mentioned, and those stay out of CRM views until someone
+    promotes them. ``internal`` (co-founders, staff) is kept for meetings but
+    hidden from CRM views too.
+    """
+
+    CLIENT = "client", "Client"
+    LEAD = "lead", "Lead"
+    PARTNER = "partner", "Partner"
+    ADVISOR = "advisor", "Advisor"
+    INVESTOR = "investor", "Investor"
+    OTHER = "other", "Other"
+    INTERNAL = "internal", "Internal"
+
+
 class MeetingLinkKind(models.TextChoices):
     FOLLOW_UP = "follow_up", "Follow-up"
     RELATED = "related", "Related"
 
 
 class Entity(TimestampedModel):
-    """A person or company that meetings are grouped and linked by."""
+    """A person or company that meetings are grouped and linked by.
+
+    It is also the CRM's contact/company record (see ``apps.crm``): the
+    ``relationship`` / ``owner`` / channel fields below are CRM state. Any new
+    field needs a line in ``services.merge_entities`` so a merge doesn't drop it.
+    """
 
     kind = models.CharField(max_length=16, choices=EntityKind.choices)
     name = models.CharField(max_length=200)
@@ -83,6 +106,39 @@ class Entity(TimestampedModel):
         help_text="A person's employer. Gives the graph person→company edges.",
     )
 
+    # -- CRM state (apps.crm) ----------------------------------------------
+    relationship = models.CharField(
+        max_length=16,
+        choices=RelationshipType.choices,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Blank = not in the CRM.",
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="owned_entities",
+    )
+    headline = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        help_text="One line — 'Regional Director of BIM, ECG'. The bio is the wiki's.",
+    )
+    phone = models.CharField(max_length=40, blank=True, default="")
+    whatsapp = models.CharField(max_length=40, blank=True, default="")
+    linkedin_url = models.URLField(max_length=300, blank=True, default="")
+    website = models.URLField(max_length=300, blank=True, default="")
+    projects = models.ManyToManyField(
+        "tasks.Project",
+        blank=True,
+        related_name="crm_entities",
+        help_text="Which of our businesses this contact is for (Mowafeq, Cyt…) — the CRM's scope.",
+    )
+
     class Meta:
         ordering = ["kind", "name"]
         verbose_name_plural = "entities"
@@ -94,6 +150,30 @@ class Entity(TimestampedModel):
 
     def __str__(self) -> str:  # pragma: no cover - admin helper
         return f"{self.name} ({self.kind})"
+
+
+class EntityEmail(models.Model):
+    """An address that belongs to an entity.
+
+    A table rather than a JSON list on ``Entity`` because matching Gmail and
+    Calendar participants is a batch ``email__in`` lookup, and JSON containment
+    isn't available on SQLite. Unique, so one address can't land on two people.
+    """
+
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE, related_name="emails"
+    )
+    email = models.EmailField(max_length=254, unique=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def save(self, *args, **kwargs):
+        self.email = (self.email or "").strip().lower()
+        return super().save(*args, **kwargs)
+
+    def __str__(self) -> str:  # pragma: no cover - admin helper
+        return self.email
 
 
 class Tag(models.Model):

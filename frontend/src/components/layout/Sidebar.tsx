@@ -10,15 +10,17 @@
  *     with a backdrop via a hamburger button rendered by Shell.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { Suspense, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AudioLines,
+  Handshake,
   BarChart3,
   BookText,
   Boxes,
+  ChevronRight,
   ChevronsLeft,
   CircleHelp,
   FolderKanban,
@@ -57,6 +59,8 @@ import { useActiveProject } from "@/lib/active-project";
 import { usePullRequestsQuery } from "@/hooks/use-pull-requests";
 import { pullRequestQueues } from "@/lib/pull-request-queues";
 import { useEventSourcesQuery } from "@/hooks/use-events";
+import { useCrmInbox } from "@/hooks/use-crm";
+import { CRM_SECTIONS, crmSectionHref } from "@/lib/crm-meta";
 import { MonitoringIcon } from "@/lib/monitoring";
 import { QuickActionIcon } from "@/lib/quick-actions";
 import type { Me, QuickAction, User } from "@/lib/types";
@@ -309,6 +313,15 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
               onClose?.();
             }}
           />
+          {/* useSearchParams (the active section) needs a Suspense boundary
+              for the static build; the fallback is the plain link. */}
+          <Suspense
+            fallback={
+              <CrmNavLink collapsed={isCollapsed} pathname={pathname} onClose={onClose} />
+            }
+          >
+            <CrmNav collapsed={isCollapsed} pathname={pathname} onClose={onClose} />
+          </Suspense>
           <NavLink
             icon={<Repeat className={isCollapsed ? "size-4" : "size-3.5 shrink-0 text-muted-foreground"} />}
             label="Routines"
@@ -602,6 +615,163 @@ function NavLink({
         </span>
       )}
     </button>
+  );
+}
+
+/**
+ * CRM with its sections (Inbox, People, Companies, …) as an expandable
+ * sub-list. Open by default while you're in the CRM; the chevron overrides
+ * that either way for the rest of the session.
+ */
+function CrmNav({
+  collapsed,
+  pathname,
+  onClose,
+}: {
+  collapsed: boolean;
+  pathname: string;
+  onClose?: () => void;
+}) {
+  const router = useRouter();
+  const params = useSearchParams();
+  const inCrm = pathname.startsWith("/crm");
+  const [override, setOverride] = useState<boolean | null>(null);
+  const open = !collapsed && (override ?? inCrm);
+  const rawTab = params.get("tab") === "contacts" ? "people" : params.get("tab");
+  const current = inCrm
+    ? (CRM_SECTIONS.find((s) => s.id === rawTab)?.id ?? "inbox")
+    : null;
+  // The project scope and Mine toggle survive switching sections.
+  const keep = inCrm ? { p: params.get("p"), mine: params.get("mine") } : {};
+
+  return (
+    <>
+      <CrmNavLink
+        collapsed={collapsed}
+        pathname={pathname}
+        onClose={onClose}
+        open={open}
+        onToggle={() => setOverride(!open)}
+      />
+      {open && (
+        <div className="ml-[17px] space-y-0.5 border-l border-sidebar-border pl-1.5">
+          {CRM_SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => {
+                router.push(crmSectionHref(s.id, keep));
+                onClose?.();
+              }}
+              aria-current={current === s.id ? "page" : undefined}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-md px-2 py-1 text-[12.5px] transition-colors",
+                current === s.id
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+              )}
+            >
+              <s.icon className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{s.label}</span>
+              {s.id === "inbox" && <CrmDueBadge project={keep.p ?? ""} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function CrmNavLink({
+  collapsed,
+  pathname,
+  onClose,
+  open,
+  onToggle,
+}: {
+  collapsed: boolean;
+  pathname: string;
+  onClose?: () => void;
+  open?: boolean;
+  onToggle?: () => void;
+}) {
+  const router = useRouter();
+  const inCrm = pathname.startsWith("/crm");
+  const go = () => {
+    router.push("/crm");
+    onClose?.();
+  };
+  const icon = (
+    <Handshake
+      className={collapsed ? "size-4" : "size-3.5 shrink-0 text-muted-foreground"}
+    />
+  );
+  if (collapsed || !onToggle) {
+    return (
+      <NavLink
+        icon={icon}
+        label="CRM"
+        active={inCrm}
+        collapsed={collapsed}
+        onNavigate={go}
+      />
+    );
+  }
+  return (
+    <div
+      className={cn(
+        "group/crm flex w-full items-center rounded-md text-[13px] transition-colors",
+        // The row is highlighted only when collapsed — open, the active
+        // section below carries the highlight instead.
+        inCrm && !open
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          if (!open) onToggle();
+          go();
+        }}
+        className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-2"
+      >
+        {icon}
+        <span className="truncate">CRM</span>
+      </button>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={open ? "Collapse CRM" : "Expand CRM"}
+        aria-expanded={open}
+        className="tap-target mr-1 grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+      >
+        <ChevronRight
+          className={cn("size-3.5 transition-transform", open && "rotate-90")}
+        />
+      </button>
+    </div>
+  );
+}
+
+/** Overdue + due-today follow-ups (shared cache with the CRM page). */
+function CrmDueBadge({ project }: { project: string }) {
+  const inbox = useCrmInbox("", project);
+  const overdue = inbox.data?.buckets.overdue.length ?? 0;
+  const today = inbox.data?.buckets.today.length ?? 0;
+  if (overdue + today === 0) return null;
+  return (
+    <span
+      title={`${overdue} overdue · ${today} due today`}
+      className={cn(
+        "ml-auto shrink-0 rounded-full px-1.5 text-[10.5px] tabular-nums",
+        overdue > 0
+          ? "bg-destructive/15 text-destructive"
+          : "bg-sidebar-accent text-sidebar-foreground/70",
+      )}
+    >
+      {overdue + today}
+    </span>
   );
 }
 

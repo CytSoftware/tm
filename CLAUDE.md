@@ -135,6 +135,19 @@ Recorded conversations pushed in by the PLAUD pipeline; people only curate them.
 - The graph (`components/meetings/MeetingsGraph.tsx` + `graph-layout.ts`) is SVG over a `d3-force` layout that is **ticked synchronously to completion, not animated** — stable, deterministic, and independent of `requestAnimationFrame`. Grouping is a layout concern (anchor forces + measured enclosing circles). There are deliberately no derived meeting↔meeting edges: meetings connect *through* shared person/company nodes. Category colors come from `lib/meeting-meta.ts` — only four hues pass the dataviz validator for an all-pairs form, so the other two categories use neutral inks.
 - All view state (`view`, `group`, filters, open meeting `m`) lives in the URL. `manage.py seed_demo_meetings` (DEBUG only) fills a dev DB with a realistic web of meetings.
 
+### CRM (`apps/crm/`, `/crm`)
+
+Leads, deals and follow-ups, filled mostly by agents. Plan + rationale: `docs/plans/crm.md`.
+
+- **The contact record is `meetings.Entity`** — no second contact table. CRM state (`relationship`, `owner`, `headline`, channels) lives on `Entity`; addresses are `EntityEmail` rows (unique, so Gmail/Calendar matching is an indexed `email__in`, not a JSON scan). An entity is "in the CRM" iff `relationship` is set and isn't `internal`. Any new `Entity` field needs a line in `meetings.services.merge_entities`, which also repoints deals/touchpoints/follow-ups.
+- **Derived, not stored**: `last_contact_at` (attendee meetings + touchpoints, companies roll up their people) and `next_follow_up_at` are annotations in `crm/query.py`; the timeline is a read-time union in `timeline.py`. Don't denormalize without a reason.
+- **Follow-ups are tasks** in one CRM project (prefix `FUP`), linked by `FollowUp` (one-to-one on `Task`). The project is created at runtime by `services.crm_project()`, **not** in a migration — a migration-made `Project` gets no columns because the column seeding is a `post_save` receiver. Follow-up writes run the normal task side effects (transition log, task broadcast, notifications).
+- `Touchpoint` upserts on `(source, external_id)` — the idempotency contract for Gmail/Calendar agents, same idea as `Meeting.stem`. Summaries only, never email bodies.
+- Deals sit in configurable `Pipeline`/`Stage`s (`Stage.kind` open/won/lost drives `closed_at`). `set_stages` is one ordered PUT and refuses to drop a stage that holds deals.
+- MCP: 21 tools (every list read takes `project`) — contacts (`search_contacts`, `get_contact` with full timeline, `upsert_contact`, `find_contacts_by_email`), history (`log_touchpoint`, `add_contact_note`, `update_touchpoint`, `delete_touchpoint`, `list_crm_activity`), follow-ups, deals and pipelines — wrappers in `server.py`, implementations in `apps/crm/mcp_tools.py` (translation only). Realtime: global `crm` group at `ws/crm/`, sent via the generic `broadcast_to_group` (`scope: "group"` on the bridge); the page also listens to `ws/meetings/` because a new recording moves "last contact".
+- The inbox buckets by calendar day in the **browser's** timezone (`?tz=`); TM stores no per-user zone.
+- **Scope = TM projects** (Mowafeq, Cyt…), not a second "business" concept. `Entity.projects` (M2M) tags contacts; `Deal.project` tags deals and, on save, their company + contacts (`services.tag_projects`, additive). A person's projects also land on their company. Every list filter (`query.py`, REST, MCP) takes `project` (id/prefix/name); an unknown one matches nothing (MCP raises). The page keeps it in `?p=<prefix>`, the sidebar carries it across sections, and `/api/crm/projects/` lists the projects in use (the switcher's options).
+
 ### Frontend data flow
 
 `frontend/src/lib/api.ts` — `apiFetch` wrapper that auto-attaches the `csrftoken` cookie on unsafe methods and uses `credentials: "include"` throughout. Seed the CSRF cookie once on boot via `ensureCsrfCookie()` → `/api/auth/csrf/`.

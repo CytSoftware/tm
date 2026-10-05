@@ -143,3 +143,19 @@ export const mcpTokensKey = () => ["mcp-tokens"] as const;
 export const githubPullRequestsKey = () => ["github-pull-requests"] as const;
 
 export const routinesKey = () => ["routines"] as const;
+
+// CRM. Everything lives under ["crm"] so the crm socket (and any write) can
+// invalidate the lot — a single touchpoint moves "last contact", the inbox
+// and the contact's timeline at once.
+export const crmInboxKey = (filtersKey = "") =>
+  ["crm", "inbox", filtersKey] as const;
+export const crmContactsKey = (filtersKey = "") =>
+  ["crm", "contacts", filtersKey] as const;
+export const crmContactKey = (id: number) => ["crm", "contact", id] as const;
+export const crmDealsKey = (filtersKey = "") =>
+  ["crm", "deals", filtersKey] as const;
+export const crmDealKey = (key: string) => ["crm", "deal", key] as const;
+export const crmPipelinesKey = () => ["crm", "pipelines"] as const;
+export const crmActivityKey = (days: number, project = "") =>
+  ["crm", "activity", days, project] as const;
+export const crmProjectsKey = () => ["crm", "projects"] as const;
