@@ -276,7 +276,7 @@ function CrmRow({ meeting }: { meeting: Meeting }) {
       {tracked.map((e) => (
         <a
           key={e.id}
-          href={`/crm?tab=contacts&c=${e.id}`}
+          href={`/crm?tab=${e.kind === "company" ? "companies" : "people"}&c=${e.id}`}
           className="rounded-full px-1.5 py-0.5 hover:bg-accent hover:text-foreground"
           title={`Open ${e.name} in the CRM`}
         >

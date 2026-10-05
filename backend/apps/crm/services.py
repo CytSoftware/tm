@@ -235,6 +235,15 @@ def update_contact(entity: Entity, data: dict[str, Any]) -> Entity:
         entity.company = _resolve_company(data["company"])
     entity.save()
 
+    # A CRM contact's employer belongs in the CRM too (it's what the
+    # Companies tab lists); it takes the person's type until someone sets one.
+    company = entity.company
+    if company is not None and entity.relationship and not company.relationship:
+        company.relationship = entity.relationship
+        if company.owner_id is None:
+            company.owner_id = entity.owner_id
+        company.save(update_fields=["relationship", "owner", "updated_at"])
+
     if data.get("emails") is not None:
         set_emails(entity, data["emails"], replace=True)
     if data.get("add_emails"):

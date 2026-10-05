@@ -225,8 +225,13 @@ Sidebar entry "CRM" in the Workspace group (after To Review). All view state in 
   snooze (+1d / +1w / pick), log touch, open contact. "No next step" section
   at the bottom (in-CRM contacts with no open follow-up) with a one-click
   "add follow-up". `Mine / All` toggle.
-- **Contacts.** Table (People | Companies) with relationship, company, owner,
-  last contact, next follow-up; filter bar; `MasterDetail` to the detail pane.
+- **People.** Table with relationship, company, owner, last activity (newest
+  meeting/touch, previewed), next step; filter bar; detail pane beside it.
+- **Companies.** Same filters, plus roll-ups per company — people count, open
+  deals (count + value), and last activity / next step including their
+  people's. Annotations in `query.py`, no extra endpoint; the detail pane is
+  the contact pane (people, deals, combined timeline). A CRM person's employer
+  joins the CRM with the person's type, so it shows up here.
 - **Contact detail.** Header: name, relationship pill, company, owner,
   headline, channel buttons (call / WhatsApp / email / LinkedIn), "Open in
   wiki" if `wiki_slug`. Sections: Follow-ups (open), Deals, Timeline

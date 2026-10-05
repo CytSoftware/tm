@@ -23,13 +23,17 @@ from datetime import date, datetime, timedelta, timezone as dt_timezone
 from typing import Any
 
 from django.db.models import (
+    Count,
     DateTimeField,
+    DecimalField,
     Exists,
+    IntegerField,
     F,
     OuterRef,
     Q,
     QuerySet,
     Subquery,
+    Sum,
     Value,
 )
 from django.db.models.functions import Coalesce, Greatest
@@ -108,7 +112,36 @@ def annotate_contacts(qs: QuerySet[Entity]) -> QuerySet[Entity]:
         next_follow_up_at=Subquery(next_due.values("task__due_at")[:1]),
         next_follow_up_title=Subquery(next_due.values("task__title")[:1]),
         has_open_follow_up=Exists(_open_follow_ups()),
+        # Company roll-ups (zero for people), for the Companies tab.
+        people_count=Coalesce(
+            Subquery(
+                Entity.objects.filter(company_id=OuterRef("pk"))
+                .values("company_id")
+                .annotate(n=Count("pk"))
+                .values("n")[:1],
+                output_field=IntegerField(),
+            ),
+            0,
+        ),
+        open_deal_count=Coalesce(
+            Subquery(
+                _open_deals().annotate(n=Count("pk")).values("n")[:1],
+                output_field=IntegerField(),
+            ),
+            0,
+        ),
+        open_deal_value=Subquery(
+            _open_deals().annotate(v=Sum("value")).values("v")[:1],
+            output_field=DecimalField(max_digits=16, decimal_places=2),
+        ),
     )
+
+
+def _open_deals():
+    """Open deals of the outer company, grouped so aggregates collapse to one row."""
+    return Deal.objects.filter(
+        company_id=OuterRef("pk"), stage__kind=StageKind.OPEN
+    ).values("company_id")
 
 
 def last_activity(entity: Entity) -> dict[str, Any] | None:
@@ -197,6 +230,7 @@ CONTACT_SORTS = {
     "next_follow_up": ("next_follow_up_at", "name"),
     "name": ("name",),
     "created": ("-created_at",),
+    "open_deals": ("-open_deal_count", "-last_contact_at"),
 }
 
 

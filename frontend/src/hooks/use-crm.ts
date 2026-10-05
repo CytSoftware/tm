@@ -70,6 +70,10 @@ export type Contact = {
   next_follow_up_at: string | null;
   next_follow_up_title: string | null;
   has_open_follow_up: boolean;
+  /** Company roll-ups; 0 / null for people. */
+  people_count: number;
+  open_deal_count: number;
+  open_deal_value: string | null;
   created_at: string;
 };
 

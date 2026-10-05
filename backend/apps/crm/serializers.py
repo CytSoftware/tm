@@ -66,6 +66,11 @@ class ContactSerializer(serializers.ModelSerializer):
     next_follow_up_at = serializers.DateTimeField(read_only=True)
     next_follow_up_title = serializers.CharField(read_only=True)
     has_open_follow_up = serializers.BooleanField(read_only=True)
+    people_count = serializers.IntegerField(read_only=True)
+    open_deal_count = serializers.IntegerField(read_only=True)
+    open_deal_value = serializers.DecimalField(
+        max_digits=16, decimal_places=2, read_only=True, allow_null=True
+    )
 
     class Meta:
         model = Entity
@@ -90,6 +95,9 @@ class ContactSerializer(serializers.ModelSerializer):
             "next_follow_up_at",
             "next_follow_up_title",
             "has_open_follow_up",
+            "people_count",
+            "open_deal_count",
+            "open_deal_value",
             "created_at",
         ]
 

@@ -50,7 +50,8 @@ def _json(data: Any) -> Any:
 
 
 def contact_url(entity: Entity) -> str:
-    return f"{settings.FRONTEND_URL}/crm?tab=contacts&c={entity.id}"
+    tab = "companies" if entity.kind == EntityKind.COMPANY else "people"
+    return f"{settings.FRONTEND_URL}/crm?tab={tab}&c={entity.id}"
 
 
 def _entity(ref: str | int, kind: str | None = None) -> Entity:

@@ -442,3 +442,23 @@ class HistoryAndPipelineMcpTests(CrmTestCase):
         row = self.client.get("/api/crm/contacts/?search=Mohamed").data["results"][0]
         self.assertEqual(row["last_activity"]["text"], "Edited")
         self.assertEqual(self.client.get("/api/crm/activity/?days=3").status_code, 200)
+
+
+class CompanyRollupTests(CrmTestCase):
+    def test_people_and_open_deals_roll_up(self):
+        p = self.person()
+        self.person("Omar Bahgat", company="ECG")
+        demo = self.sales.stages.get(name="Demo")
+        won = self.sales.stages.get(kind=StageKind.WON)
+        for title, stage, value in (("A", demo, 1000), ("B", demo, 500), ("C", won, 9000)):
+            services.create_deal(
+                {"title": title, "pipeline": self.sales, "stage": stage, "company": p.company, "value": value},
+                user=self.user,
+            )
+        row = self.client.get("/api/crm/contacts/?kind=company&sort=open_deals").data["results"][0]
+        self.assertEqual(row["name"], "ECG")
+        self.assertEqual(row["people_count"], 2)
+        self.assertEqual(row["open_deal_count"], 2)  # the won deal isn't open
+        self.assertEqual(row["open_deal_value"], "1500.00")
+        person = self.client.get("/api/crm/contacts/?kind=person&search=Omar").data["results"][0]
+        self.assertEqual((person["people_count"], person["open_deal_count"]), (0, 0))

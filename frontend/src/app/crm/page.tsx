@@ -21,6 +21,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronLeft,
+  Building2,
   Handshake,
   History,
   Inbox as InboxIcon,
@@ -33,6 +34,7 @@ import {
 } from "lucide-react";
 
 import { ActivityTimeline } from "@/components/crm/ActivityTimeline";
+import { CompaniesView } from "@/components/crm/CompaniesView";
 import { ContactDetail } from "@/components/crm/ContactDetail";
 import { ContactEditDialog } from "@/components/crm/ContactEditDialog";
 import { ContactsView } from "@/components/crm/ContactsView";
@@ -58,11 +60,12 @@ import { RELATIONSHIP_META, RELATIONSHIP_ORDER } from "@/lib/crm-meta";
 import { connectMeetingsSocket } from "@/lib/meetings-ws";
 import { cn } from "@/lib/utils";
 
-type Tab = "inbox" | "contacts" | "deals" | "activity";
+type Tab = "inbox" | "people" | "companies" | "deals" | "activity";
 
 const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: "inbox", label: "Inbox", icon: InboxIcon },
-  { id: "contacts", label: "Contacts", icon: Users },
+  { id: "people", label: "People", icon: Users },
+  { id: "companies", label: "Companies", icon: Building2 },
   { id: "deals", label: "Deals", icon: Kanban },
   { id: "activity", label: "Activity", icon: History },
 ];
@@ -74,6 +77,7 @@ const SORTS = [
   { id: "next_follow_up", label: "Next follow-up" },
   { id: "name", label: "Name" },
   { id: "created", label: "Recently added" },
+  { id: "open_deals", label: "Open deals" },
 ];
 
 export default function CrmPage() {
@@ -98,7 +102,10 @@ function Crm() {
     [queryClient],
   );
 
-  const tab = (TABS.find((t) => t.id === params.get("tab"))?.id ?? "inbox") as Tab;
+  // "contacts" is the pre-split name of the People tab; old links keep working.
+  const rawTab = params.get("tab") === "contacts" ? "people" : params.get("tab");
+  const tab = (TABS.find((t) => t.id === rawTab)?.id ?? "inbox") as Tab;
+  const listTab = tab === "people" || tab === "companies";
   const contactId = params.get("c") ? Number(params.get("c")) : null;
   const dealKey = params.get("d");
   const mine = params.get("mine") === "1";
@@ -152,14 +159,14 @@ function Crm() {
     () => ({
       search: urlSearch,
       relationship: params.get("rel") ?? "",
-      kind: params.get("kind") ?? "",
+      kind: tab === "companies" ? "company" : "person",
       no_next_step: params.get("nonext") ?? "",
       owner,
       sort: params.get("sort") ?? "last_contact",
     }),
-    [urlSearch, params, owner],
+    [urlSearch, params, owner, tab],
   );
-  const contacts = useContacts(filters, tab === "contacts");
+  const contacts = useContacts(filters, listTab);
   const inbox = useCrmInbox(owner);
   const overdueCount = inbox.data?.buckets.overdue.length ?? 0;
 
@@ -244,20 +251,22 @@ function Crm() {
             ) : (
               <button type="button" className={primaryBtnCls} onClick={() => setNewContact(true)}>
                 <Plus className="size-3.5" />
-                <span className="max-sm:hidden">Contact</span>
+                <span className="max-sm:hidden">
+                  {tab === "companies" ? "Company" : "Contact"}
+                </span>
               </button>
             )}
           </div>
         </div>
 
-        {tab === "contacts" && (
+        {listTab && (
           <div className="flex items-center gap-1.5 overflow-x-auto px-4 pb-2">
             <label className="flex h-7 w-56 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 focus-within:border-ring">
               <Search className="size-3.5 shrink-0 text-muted-foreground" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Name, email, company…"
+                placeholder={tab === "companies" ? "Company name…" : "Name, email, company…"}
                 className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground/60"
               />
               {search && (
@@ -266,26 +275,6 @@ function Crm() {
                 </button>
               )}
             </label>
-            <div className="flex shrink-0 rounded-md border border-border p-0.5">
-              {[
-                { id: "", label: "All" },
-                { id: "person", label: "People" },
-                { id: "company", label: "Companies" },
-              ].map((k) => (
-                <button
-                  key={k.label}
-                  type="button"
-                  aria-pressed={filters.kind === k.id}
-                  onClick={() => setParams({ kind: k.id || null })}
-                  className={cn(
-                    "tap-target h-6 rounded px-2 text-[12px] text-muted-foreground hover:text-foreground",
-                    filters.kind === k.id && "bg-accent text-foreground",
-                  )}
-                >
-                  {k.label}
-                </button>
-              ))}
-            </div>
             {RELATIONSHIP_ORDER.filter((r) => r !== "internal").map((r) => {
               const active = filters.relationship === r;
               return (
@@ -323,7 +312,7 @@ function Crm() {
                   setParams({ sort: e.target.value === "last_contact" ? null : e.target.value })
                 }
               >
-                {SORTS.map((s) => (
+                {SORTS.filter((s) => s.id !== "open_deals" || tab === "companies").map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.label}
                   </option>
@@ -416,7 +405,7 @@ function Crm() {
                 </div>
               </div>
             )
-          ) : tab === "contacts" ? (
+          ) : listTab ? (
             contacts.isLoading ? (
               <Empty>Loading…</Empty>
             ) : contacts.isError ? (
@@ -424,7 +413,7 @@ function Crm() {
             ) : (contacts.data?.length ?? 0) === 0 ? (
               <Empty>
                 {urlSearch || filters.relationship || filters.no_next_step ? (
-                  "No contacts match these filters."
+                  `No ${tab === "companies" ? "companies" : "people"} match these filters.`
                 ) : (
                   <>
                     No contacts yet. Add one, promote someone from a meeting, or
@@ -432,6 +421,13 @@ function Crm() {
                   </>
                 )}
               </Empty>
+            ) : tab === "companies" ? (
+              <CompaniesView
+                companies={contacts.data!}
+                selectedId={contactId}
+                onOpen={openContact}
+                compact={detailOpen}
+              />
             ) : (
               <ContactsView
                 contacts={contacts.data!}
@@ -490,7 +486,7 @@ function Crm() {
       <ContactEditDialog
         open={newContact}
         onOpenChange={setNewContact}
-        defaultKind="person"
+        defaultKind={tab === "companies" ? "company" : "person"}
         onCreated={openContact}
       />
       <NewDealDialog
