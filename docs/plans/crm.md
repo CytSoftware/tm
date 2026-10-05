@@ -181,8 +181,8 @@ Same file layout as meetings: `models.py`, `id_generation.py`, `query.py`,
   per-user timezone, so the browser sends its IANA zone (default
   `Asia/Qatar`); MCP `list_follow_ups` takes the same optional `tz`. Plus the
   "no next step" list, with `?owner=me`.
-- **Broadcasts** — a global `crm` Channels group (`ws/crm/`, `scope: "crm"`
-  on the internal bridge) for deal/touchpoint/entity writes. Follow-up tasks
+- **Broadcasts** — a global `crm` Channels group (`ws/crm/`, via
+  `broadcast_to_group` — `scope: "group"` on the internal bridge) for deal/touchpoint/entity writes. Follow-up tasks
   already broadcast as tasks; the CRM page also listens on the CRM project's
   group. Every write path calls it; fire-and-forget.
 - **Meeting action items** — `create_task_from_action_item` gains an optional

@@ -61,10 +61,6 @@ class Stage(TimestampedModel):
     def __str__(self) -> str:  # pragma: no cover - admin helper
         return f"{self.pipeline.name} / {self.name}"
 
-    @property
-    def is_closed(self) -> bool:
-        return self.kind != StageKind.OPEN
-
 
 class Deal(TimestampedModel):
     key = models.CharField(max_length=32, unique=True, blank=True, editable=False)

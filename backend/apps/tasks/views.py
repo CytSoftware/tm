@@ -648,18 +648,6 @@ def internal_broadcast(request):
         _meetings_local(event_type, payload)
         return Response({"ok": True})
 
-    if scope == "crm":
-        # CRM broadcasts route into the global ``crm`` group.
-        from apps.crm.broadcast import _broadcast_local as _crm_local
-
-        if not isinstance(event_type, str):
-            return Response(
-                {"detail": "Invalid payload."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        _crm_local(event_type, payload)
-        return Response({"ok": True})
-
     if scope == "group":
         # Generic per-group push (e.g. notifications' user_<id> groups) —
         # see apps.tasks.broadcast.broadcast_to_group.

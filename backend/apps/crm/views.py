@@ -38,7 +38,6 @@ from .serializers import (
     PipelineSerializer,
     StageSpecSerializer,
     TouchpointInputSerializer,
-    TouchpointPatchSerializer,
     TouchpointSerializer,
     follow_up_dict,
 )
@@ -126,8 +125,6 @@ class ContactViewSet(
     def create(self, request, *args, **kwargs):
         payload = ContactWriteSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        if not payload.validated_data.get("name"):
-            raise ValidationError({"name": "This field is required."})
         entity, created = _guard(services.create_contact, payload.validated_data)
         return Response(
             contact_detail(entity, request),
@@ -142,16 +139,6 @@ class ContactViewSet(
         data.pop("kind", None)
         _guard(services.update_contact, entity, data)
         return Response(contact_detail(entity, request))
-
-    @action(detail=False, methods=["get"])
-    def facets(self, request):
-        """Counts behind the relationship filter (CRM entities only)."""
-        rows = (
-            Entity.objects.exclude(relationship="")
-            .values("relationship", "kind")
-            .annotate(n=Count("id"))
-        )
-        return Response(list(rows))
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +257,7 @@ class TouchpointViewSet(
 
     def partial_update(self, request, *args, **kwargs):
         touchpoint = self.get_object()
-        payload = TouchpointPatchSerializer(data=request.data, partial=True)
+        payload = TouchpointInputSerializer(data=request.data, partial=True)
         payload.is_valid(raise_exception=True)
         data = dict(payload.validated_data)
         kwargs = {}
@@ -351,12 +338,7 @@ class DealViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         payload = DealWriteSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        data = payload.validated_data
-        if not data.get("title"):
-            raise ValidationError({"title": "This field is required."})
-        if not data.get("pipeline"):
-            raise ValidationError({"pipeline": "This field is required."})
-        deal = _guard(services.create_deal, data, user=request.user)
+        deal = _guard(services.create_deal, payload.validated_data, user=request.user)
         return self._detail(deal, status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):

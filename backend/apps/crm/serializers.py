@@ -142,10 +142,10 @@ class BareUrlField(serializers.URLField):
 
 
 class ContactWriteSerializer(serializers.Serializer):
-    """Create (``POST``) and edit (``PATCH``) a contact."""
+    """Create (``POST``) and edit (``PATCH``, ``partial=True``) a contact."""
 
     kind = serializers.ChoiceField(choices=EntityKind.choices, required=False)
-    name = serializers.CharField(max_length=200, required=False)
+    name = serializers.CharField(max_length=200)
     relationship = serializers.ChoiceField(
         choices=[("", "Not in CRM"), *RelationshipType.choices], required=False
     )
@@ -278,6 +278,9 @@ class FollowUpSpecSerializer(serializers.Serializer):
 
 
 class TouchpointInputSerializer(serializers.Serializer):
+    """Log (``POST``) or correct (``PATCH``, ``partial=True``) a touchpoint;
+    a correction only applies the touchpoint's own fields, entities and deal."""
+
     kind = serializers.ChoiceField(choices=TouchpointKind.choices)
     direction = serializers.ChoiceField(
         choices=TouchpointDirection.choices, required=False, allow_blank=True
@@ -298,21 +301,6 @@ class TouchpointInputSerializer(serializers.Serializer):
     tz = serializers.CharField(required=False, allow_blank=True)
 
 
-class TouchpointPatchSerializer(serializers.Serializer):
-    kind = serializers.ChoiceField(choices=TouchpointKind.choices, required=False)
-    direction = serializers.ChoiceField(
-        choices=TouchpointDirection.choices, required=False, allow_blank=True
-    )
-    occurred_at = AwareDateTimeField(required=False)
-    summary = serializers.CharField(required=False)
-    entities = serializers.PrimaryKeyRelatedField(
-        queryset=Entity.objects.all(), many=True, required=False
-    )
-    deal = serializers.SlugRelatedField(
-        slug_field="key", queryset=Deal.objects.all(), required=False, allow_null=True
-    )
-
-
 class FollowUpInputSerializer(serializers.Serializer):
     entity = serializers.PrimaryKeyRelatedField(queryset=Entity.objects.all())
     title = serializers.CharField(max_length=300)
@@ -328,10 +316,10 @@ class FollowUpInputSerializer(serializers.Serializer):
 
 
 class DealWriteSerializer(serializers.Serializer):
-    title = serializers.CharField(max_length=200, required=False)
-    pipeline = serializers.PrimaryKeyRelatedField(
-        queryset=Pipeline.objects.all(), required=False
-    )
+    """Create (``POST``) and edit (``PATCH``, ``partial=True``) a deal."""
+
+    title = serializers.CharField(max_length=200)
+    pipeline = serializers.PrimaryKeyRelatedField(queryset=Pipeline.objects.all())
     stage = serializers.PrimaryKeyRelatedField(
         queryset=Stage.objects.all(), required=False
     )

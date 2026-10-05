@@ -601,3 +601,19 @@ class ProjectScopeTests(CrmTestCase):
         self.person(projects=["MOW"])
         res = self.client.get("/api/crm/projects/")
         self.assertEqual([p["prefix"] for p in res.data], ["MOW"])
+
+
+class BroadcastTests(TestCase):
+    def test_crm_event_rides_the_generic_group_broadcaster(self):
+        from .broadcast import broadcast_crm_event
+
+        with mock.patch("apps.crm.broadcast.broadcast_to_group") as send:
+            broadcast_crm_event("deal.moved", {"id": 7})
+        # CrmConsumer.crm_event forwards event["payload"] — keep this shape.
+        send.assert_called_once_with("crm", "crm.event", {"type": "deal.moved", "id": 7})
+
+    def test_never_raises(self):
+        from .broadcast import broadcast_crm_event
+
+        with mock.patch("apps.crm.broadcast.broadcast_to_group", side_effect=RuntimeError):
+            broadcast_crm_event("deal.moved")
