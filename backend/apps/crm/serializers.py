@@ -119,6 +119,17 @@ class ContactSerializer(serializers.ModelSerializer):
         return serializers.DateTimeField().to_representation(value) if value else None
 
 
+class BareUrlField(serializers.URLField):
+    """A URL that may be typed without a scheme ("acme.com" → https://acme.com)."""
+
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            data = data.strip()
+            if data and "://" not in data:
+                data = f"https://{data}"
+        return super().to_internal_value(data)
+
+
 class ContactWriteSerializer(serializers.Serializer):
     """Create (``POST``) and edit (``PATCH``) a contact."""
 
@@ -137,8 +148,8 @@ class ContactWriteSerializer(serializers.Serializer):
     )
     phone = serializers.CharField(max_length=40, required=False, allow_blank=True)
     whatsapp = serializers.CharField(max_length=40, required=False, allow_blank=True)
-    linkedin_url = serializers.URLField(max_length=300, required=False, allow_blank=True)
-    website = serializers.URLField(max_length=300, required=False, allow_blank=True)
+    linkedin_url = BareUrlField(max_length=300, required=False, allow_blank=True)
+    website = BareUrlField(max_length=300, required=False, allow_blank=True)
     wiki_slug = serializers.CharField(max_length=255, required=False, allow_blank=True)
 
 

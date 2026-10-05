@@ -525,3 +525,13 @@ export function useDeletePipeline() {
     apiFetch(`/api/crm/pipelines/${id}/`, { method: "DELETE" }),
   );
 }
+
+export type SitePreview = { url: string; domain: string; name: string; description: string };
+
+/** Name + one-line description read off a company's website (stores nothing). */
+export function useSitePreview() {
+  return useMutation({
+    mutationFn: (url: string) =>
+      apiFetch<SitePreview>("/api/crm/site-preview/", { query: { url } }),
+  });
+}

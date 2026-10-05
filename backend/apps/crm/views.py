@@ -18,6 +18,7 @@ from rest_framework.views import APIView
 from apps.meetings.models import Entity, EntityKind, EntityRole
 
 from . import services
+from .site_preview import PreviewError, preview_site
 from .models import Deal, FollowUp, Pipeline, Stage, Touchpoint
 from .query import (
     base_contact_queryset,
@@ -294,6 +295,18 @@ class ActivityView(APIView):
         except ValueError:
             raise ValidationError({"days": "Must be a number."})
         return Response(crm_activity(days=min(days, 365)))
+
+
+class SitePreviewView(APIView):
+    """``GET /api/crm/site-preview/?url=acme.com`` — name + one-line
+    description read off a company's website, for the edit dialog to offer.
+    Stores nothing."""
+
+    def get(self, request):
+        try:
+            return Response(preview_site(request.query_params.get("url", "")))
+        except PreviewError as e:
+            raise ValidationError({"url": str(e)})
 
 
 # ---------------------------------------------------------------------------

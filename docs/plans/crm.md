@@ -242,6 +242,13 @@ like meetings.
   unknown domains counts as "no logo", so the initials tile shows instead.
   Same logo on deal cards and a person's employer link (`entity_ref` carries
   `website`).
+  **Fill from website:** the company dialog's "Fill" button calls
+  `GET /api/crm/site-preview/?url=` (`site_preview.py`), which reads the
+  page head (`og:site_name`/`<title>`, `og:description`/`description`) and
+  returns it — nothing stored; it fills an empty name and the headline for
+  the person to keep or edit. The URL is user-supplied, so the fetch refuses
+  non-public addresses on every redirect hop and reads ≤400 KB. Websites and
+  LinkedIn URLs may be typed without `https://`.
 - **Contact detail.** Header: name, relationship pill, company, owner,
   headline, channel buttons (call / WhatsApp / email / LinkedIn), "Open in
   wiki" if `wiki_slug`. Sections: Follow-ups (open), Deals, Timeline
