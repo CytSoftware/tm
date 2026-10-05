@@ -19,7 +19,7 @@ import {
   useDeleteTouchpoint,
   useUpdateTouchpoint,
 } from "@/hooks/use-crm";
-import { TOUCHPOINT_META, errorMessage, shortDate } from "@/lib/crm-meta";
+import { TOUCHPOINT_META, dayOf, errorMessage, shortDate } from "@/lib/crm-meta";
 import { cn } from "@/lib/utils";
 
 export function ActivityTimeline({
@@ -47,8 +47,8 @@ export function ActivityTimeline({
   // Precompute day headers (no mutation during render).
   const headers = items.map((item, i) => {
     if (!groupByDay) return null;
-    const day = format(new Date(item.at), "yyyy-MM-dd");
-    const prev = i > 0 ? format(new Date(items[i - 1].at), "yyyy-MM-dd") : "";
+    const day = dayOf(item.at);
+    const prev = i > 0 ? dayOf(items[i - 1].at) : "";
     return day !== prev ? dayLabel(item.at) : null;
   });
   return (

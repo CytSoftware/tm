@@ -1,6 +1,7 @@
 "use client";
 
-/** Small pieces every CRM view shares: pills, section headers, controls. */
+/** Small pieces every CRM view shares: pills, section headers, controls,
+ *  table cells and form fields. */
 
 import { useState } from "react";
 import { Building2, User as UserIcon } from "lucide-react";
@@ -17,9 +18,6 @@ export const inputCls =
 
 export const ghostBtnCls =
   "tap-target inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50";
-
-export const outlineBtnCls =
-  "tap-target inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50";
 
 export const primaryBtnCls =
   "tap-target inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-2.5 text-[12px] font-medium text-background hover:bg-foreground/90 disabled:opacity-50";
@@ -202,5 +200,91 @@ function LogoImg({
         if (e.currentTarget.naturalWidth <= 16) fail();
       }}
     />
+  );
+}
+
+/** A toggle filter chip (relationship, pipeline, activity window…). `dashed`
+ *  is the outline for an opt-in filter that isn't one of a set. */
+export function Chip({
+  active,
+  dashed,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  dashed?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "h-7 shrink-0 rounded-md border",
+        dashed && "border-dashed",
+        "border-border px-2 text-[12px] text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+        active && dashed && "border-solid",
+        active && "border-foreground/40 bg-accent text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function IconBtn({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="tap-target grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-30"
+    >
+      {children}
+    </button>
+  );
+}
+
+export function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11px] text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+export function Th({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <th className={cn("whitespace-nowrap border-b border-border px-2 py-2 font-medium", className)}>
+      {children}
+    </th>
+  );
+}
+
+export function Td({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <td
+      className={cn(
+        "whitespace-nowrap border-b border-border/60 px-2 py-2.5 align-middle",
+        className,
+      )}
+    >
+      {children}
+    </td>
   );
 }

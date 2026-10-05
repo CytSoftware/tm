@@ -13,7 +13,7 @@ import type { Contact } from "@/hooks/use-crm";
 import { TOUCHPOINT_META, isOverdue, relativeDay, shortDate } from "@/lib/crm-meta";
 import { cn } from "@/lib/utils";
 
-import { ContactAvatar, RelationshipPill } from "./shared";
+import { ContactAvatar, RelationshipPill, Td, Th } from "./shared";
 
 export function ContactsView({
   contacts,
@@ -137,26 +137,5 @@ export function ContactsView({
         </tbody>
       </table>
     </div>
-  );
-}
-
-function Th({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <th className={cn("whitespace-nowrap border-b border-border px-2 py-2 font-medium", className)}>
-      {children}
-    </th>
-  );
-}
-
-function Td({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <td
-      className={cn(
-        "whitespace-nowrap border-b border-border/60 px-2 py-2.5 align-middle",
-        className,
-      )}
-    >
-      {children}
-    </td>
   );
 }

@@ -34,7 +34,7 @@ import { useProjectsQuery } from "@/hooks/use-projects";
 import { useUsersQuery } from "@/hooks/use-users";
 import { CRM_PROJECT_PREFIX, STAGE_KIND_LABEL, errorMessage, userLabel } from "@/lib/crm-meta";
 
-import { inputCls } from "./shared";
+import { Field, IconBtn, inputCls } from "./shared";
 
 export type NewDealDefaults = {
   pipeline?: number;
@@ -435,39 +435,5 @@ function PipelineEditorBody({
         </Button>
       </DialogFooter>
     </div>
-  );
-}
-
-function IconBtn({
-  label,
-  onClick,
-  disabled,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      disabled={disabled}
-      className="tap-target grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-30"
-    >
-      {children}
-    </button>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[11px] text-muted-foreground">{label}</span>
-      {children}
-    </label>
   );
 }

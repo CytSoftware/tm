@@ -39,7 +39,7 @@ import {
 } from "@/lib/crm-meta";
 import { cn } from "@/lib/utils";
 
-import { inputCls } from "./shared";
+import { Field, inputCls } from "./shared";
 
 type Form = {
   kind: EntityKind;
@@ -376,14 +376,5 @@ function ProjectPicker({
         </select>
       )}
     </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[11px] text-muted-foreground">{label}</span>
-      {children}
-    </label>
   );
 }

@@ -18,7 +18,6 @@
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Plus, Search, Settings2, X } from "lucide-react";
 
@@ -35,7 +34,7 @@ import {
 import { DealDetail } from "@/components/crm/DealDetail";
 import { DealsBoard } from "@/components/crm/DealsBoard";
 import { InboxView } from "@/components/crm/InboxView";
-import { Empty, controlCls, primaryBtnCls } from "@/components/crm/shared";
+import { Chip, Empty, controlCls, primaryBtnCls } from "@/components/crm/shared";
 import {
   type ContactFilters,
   useContacts,
@@ -44,6 +43,7 @@ import {
   useDeals,
   usePipelines,
 } from "@/hooks/use-crm";
+import { useUrlParams, useUrlSearch } from "@/hooks/use-url-params";
 import { connectCrmSocket } from "@/lib/crm-ws";
 import {
   CRM_SECTIONS,
@@ -75,9 +75,7 @@ export default function CrmPage() {
 }
 
 function Crm() {
-  const router = useRouter();
-  const pathname = usePathname();
-  const params = useSearchParams();
+  const { params, setParams } = useUrlParams();
   const queryClient = useQueryClient();
 
   useEffect(() => connectCrmSocket(queryClient), [queryClient]);
@@ -103,22 +101,6 @@ function Crm() {
     (p) => p.prefix.toLowerCase() === scope.toLowerCase(),
   );
 
-  const setParams = useCallback(
-    (patch: Record<string, string | null>, opts?: { push?: boolean }) => {
-      const next = new URLSearchParams(params.toString());
-      for (const [k, v] of Object.entries(patch)) {
-        if (v == null || v === "") next.delete(k);
-        else next.set(k, v);
-      }
-      const qs = next.toString();
-      const url = qs ? `${pathname}?${qs}` : pathname;
-      // Opening a record is a navigation (back closes it); tweaking a filter isn't.
-      if (opts?.push) router.push(url, { scroll: false });
-      else router.replace(url, { scroll: false });
-    },
-    [params, pathname, router],
-  );
-
   const openContact = useCallback(
     (id: number) => setParams({ c: String(id), d: null }, { push: !contactId && !dealKey }),
     [setParams, contactId, dealKey],
@@ -130,22 +112,7 @@ function Crm() {
   const closeDetail = () => setParams({ c: null, d: null });
 
   // ── Contacts filters (search is local, debounced into the URL) ──────────
-  const urlSearch = params.get("q") ?? "";
-  const [search, setSearch] = useState(urlSearch);
-  const [sync, setSync] = useState({ seen: urlSearch, sent: urlSearch });
-  if (sync.seen !== urlSearch) {
-    setSync({ seen: urlSearch, sent: urlSearch });
-    if (urlSearch !== sync.sent) setSearch(urlSearch);
-  }
-  useEffect(() => {
-    const next = search.trim();
-    if (next === urlSearch) return;
-    const t = setTimeout(() => {
-      setSync((s) => ({ ...s, sent: next }));
-      setParams({ q: next || null });
-    }, 250);
-    return () => clearTimeout(t);
-  }, [search, urlSearch, setParams]);
+  const { urlSearch, search, setSearch } = useUrlSearch(params, setParams);
 
   const filters: ContactFilters = useMemo(
     () => ({
@@ -279,31 +246,18 @@ function Crm() {
             {RELATIONSHIP_ORDER.filter((r) => r !== "internal").map((r) => {
               const active = filters.relationship === r;
               return (
-                <button
-                  key={r}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setParams({ rel: active ? null : r })}
-                  className={cn(
-                    "h-7 shrink-0 rounded-md border border-border px-2 text-[12px] text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                    active && "border-foreground/40 bg-accent text-foreground",
-                  )}
-                >
+                <Chip key={r} active={active} onClick={() => setParams({ rel: active ? null : r })}>
                   {RELATIONSHIP_META[r].label}
-                </button>
+                </Chip>
               );
             })}
-            <button
-              type="button"
-              aria-pressed={!!filters.no_next_step}
+            <Chip
+              dashed
+              active={!!filters.no_next_step}
               onClick={() => setParams({ nonext: filters.no_next_step ? null : "1" })}
-              className={cn(
-                "h-7 shrink-0 rounded-md border border-dashed border-border px-2 text-[12px] text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                filters.no_next_step && "border-solid border-foreground/40 bg-accent text-foreground",
-              )}
             >
               No next step
-            </button>
+            </Chip>
             <label className="ml-auto flex shrink-0 items-center gap-1.5 pl-2 text-[12px] text-muted-foreground">
               <span className="max-lg:hidden">Sort</span>
               <select
@@ -326,21 +280,16 @@ function Crm() {
         {tab === "deals" && (pipelines.data?.length ?? 0) > 0 && (
           <div className="flex items-center gap-1.5 overflow-x-auto px-4 pb-2">
             {pipelines.data!.map((p) => (
-              <button
+              <Chip
                 key={p.id}
-                type="button"
-                aria-pressed={pipeline?.id === p.id}
+                active={pipeline?.id === p.id}
                 onClick={() => setParams({ pipeline: String(p.id) })}
-                className={cn(
-                  "h-7 shrink-0 rounded-md border border-border px-2 text-[12px] text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                  pipeline?.id === p.id && "border-foreground/40 bg-accent text-foreground",
-                )}
               >
                 {p.name}
                 <span className="ml-1.5 tabular-nums text-muted-foreground/60">
                   {p.stages.reduce((n, s) => n + s.deal_count, 0)}
                 </span>
-              </button>
+              </Chip>
             ))}
             <button
               type="button"
@@ -362,18 +311,13 @@ function Crm() {
           <div className="flex items-center gap-1.5 overflow-x-auto px-4 pb-2">
             <span className="text-[12px] text-muted-foreground">Last</span>
             {ACTIVITY_WINDOWS.map((d) => (
-              <button
+              <Chip
                 key={d}
-                type="button"
-                aria-pressed={days === d}
+                active={days === d}
                 onClick={() => setParams({ days: d === 14 ? null : String(d) })}
-                className={cn(
-                  "h-7 shrink-0 rounded-md border border-border px-2 text-[12px] text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                  days === d && "border-foreground/40 bg-accent text-foreground",
-                )}
               >
                 {d} days
-              </button>
+              </Chip>
             ))}
             {activity.data && (
               <span className="ml-auto text-[12px] tabular-nums text-muted-foreground">
