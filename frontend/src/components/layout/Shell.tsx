@@ -8,7 +8,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { GlobalShortcuts } from "@/components/GlobalShortcuts";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { meKey, myTasksKey, toReviewKey } from "@/lib/query-keys";
-import { fetchMe } from "@/lib/auth";
+import { canOpen, fetchMe } from "@/lib/auth";
 import { ensureCsrfCookie } from "@/lib/api";
 import { connectNotificationSocket } from "@/lib/ws";
 import { usePalette } from "@/lib/palette";
@@ -119,6 +119,13 @@ export function Shell({ children }: { children: ReactNode }) {
     router.replace("/login");
   }, [needsLogin, pathname, router]);
 
+  // Non-staff users only reach tasks/wiki/drive/LLM wiki/meetings; anything
+  // else (including Home, which is all bets + analytics) lands on the board.
+  const blocked = meQuery.data ? !canOpen(meQuery.data, pathname) : false;
+  useEffect(() => {
+    if (blocked && !STANDALONE_ROUTES.includes(pathname)) router.replace("/board");
+  }, [blocked, pathname, router]);
+
   // Global notification socket — one per authenticated session, mounted
   // here (not per project view like connectProjectSocket). Keyed on user id
   // rather than the `meQuery.data` object so a background refetch of `/me`
@@ -154,7 +161,7 @@ export function Shell({ children }: { children: ReactNode }) {
     );
   }
 
-  if (needsLogin || !meQuery.data) return null;
+  if (needsLogin || !meQuery.data || blocked) return null;
 
   const user = meQuery.data;
 

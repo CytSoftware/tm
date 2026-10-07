@@ -19,6 +19,8 @@ from asgiref.sync import sync_to_async
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from apps.tasks.access import has_full_access
+
 from . import tools
 
 
@@ -191,6 +193,12 @@ class _ScopedFastMCP(FastMCP):
     """
 
     async def call_tool(self, name: str, arguments: dict[str, Any]):
+        # ponytail: tools don't filter by project membership yet, so a
+        # non-staff account gets no MCP at all. A user-less credential (legacy
+        # CYT_MCP_TOKEN, stdio) is the operator's own and stays unrestricted.
+        user = _get_mcp_user()
+        if user is not None and not has_full_access(user):
+            raise ValueError("MCP access is limited to staff accounts.")
         if name not in READ_ONLY_TOOLS:
             _require_write_scope(name)
         return await super().call_tool(name, arguments)

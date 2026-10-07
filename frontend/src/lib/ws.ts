@@ -102,8 +102,9 @@ export function connectProjectSocket({
       }
     };
 
-    socket.onclose = () => {
-      if (disposed) return;
+    socket.onclose = (evt) => {
+      // 4401 anonymous / 4403 no access to this project: retrying won't help.
+      if (disposed || evt.code === 4401 || evt.code === 4403) return;
       reconnectAttempts += 1;
       const delay = Math.min(30_000, 500 * 2 ** reconnectAttempts);
       reconnectTimer = setTimeout(connect, delay);

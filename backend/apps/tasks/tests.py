@@ -45,9 +45,9 @@ def _dt(y, m, d, hh=12, mm=0, tz=UTC):
 
 class QuickActionPreferenceTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user("ali", "ali@example.com", "x")
+        self.user = User.objects.create_user("ali", "ali@example.com", "x", is_staff=True)
         self.teammate = User.objects.create_user(
-            "sam", "sam@example.com", "x"
+            "sam", "sam@example.com", "x", is_staff=True
         )
         self.project = Project.objects.create(name="Cyt", prefix="CYT")
         self.client = APIClient()
@@ -286,7 +286,7 @@ class ColumnKindBackfillMigrationTests(TestCase):
 
 class ThroughputTestBase(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user("chris", "chris@example.com", "x")
+        self.user = User.objects.create_user("chris", "chris@example.com", "x", is_staff=True)
         self.project = Project.objects.create(name="Cyt", prefix="CYT")
         cols = {c.kind: c for c in self.project.columns.all()}
         self.backlog = cols[ColumnKind.BACKLOG]
@@ -552,7 +552,7 @@ class AnalyticsSnapshotIntegrityTests(ThroughputTestBase):
 
 class AnalyticsSnapshotMigrationTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user("chris", "chris@example.com", "x")
+        self.user = User.objects.create_user("chris", "chris@example.com", "x", is_staff=True)
         self.project = Project.objects.create(name="Cyt", prefix="CYT")
         self.backlog = self.project.columns.get(kind=ColumnKind.BACKLOG)
         self.done = self.project.columns.get(kind=ColumnKind.DONE)
@@ -720,7 +720,7 @@ class ThroughputMcpParityTests(ThroughputTestBase):
 
 class ColumnKindApiTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user("chris", "chris@example.com", "x")
+        self.user = User.objects.create_user("chris", "chris@example.com", "x", is_staff=True)
         self.project = Project.objects.create(name="Cyt", prefix="CYT")
 
     def _client(self):
@@ -845,9 +845,9 @@ class ColumnKindMcpTests(TestCase):
 
 class AssigneeSnapshotTestBase(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user("chris", "chris@example.com", "x")
-        self.alice = User.objects.create_user("alice", "alice@example.com", "x")
-        self.bob = User.objects.create_user("bob", "bob@example.com", "x")
+        self.user = User.objects.create_user("chris", "chris@example.com", "x", is_staff=True)
+        self.alice = User.objects.create_user("alice", "alice@example.com", "x", is_staff=True)
+        self.bob = User.objects.create_user("bob", "bob@example.com", "x", is_staff=True)
         self.project = Project.objects.create(name="Cyt", prefix="CYT")
         cols = {c.kind: c for c in self.project.columns.all()}
         self.backlog = cols[ColumnKind.BACKLOG]
@@ -1013,9 +1013,9 @@ class AssigneeSnapshotBackfillMigrationTests(AssigneeSnapshotTestBase):
 
 class WeeklyCompletionsTestBase(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user("chris", "chris@example.com", "x")
-        self.alice = User.objects.create_user("alice", "alice@example.com", "x")
-        self.bob = User.objects.create_user("bob", "bob@example.com", "x")
+        self.user = User.objects.create_user("chris", "chris@example.com", "x", is_staff=True)
+        self.alice = User.objects.create_user("alice", "alice@example.com", "x", is_staff=True)
+        self.bob = User.objects.create_user("bob", "bob@example.com", "x", is_staff=True)
         self.project = Project.objects.create(name="Cyt", prefix="CYT")
         cols = {c.kind: c for c in self.project.columns.all()}
         self.backlog = cols[ColumnKind.BACKLOG]
@@ -1330,8 +1330,8 @@ class WeeklyCompletionsMcpParityTests(WeeklyCompletionsTestBase):
 
 class ReviewerTestBase(TestCase):
     def setUp(self):
-        self.alice = User.objects.create_user("alice", "alice@example.com", "x")
-        self.bob = User.objects.create_user("bob", "bob@example.com", "x")
+        self.alice = User.objects.create_user("alice", "alice@example.com", "x", is_staff=True)
+        self.bob = User.objects.create_user("bob", "bob@example.com", "x", is_staff=True)
         self.project = Project.objects.create(name="Cyt", prefix="CYT")
         cols = {c.kind: c for c in self.project.columns.all()}
         self.backlog = cols[ColumnKind.BACKLOG]
@@ -1394,7 +1394,7 @@ class ClaimReviewTests(ReviewerTestBase):
         first = self._client(self.bob).post(f"/api/tasks/{task.key}/claim-review/")
         self.assertEqual(first.status_code, 200)
 
-        carol = User.objects.create_user("carol", "carol@example.com", "x")
+        carol = User.objects.create_user("carol", "carol@example.com", "x", is_staff=True)
         second = self._client(carol).post(f"/api/tasks/{task.key}/claim-review/")
         self.assertEqual(second.status_code, 409)
         task.refresh_from_db()

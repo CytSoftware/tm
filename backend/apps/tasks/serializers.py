@@ -23,6 +23,7 @@ from .models import (
     Task,
     View,
 )
+from .access import can_see_project
 from .periods import current_period_start as _current_period_start
 from .periods import period_start_for as _period_start_for
 from .transitions import compute_staleness
@@ -538,6 +539,16 @@ class TaskWriteSerializer(serializers.ModelSerializer):
             if has_column_key
             else (self.instance.column if self.instance else None)
         )
+
+        request = self.context.get("request")
+        if (
+            request is not None
+            and (has_project_key or self.instance is None)
+            and not can_see_project(request.user, project.id if project else None)
+        ):
+            raise serializers.ValidationError(
+                {"project_id": "Pick a project you have access to."}
+            )
 
         # When the project changes on update, auto-map the column to a
         # same-named column in the new project (or the first non-done column).

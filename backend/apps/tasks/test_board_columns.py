@@ -7,7 +7,7 @@ from .models import Column, Project, Task
 
 class SharedBoardTests(TestCase):
     def setUp(self):
-        self.user = get_user_model().objects.create_user("board-user")
+        self.user = get_user_model().objects.create_user("board-user", is_staff=True)
         self.client = APIClient()
         self.client.force_authenticate(self.user)
         self.project = Project.objects.create(name="One", prefix="ONE")

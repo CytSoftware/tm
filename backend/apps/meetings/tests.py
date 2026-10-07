@@ -44,7 +44,7 @@ def payload(stem="2026-09-16-155009-c896f4", **over):
 
 class MeetingsTestCase(TestCase):
     def setUp(self):
-        self.user = get_user_model().objects.create_user("mtg-user")
+        self.user = get_user_model().objects.create_user("mtg-user", is_staff=True)
         self.client = APIClient()
         self.client.force_authenticate(self.user)
         self.project = Project.objects.create(name="Mowafeq", prefix="MOW")

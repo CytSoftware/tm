@@ -18,6 +18,8 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from apps.tasks.access import visible_doc_ids
+
 from .broadcast import broadcast_wiki_event
 from .models import Doc
 from .query import apply_doc_filters, apply_doc_sort, base_doc_queryset
@@ -68,6 +70,8 @@ class DocViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = base_doc_queryset()
+        if (visible := visible_doc_ids(self.request.user)) is not None:
+            qs = qs.filter(pk__in=visible)
         params = self.request.query_params
         filters = _extract_filters(params)
         sort = _extract_sort(params)
@@ -124,7 +128,10 @@ class DocViewSet(viewsets.ModelViewSet):
                         raise ValidationError(
                             {"parent_id": "A page cannot be its own parent."}
                         )
-                    if not Doc.objects.filter(pk=target_parent_id).exists():
+                    visible = visible_doc_ids(request.user)
+                    if not Doc.objects.filter(pk=target_parent_id).exists() or (
+                        visible is not None and target_parent_id not in visible
+                    ):
                         raise ValidationError({"parent_id": "Parent not found."})
                     if _would_cycle(target_parent_id, locked.id):
                         raise ValidationError(

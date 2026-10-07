@@ -53,7 +53,7 @@ import { ModeToggle } from "./ModeToggle";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import { meKey } from "@/lib/query-keys";
-import { logout as apiLogout } from "@/lib/auth";
+import { canOpen, logout as apiLogout } from "@/lib/auth";
 import { useSidebar } from "@/lib/sidebar-state";
 import { useActiveProject } from "@/lib/active-project";
 import { usePullRequestsQuery } from "@/hooks/use-pull-requests";
@@ -84,8 +84,8 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
 
   const isCollapsed = mobile ? false : collapsed;
 
-  const eventSourcesQuery = useEventSourcesQuery();
-  const pullRequests = usePullRequestsQuery();
+  const eventSourcesQuery = useEventSourcesQuery(user.is_staff);
+  const pullRequests = usePullRequestsQuery(user.is_staff);
   const reviewQueues = pullRequestQueues(pullRequests.data?.results ?? [], user.github_username);
   const toReviewCount = reviewQueues.mine.length + reviewQueues.unassigned.length;
   const quickActions = user.preferences.quick_actions ?? [];
@@ -238,24 +238,26 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
         )}
         <SidebarGroup title="Workspace" collapsed={isCollapsed}>
           {isCollapsed && <NotificationInbox variant="sidebar-collapsed" />}
-          <NavLink
-            icon={
-              <Home
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="Home"
-            active={pathname === "/"}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/");
-              onClose?.();
-            }}
-          />
+          {canOpen(user, "/") && (
+            <NavLink
+              icon={
+                <Home
+                  className={
+                    isCollapsed
+                      ? "size-4"
+                      : "size-3.5 shrink-0 text-muted-foreground"
+                  }
+                />
+              }
+              label="Home"
+              active={pathname === "/"}
+              collapsed={isCollapsed}
+              onNavigate={() => {
+                router.push("/");
+                onClose?.();
+              }}
+            />
+          )}
           <NavLink
             icon={
               <LayoutDashboard
@@ -276,95 +278,107 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           />
           {/* Sits under Tasks: it's the "which board am I on" surface, and
               the only route that can reach an archived project. */}
-          <NavLink
-            icon={
-              <FolderKanban
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="Projects"
-            active={pathname.startsWith("/projects")}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/projects");
-              onClose?.();
-            }}
-          />
-          <NavLink
-            icon={
-              <GitPullRequest
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="To Review"
-            active={pathname.startsWith("/reviews")}
-            collapsed={isCollapsed}
-            badge={toReviewCount > 0 ? toReviewCount : undefined}
-            onNavigate={() => {
-              router.push("/reviews");
-              onClose?.();
-            }}
-          />
+          {canOpen(user, "/projects") && (
+            <NavLink
+              icon={
+                <FolderKanban
+                  className={
+                    isCollapsed
+                      ? "size-4"
+                      : "size-3.5 shrink-0 text-muted-foreground"
+                  }
+                />
+              }
+              label="Projects"
+              active={pathname.startsWith("/projects")}
+              collapsed={isCollapsed}
+              onNavigate={() => {
+                router.push("/projects");
+                onClose?.();
+              }}
+            />
+          )}
+          {canOpen(user, "/reviews") && (
+            <NavLink
+              icon={
+                <GitPullRequest
+                  className={
+                    isCollapsed
+                      ? "size-4"
+                      : "size-3.5 shrink-0 text-muted-foreground"
+                  }
+                />
+              }
+              label="To Review"
+              active={pathname.startsWith("/reviews")}
+              collapsed={isCollapsed}
+              badge={toReviewCount > 0 ? toReviewCount : undefined}
+              onNavigate={() => {
+                router.push("/reviews");
+                onClose?.();
+              }}
+            />
+          )}
           {/* useSearchParams (the active section) needs a Suspense boundary
               for the static build; the fallback is the plain link. */}
-          <Suspense
-            fallback={
-              <CrmNavLink collapsed={isCollapsed} pathname={pathname} onClose={onClose} />
-            }
-          >
-            <CrmNav collapsed={isCollapsed} pathname={pathname} onClose={onClose} />
-          </Suspense>
-          <NavLink
-            icon={<Repeat className={isCollapsed ? "size-4" : "size-3.5 shrink-0 text-muted-foreground"} />}
-            label="Routines"
-            active={pathname.startsWith("/routines")}
-            collapsed={isCollapsed}
-            onNavigate={() => { router.push("/routines"); onClose?.(); }}
-          />
-          <NavLink
-            icon={
-              <Target
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="Bets"
-            active={pathname.startsWith("/bets")}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/bets");
-              onClose?.();
-            }}
-          />
-          <NavLink
-            icon={
-              <Boxes
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="Services"
-            active={pathname.startsWith("/services")}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/services");
-              onClose?.();
-            }}
-          />
+          {canOpen(user, "/crm") && (
+            <Suspense
+              fallback={
+                <CrmNavLink collapsed={isCollapsed} pathname={pathname} onClose={onClose} />
+              }
+            >
+              <CrmNav collapsed={isCollapsed} pathname={pathname} onClose={onClose} />
+            </Suspense>
+          )}
+          {canOpen(user, "/routines") && (
+            <NavLink
+              icon={<Repeat className={isCollapsed ? "size-4" : "size-3.5 shrink-0 text-muted-foreground"} />}
+              label="Routines"
+              active={pathname.startsWith("/routines")}
+              collapsed={isCollapsed}
+              onNavigate={() => { router.push("/routines"); onClose?.(); }}
+            />
+          )}
+          {canOpen(user, "/bets") && (
+            <NavLink
+              icon={
+                <Target
+                  className={
+                    isCollapsed
+                      ? "size-4"
+                      : "size-3.5 shrink-0 text-muted-foreground"
+                  }
+                />
+              }
+              label="Bets"
+              active={pathname.startsWith("/bets")}
+              collapsed={isCollapsed}
+              onNavigate={() => {
+                router.push("/bets");
+                onClose?.();
+              }}
+            />
+          )}
+          {canOpen(user, "/services") && (
+            <NavLink
+              icon={
+                <Boxes
+                  className={
+                    isCollapsed
+                      ? "size-4"
+                      : "size-3.5 shrink-0 text-muted-foreground"
+                  }
+                />
+              }
+              label="Services"
+              active={pathname.startsWith("/services")}
+              collapsed={isCollapsed}
+              onNavigate={() => {
+                router.push("/services");
+                onClose?.();
+              }}
+            />
+          )}
         </SidebarGroup>
 
         <SidebarGroup title="Knowledge" collapsed={isCollapsed}>
@@ -442,7 +456,7 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           />
         </SidebarGroup>
 
-        {monitoringSources.length > 0 && (
+        {user.is_staff && monitoringSources.length > 0 && (
           <SidebarGroup
             title="Monitoring"
             collapsed={isCollapsed}
@@ -490,26 +504,28 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
         {/* Analytics is intentionally separated from the everyday workspace
             links. It stays easy to find without competing with Tasks or Bets
             for primary-navigation attention. */}
-        <SidebarGroup title="Insights" collapsed={isCollapsed}>
-          <NavLink
-            icon={
-              <BarChart3
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="Analytics"
-            active={pathname.startsWith("/analytics")}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/analytics");
-              onClose?.();
-            }}
-          />
-        </SidebarGroup>
+        {user.is_staff && (
+          <SidebarGroup title="Insights" collapsed={isCollapsed}>
+            <NavLink
+              icon={
+                <BarChart3
+                  className={
+                    isCollapsed
+                      ? "size-4"
+                      : "size-3.5 shrink-0 text-muted-foreground"
+                  }
+                />
+              }
+              label="Analytics"
+              active={pathname.startsWith("/analytics")}
+              collapsed={isCollapsed}
+              onNavigate={() => {
+                router.push("/analytics");
+                onClose?.();
+              }}
+            />
+          </SidebarGroup>
+        )}
       </nav>
 
       {/* Footer: user + theme */}

@@ -93,6 +93,15 @@ class Project(TimestampedModel):
         ),
     )
     task_counter = models.PositiveIntegerField(default=0)
+    members = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        blank=True,
+        related_name="member_projects",
+        help_text=(
+            "Non-staff users who can see this project's tasks, meetings and "
+            "wiki pages. Staff see every project regardless."
+        ),
+    )
 
     class Meta:
         ordering = ["name"]

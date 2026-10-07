@@ -86,10 +86,14 @@ _ROOMS: dict[str, _Room] = {}
 _ROOMS_LOCK = asyncio.Lock()
 
 
-def _doc_exists_sync(key: str) -> bool:
+def _doc_visible_sync(key: str, user) -> bool:
+    from apps.tasks.access import visible_doc_ids
+
     from .models import Doc as DocModel
 
-    return DocModel.objects.filter(key=key).exists()
+    pk = DocModel.objects.filter(key=key).values_list("pk", flat=True).first()
+    visible = visible_doc_ids(user)
+    return pk is not None and (visible is None or pk in visible)
 
 
 def _load_state_sync(key: str) -> bytes:
@@ -158,7 +162,7 @@ class WikiDocConsumer(YjsConsumer):
             await self.close(code=4401)
             return
         self._key = self.scope["url_route"]["kwargs"]["key"]
-        if not await sync_to_async(_doc_exists_sync)(self._key):
+        if not await sync_to_async(_doc_visible_sync)(self._key, user):
             await self.close(code=4404)
             return
         await super().connect()

@@ -20,8 +20,9 @@ import type {
   MonitoringColumn,
 } from "@/lib/types";
 
-export function useEventSourcesQuery() {
+export function useEventSourcesQuery(enabled = true) {
   return useQuery({
+    enabled,
     queryKey: eventSourcesKey(),
     queryFn: () =>
       apiFetch<EventSourceListResponse>("/api/integrations/event-sources/"),

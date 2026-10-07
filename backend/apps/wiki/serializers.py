@@ -5,6 +5,7 @@ from __future__ import annotations
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
+from apps.tasks.access import can_see_project, visible_doc_ids
 from apps.tasks.models import Project
 
 from .models import Doc
@@ -87,6 +88,21 @@ class DocWriteSerializer(serializers.ModelSerializer):
         model = Doc
         fields = ("id", "key", "title", "parent_id", "project_id")
         read_only_fields = ("id", "key")
+
+    def validate(self, attrs):
+        user = self._request_user()
+        if user is None:
+            return attrs
+        project = attrs.get("project")
+        if project is not None and not can_see_project(user, project.id):
+            raise serializers.ValidationError(
+                {"project_id": "Pick a project you have access to."}
+            )
+        parent = attrs.get("parent")
+        visible = visible_doc_ids(user)
+        if parent is not None and visible is not None and parent.pk not in visible:
+            raise serializers.ValidationError({"parent_id": "Parent not found."})
+        return attrs
 
     def create(self, validated_data):
         user = self._request_user()

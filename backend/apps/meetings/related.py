@@ -13,6 +13,8 @@ from typing import Any
 
 from django.db.models import Q
 
+from apps.tasks.access import restrict_to_projects
+
 from .models import (
     EntityKind,
     EntityRole,
@@ -30,11 +32,14 @@ WEIGHT_PROJECT = 2
 WEIGHT_TAG = 1
 
 
-def related_meetings(meeting: Meeting, *, limit: int = 12) -> list[dict[str, Any]]:
+def related_meetings(
+    meeting: Meeting, *, limit: int = 12, user=None
+) -> list[dict[str, Any]]:
     """Other meetings ranked by what they share with ``meeting``.
 
     Each hit carries its ``reasons`` so the UI can say *why* it's related.
-    Explicitly linked meetings are pinned above everything derived.
+    Explicitly linked meetings are pinned above everything derived. With a
+    ``user``, meetings outside their projects are dropped.
     """
     scores: dict[int, int] = defaultdict(int)
     reasons: dict[int, list[str]] = defaultdict(list)
@@ -86,6 +91,13 @@ def related_meetings(meeting: Meeting, *, limit: int = 12) -> list[dict[str, Any
         pinned[other_id] = link.kind
         scores.setdefault(other_id, 0)
 
+    if user is not None:
+        visible = set(
+            restrict_to_projects(Meeting.objects.filter(pk__in=scores), user)
+            .values_list("pk", flat=True)
+        )
+        scores = {pk: n for pk, n in scores.items() if pk in visible}
+
     ranked = sorted(scores, key=lambda pk: (pk not in pinned, -scores[pk]))[:limit]
     by_id = Meeting.objects.select_related("project").in_bulk(ranked)
     out = []
@@ -112,6 +124,7 @@ def build_graph(
     *,
     include_mentioned: bool = False,
     include_projects: bool = True,
+    user=None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Nodes and edges for the meetings graph, scoped by the list filters.
 
@@ -119,7 +132,10 @@ def build_graph(
     that share a person are already connected *through* that person's node,
     and drawing the direct edge as well turns the picture into a hairball.
     """
-    meetings = list(filter_meetings(filters).defer(*BODY_FIELDS))
+    qs = filter_meetings(filters).defer(*BODY_FIELDS)
+    if user is not None:
+        qs = restrict_to_projects(qs, user)
+    meetings = list(qs)
     meeting_ids = {m.pk for m in meetings}
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []

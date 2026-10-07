@@ -127,6 +127,17 @@ Recorded conversations pushed in by the PLAUD pipeline; people only curate them.
 - The graph (`components/meetings/MeetingsGraph.tsx` + `graph-layout.ts`) is SVG over a `d3-force` layout that is **ticked synchronously to completion, not animated** — stable, deterministic, and independent of `requestAnimationFrame`. Grouping is a layout concern (anchor forces + measured enclosing circles). There are deliberately no derived meeting↔meeting edges: meetings connect *through* shared person/company nodes. Category colors come from `lib/meeting-meta.ts` — only four hues pass the dataviz validator for an all-pairs form, so the other two categories use neutral inks.
 - All view state (`view`, `group`, filters, open meeting `m`) lives in the URL. `manage.py seed_demo_meetings` (DEBUG only) fills a dev DB with a realistic web of meetings.
 
+### Access control (`apps/tasks/access.py`)
+
+Staff (`is_staff`/`is_superuser`) see everything. Non-staff users are employees: they see only tasks, wiki, Drive, LLM wiki and meetings, and inside those only what is granted. All grants are edited in the Django admin.
+
+- **Projects:** `Project.members` gates tasks, columns, labels, meetings and wiki pages. Anything with no project is staff-only. A wiki page without a project inherits its nearest ancestor's (`visible_doc_ids`), and pages a user created stay visible to them.
+- **Drive:** per user, not per project. `DriveFile` rows (`apps/drive/models.py`) grant a key to its uploader and to `shared_with`. Non-staff get a flat file list and no folders. Their uploads go to `uploads/` under a server-chosen key, so they can never overwrite a file they can't see.
+- **LLM wiki:** `KnowledgePageProject` files a slug under projects. No row = staff-only. Several rows = the user must be a member of **all** of them, because one synthesized page mixes facts.
+- **Fail closed:** `NonStaffAccessMiddleware` refuses every `/api/` prefix not in `NON_STAFF_API`, so a new endpoint is staff-only until listed. The frontend mirror is `NON_STAFF_ROUTES` in `frontend/src/lib/auth.ts`; it only hides nav and redirects, it is not the enforcement.
+- **MCP:** a non-staff account gets no MCP at all (`_ScopedFastMCP.call_tool`), because the tools don't filter by membership yet. User-less credentials (legacy token, stdio) stay unrestricted.
+- New read paths must go through these helpers (`restrict_to_projects`, `visible_*`). The project socket refuses non-members (close code 4403); the global `meetings`/`wiki` sockets still broadcast bare keys to everyone.
+
 ### Frontend data flow
 
 `frontend/src/lib/api.ts` — `apiFetch` wrapper that auto-attaches the `csrftoken` cookie on unsafe methods and uses `credentials: "include"` throughout. Seed the CSRF cookie once on boot via `ensureCsrfCookie()` → `/api/auth/csrf/`.

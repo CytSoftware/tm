@@ -7,13 +7,19 @@ all writes through ``services.py`` — the MCP tools use the same two modules.
 
 from __future__ import annotations
 
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
-from rest_framework import mixins, status, viewsets
+from rest_framework import mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from apps.tasks.access import (
+    StaffOnlyActions,
+    can_see_project,
+    restrict_to_projects,
+    visible_project_ids,
+)
 from apps.tasks.models import Task
 
 from . import services
@@ -83,11 +89,15 @@ class MeetingViewSet(viewsets.ModelViewSet):
     lookup_field = "key"
     lookup_value_regex = r"[A-Za-z0-9\-]+"
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+    permission_classes = [permissions.IsAuthenticated, StaffOnlyActions]
+    staff_only_actions = {"create", "destroy"}
 
     def get_queryset(self):
         if self.action == "list":
-            return filter_meetings(_filters_from(self.request), light=True)
-        return base_meeting_queryset()
+            qs = filter_meetings(_filters_from(self.request), light=True)
+        else:
+            qs = base_meeting_queryset()
+        return restrict_to_projects(qs, self.request.user)
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -121,6 +131,10 @@ class MeetingViewSet(viewsets.ModelViewSet):
         meeting = self.get_object()
         payload = MeetingCurateSerializer(data=request.data, partial=True)
         payload.is_valid(raise_exception=True)
+        if "project" in payload.validated_data:
+            target = _guard(services.resolve_project, payload.validated_data["project"])
+            if not can_see_project(request.user, target.id if target else None):
+                raise ValidationError({"project": "Pick a project you have access to."})
         _guard(services.curate_meeting, meeting, payload.validated_data)
         _announce(meeting)
         return self._detail(meeting)
@@ -139,6 +153,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
                 _filters_from(request),
                 include_mentioned=_flag(request, "mentioned", False),
                 include_projects=_flag(request, "projects", True),
+                user=request.user,
             )
         )
 
@@ -146,24 +161,25 @@ class MeetingViewSet(viewsets.ModelViewSet):
     def facets(self, request):
         """Counts behind the filter bar. Always over *all* meetings, so
         picking one filter doesn't make the other options disappear."""
-        categories = dict(
-            Meeting.objects.values_list("category").annotate(n=Count("id"))
+        meetings = restrict_to_projects(Meeting.objects.all(), request.user)
+        categories = dict(meetings.values_list("category").annotate(n=Count("id")))
+        tags = Tag.objects.annotate(
+            count=Count("meetings", filter=Q(meetings__in=meetings), distinct=True)
         )
         return Response(
             {
-                "total": Meeting.objects.count(),
+                "total": meetings.count(),
                 "categories": [
                     {"value": value, "label": label, "count": categories.get(value, 0)}
                     for value, label in MeetingCategory.choices
                 ],
                 "tags": list(
-                    Tag.objects.annotate(count=Count("meetings"))
-                    .filter(count__gt=0)
+                    tags.filter(count__gt=0)
                     .order_by("-count", "name")
                     .values("name", "count")
                 ),
                 "projects": list(
-                    Meeting.objects.filter(project__isnull=False)
+                    meetings.filter(project__isnull=False)
                     .values("project_id", "project__prefix", "project__name")
                     .annotate(count=Count("id"))
                     .order_by("-count")
@@ -173,7 +189,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"])
     def related(self, request, key=None):
-        return Response(related_meetings(self.get_object()))
+        return Response(related_meetings(self.get_object(), user=request.user))
 
     # -- action items ------------------------------------------------------
 
@@ -199,6 +215,9 @@ class MeetingViewSet(viewsets.ModelViewSet):
     )
     def action_item_create_task(self, request, key=None, item_id=None):
         meeting = self.get_object()
+        target = _guard(services.resolve_project, request.data.get("project")) or meeting.project
+        if target is not None and not can_see_project(request.user, target.id):
+            raise ValidationError({"project": "Pick a project you have access to."})
         _guard(
             services.create_task_from_action_item,
             meeting,
@@ -214,7 +233,10 @@ class MeetingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post", "delete"], url_path="tasks")
     def tasks(self, request, key=None):
         meeting = self.get_object()
-        task = get_object_or_404(Task, key=request.data.get("task", ""))
+        task = get_object_or_404(
+            restrict_to_projects(Task.objects.all(), request.user),
+            key=request.data.get("task", ""),
+        )
         if request.method == "POST":
             services.link_task(meeting, task)
         else:
@@ -227,7 +249,10 @@ class MeetingViewSet(viewsets.ModelViewSet):
         meeting = self.get_object()
         payload = MeetingLinkInputSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        other = get_object_or_404(Meeting, key=payload.validated_data["to"])
+        other = get_object_or_404(
+            restrict_to_projects(Meeting.objects.all(), request.user),
+            key=payload.validated_data["to"],
+        )
         if request.method == "DELETE":
             services.unlink_meetings(meeting, other)
         else:
@@ -240,7 +265,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
             )
         _announce(meeting)
         _announce(other)
-        return Response(related_meetings(meeting))
+        return Response(related_meetings(meeting, user=request.user))
 
 
 class EntityViewSet(
@@ -257,9 +282,18 @@ class EntityViewSet(
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
+        # Non-staff only see people/companies from meetings they can open,
+        # and only those meetings are counted.
+        ids = visible_project_ids(self.request.user)
         qs = Entity.objects.select_related("company").annotate(
-            meeting_count=Count("meetings", distinct=True)
+            meeting_count=Count(
+                "meetings",
+                filter=None if ids is None else Q(meetings__project_id__in=ids),
+                distinct=True,
+            )
         )
+        if ids is not None:
+            qs = qs.filter(meeting_count__gt=0)
         kind = self.request.query_params.get("kind")
         if kind:
             qs = qs.filter(kind=kind)

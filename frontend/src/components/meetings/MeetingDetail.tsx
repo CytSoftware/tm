@@ -11,6 +11,7 @@
 
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
+import { useQuery } from "@tanstack/react-query";
 import {
   ArrowUpRight,
   Check,
@@ -38,7 +39,9 @@ import {
 import { useUpdateContact } from "@/hooks/use-crm";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import { ApiError } from "@/lib/api";
+import { fetchMe } from "@/lib/auth";
 import { md } from "@/lib/markdown";
+import { meKey } from "@/lib/query-keys";
 import {
   CATEGORY_META,
   CATEGORY_ORDER,
@@ -264,8 +267,10 @@ function MetaBar({
 
 function CrmRow({ meeting }: { meeting: Meeting }) {
   const promote = useUpdateContact();
+  // The CRM is staff-only; employees can't open or write to it.
+  const { data: me } = useQuery({ queryKey: meKey(), queryFn: fetchMe });
   const attendees = meeting.entities.filter((e) => e.role === "attendee");
-  if (attendees.length === 0) return null;
+  if (!me?.is_staff || attendees.length === 0) return null;
   const tracked = attendees.filter((e) => e.relationship && e.relationship !== "internal");
   const untracked = attendees.filter((e) => !e.relationship);
   if (tracked.length === 0 && untracked.length === 0) return null;

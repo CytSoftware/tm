@@ -51,8 +51,8 @@ class InfrastructureServiceApiTests(TestCase):
         self.media_override.enable()
         self.addCleanup(self.media_override.disable)
 
-        self.user = User.objects.create_user("ali", password="x")
-        self.other_user = User.objects.create_user("sam", password="x")
+        self.user = User.objects.create_user("ali", password="x", is_staff=True)
+        self.other_user = User.objects.create_user("sam", password="x", is_staff=True)
         self.client = APIClient()
         self.client.force_authenticate(self.user)
 
@@ -161,7 +161,7 @@ def _pr_payload(
 class ExtractTaskKeysTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.reporter = User.objects.create_user(username="alice")
+        cls.reporter = User.objects.create_user(username="alice", is_staff=True)
         cls.project = Project.objects.create(name="Cyt", prefix="CYT")
         cls.task1 = Task.objects.create(
             project=cls.project, title="One", reporter=cls.reporter
@@ -230,7 +230,7 @@ class ExtractTaskKeysTests(TestCase):
 class WebhookViewTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.reporter = User.objects.create_user(username="alice")
+        cls.reporter = User.objects.create_user(username="alice", is_staff=True)
         cls.project = Project.objects.create(name="Cyt", prefix="CYT")
         cls.task = Task.objects.create(
             project=cls.project, title="One", reporter=cls.reporter
@@ -358,7 +358,7 @@ class WebhookViewTests(TestCase):
 class ApplyPullRequestEventUnitTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.reporter = User.objects.create_user(username="alice")
+        cls.reporter = User.objects.create_user(username="alice", is_staff=True)
         cls.project = Project.objects.create(name="Cyt", prefix="CYT")
         cls.task = Task.objects.create(
             project=cls.project, title="One", reporter=cls.reporter
@@ -398,8 +398,8 @@ class ApplyPullRequestEventUnitTests(TestCase):
 
 class EventInboxTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user(username="event-owner", password="pw")
-        self.other = User.objects.create_user(username="other-owner", password="pw")
+        self.user = User.objects.create_user(username="event-owner", password="pw", is_staff=True)
+        self.other = User.objects.create_user(username="other-owner", password="pw", is_staff=True)
         self.client.force_login(self.user)
 
     def create_source(self, *, provider="generic", name="Alerts"):

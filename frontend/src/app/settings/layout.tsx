@@ -12,9 +12,12 @@ import {
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { MasterDetail } from "@/components/layout/MasterDetail";
 
+import { canOpen, fetchMe } from "@/lib/auth";
+import { meKey } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
 const SETTINGS_NAV = [
@@ -68,6 +71,8 @@ export default function SettingsLayout({
   // selected" URL for the mobile list⇄detail swap to key off. Track it locally
   // instead: the nav is a pane you can go back to, not a route (TAS-061).
   const [navOpen, setNavOpen] = useState(false);
+  const { data: me } = useQuery({ queryKey: meKey(), queryFn: fetchMe });
+  const nav = SETTINGS_NAV.filter((item) => me && canOpen(me, item.href));
 
   return (
     <MasterDetail
@@ -84,7 +89,7 @@ export default function SettingsLayout({
           </span>
         </div>
         <nav className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
-          {SETTINGS_NAV.map((item) => {
+          {nav.map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;
             return (

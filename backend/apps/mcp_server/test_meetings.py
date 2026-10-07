@@ -47,7 +47,7 @@ def push(stem=STEM, **over):
 @override_settings(FRONTEND_URL="https://tm.example.com")
 class MeetingToolTestCase(TestCase):
     def setUp(self):
-        self.user = get_user_model().objects.create_user("pipeline")
+        self.user = get_user_model().objects.create_user("pipeline", is_staff=True)
         self.project = Project.objects.create(name="Mowafeq", prefix="MOW")
         patcher = mock.patch("apps.meetings.mcp_tools.broadcast_meeting_event")
         self.broadcast = patcher.start()
@@ -350,6 +350,12 @@ class McpEntryPointTests(MeetingToolTestCase):
             with self.assertRaisesMessage(Exception, "read-only"):
                 self._call(name, **args)
         self.assertEqual(Meeting.objects.count(), 1)
+
+    def test_non_staff_account_gets_no_mcp(self):
+        self.user.is_staff = False
+        self._as(self.user, ["read", "write"])
+        with self.assertRaisesMessage(Exception, "staff accounts"):
+            self._call("list_meetings")
 
     def test_push_is_attributed_to_the_requests_user(self):
         self._as(self.user, ["read", "write"])

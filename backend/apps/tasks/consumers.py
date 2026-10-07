@@ -12,8 +12,10 @@ on the server side beyond the channel layer subscription.
 
 from __future__ import annotations
 
+from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
+from .access import can_see_project
 from .broadcast import project_group_name
 from .notifications import user_group_name
 
@@ -26,6 +28,9 @@ class TaskConsumer(AsyncJsonWebsocketConsumer):
             return
 
         self.project_id = int(self.scope["url_route"]["kwargs"]["project_id"])
+        if not await sync_to_async(can_see_project)(user, self.project_id):
+            await self.close(code=4403)
+            return
         self.group_name = project_group_name(self.project_id)
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()

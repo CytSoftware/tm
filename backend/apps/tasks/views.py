@@ -17,6 +17,12 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .access import (
+    StaffOnlyActions,
+    has_full_access,
+    restrict_to_projects,
+    visible_project_ids,
+)
 from .broadcast import _broadcast_local, broadcast_task_event
 from .models import (
     Bet,
@@ -276,6 +282,7 @@ def _me_payload(user, request, *, profile=None):
             except (TypeError, ValueError):
                 continue
     data["github_username"] = profile.github_username or ""
+    data["is_staff"] = has_full_access(user)
     data["preferences"] = {
         "assign_hotkey_bindings": clean,
         "board_column_prefs": _clean_board_column_prefs(profile.board_column_prefs),
@@ -890,6 +897,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["archived"]
+    permission_classes = [permissions.IsAuthenticated, StaffOnlyActions]
+    staff_only_actions = {"create", "update", "partial_update", "destroy"}
 
     def get_queryset(self):
         # Annotate the open (not-done) task count in the same query as the
@@ -898,7 +907,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
         # ``prefetch_related`` doesn't join, but ``filterset_fields`` /
         # future joins could otherwise double-count. Tasks with no column
         # (only possible for projectless tasks today) count as open.
-        return super().get_queryset().annotate(
+        qs = super().get_queryset()
+        if (ids := visible_project_ids(self.request.user)) is not None:
+            qs = qs.filter(pk__in=ids)
+        return qs.annotate(
             open_task_count=models.Count(
                 "tasks",
                 filter=models.Q(tasks__column__isnull=True)
@@ -986,6 +998,9 @@ class ColumnViewSet(viewsets.ModelViewSet):
     serializer_class = ColumnSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["project"]
+
+    def get_queryset(self):
+        return restrict_to_projects(super().get_queryset(), self.request.user)
 
     def perform_create(self, serializer):
         project = serializer.validated_data["project"]
@@ -1159,6 +1174,12 @@ class LabelViewSet(viewsets.ModelViewSet):
     serializer_class = LabelSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["project"]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if (ids := visible_project_ids(self.request.user)) is not None:
+            qs = qs.filter(models.Q(project__isnull=True) | models.Q(project_id__in=ids))
+        return qs
 
 
 # ---------------------------------------------------------------------------
@@ -1395,7 +1416,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     lookup_value_regex = r"[A-Za-z0-9\-]+"
 
     def get_queryset(self):
-        qs = base_task_queryset()
+        qs = restrict_to_projects(base_task_queryset(), self.request.user)
         params = self.request.query_params
 
         ad_hoc_filters = _extract_ad_hoc_filters(params)

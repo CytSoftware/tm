@@ -28,3 +28,23 @@ export async function login(
 export async function logout(): Promise<void> {
   await apiFetch<void>("/api/auth/logout/", { method: "POST" });
 }
+
+/** Pages a non-staff user may open. The backend enforces the same split
+ *  (`NON_STAFF_API` in `apps/tasks/access.py`); this only keeps them out of
+ *  pages whose every request would be refused. */
+const NON_STAFF_ROUTES = [
+  "/board",
+  "/focus",
+  "/wiki",
+  "/drive",
+  "/llm-wiki",
+  "/meetings",
+  "/settings/quick-actions",
+];
+
+export function canOpen(user: Me, path: string): boolean {
+  return (
+    user.is_staff ||
+    NON_STAFF_ROUTES.some((route) => path === route || path.startsWith(`${route}/`))
+  );
+}

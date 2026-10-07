@@ -28,6 +28,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .access import restrict_to_projects
 from .models import FocusItem, FocusPeriod, Task
 from .serializers import TaskReadSerializer
 from .transitions import get_stale_thresholds
@@ -89,7 +90,7 @@ def _items_qs(user):
     """Base queryset: this user's focus items, with the embedded Task fully
     prefetched so the serializer doesn't N+1 on labels/assignees/columns."""
     return (
-        FocusItem.objects.filter(user=user)
+        restrict_to_projects(FocusItem.objects.filter(user=user), user, "task__project")
         .select_related(
             "task",
             "task__column",
@@ -172,7 +173,10 @@ class FocusListView(APIView):
     def post(self, request):
         payload = FocusItemAddSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        task = get_object_or_404(Task, key=payload.validated_data["task_key"])
+        task = get_object_or_404(
+            restrict_to_projects(Task.objects.all(), request.user),
+            key=payload.validated_data["task_key"],
+        )
         period = payload.validated_data.get("period") or FocusPeriod.WEEK
 
         with transaction.atomic():

@@ -239,7 +239,7 @@ class AuthorizeHandoffTests(TestCase):
     """The redirect chain that used to dead-end on a Next.js 404."""
 
     def setUp(self):
-        self.user = User.objects.create_user("chris", password="pw")
+        self.user = User.objects.create_user("chris", password="pw", is_staff=True)
         self.app = Application.objects.create(
             name="claude.ai",
             client_id="test-client",
@@ -337,7 +337,7 @@ class AuthorizeHandoffTests(TestCase):
 @override_settings(FRONTEND_URL=FRONTEND, LOGIN_URL=f"{FRONTEND}/login")
 class ConsentApiTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user("chris", password="pw", email="c@x.io")
+        self.user = User.objects.create_user("chris", password="pw", email="c@x.io", is_staff=True)
         self.app = Application.objects.create(
             name="claude.ai",
             client_id="test-client",
@@ -424,7 +424,7 @@ class EndToEndConnectTests(TestCase):
 
     def setUp(self):
         cache.clear()
-        self.user = User.objects.create_user("chris", password="pw")
+        self.user = User.objects.create_user("chris", password="pw", is_staff=True)
 
     def test_public_client_completes_the_whole_flow(self):
         verifier, challenge = pkce_pair()
@@ -550,7 +550,7 @@ class McpGateTests(TestCase):
     """`apps.mcp_server.auth` — the single gate in front of /mcp."""
 
     def setUp(self):
-        self.user = User.objects.create_user("chris", password="pw")
+        self.user = User.objects.create_user("chris", password="pw", is_staff=True)
         self.app = Application.objects.create(
             name="claude.ai",
             client_id="c",
@@ -698,8 +698,8 @@ class PerRequestAttributionTests(TestCase):
     """
 
     def setUp(self):
-        self.alice = User.objects.create_user("alice")
-        self.bob = User.objects.create_user("bob")
+        self.alice = User.objects.create_user("alice", is_staff=True)
+        self.bob = User.objects.create_user("bob", is_staff=True)
 
     def test_scope_user_wins_over_the_contextvar(self):
         from core.asgi import mcp_authenticated_user
@@ -788,8 +788,8 @@ class WriteScopeEnforcementTests(TestCase):
 
 class ConnectionsApiTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user("chris", password="pw")
-        self.other = User.objects.create_user("someone-else", password="pw")
+        self.user = User.objects.create_user("chris", password="pw", is_staff=True)
+        self.other = User.objects.create_user("someone-else", password="pw", is_staff=True)
         self.app = Application.objects.create(
             name="claude.ai",
             client_id="c",
@@ -859,7 +859,7 @@ class ConnectionsApiTests(TestCase):
 
 class PersonalTokenApiTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user("chris", password="pw")
+        self.user = User.objects.create_user("chris", password="pw", is_staff=True)
         self.client.force_login(self.user)
 
     def create(self, **body):
@@ -922,7 +922,7 @@ class PersonalTokenApiTests(TestCase):
         self.assertTrue(McpAccessToken.objects.filter(pk=created["id"]).exists())
 
     def test_cannot_see_or_revoke_another_users_token(self):
-        other = User.objects.create_user("other")
+        other = User.objects.create_user("other", is_staff=True)
         _, prefix, token_hash = generate_mcp_token()
         theirs = McpAccessToken.objects.create(
             user=other,

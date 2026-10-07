@@ -4,6 +4,8 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 
+from apps.tasks.access import restrict_to_projects
+
 from .models import (
     Entity,
     EntityKind,
@@ -161,6 +163,8 @@ class MeetingDetailSerializer(MeetingListSerializer):
 
     def get_linked_tasks(self, obj):
         links = obj.task_links.select_related("task__column", "task__project")
+        if (request := self.context.get("request")) is not None:
+            links = restrict_to_projects(links, request.user, "task__project")
         return [
             {
                 "key": link.task.key,

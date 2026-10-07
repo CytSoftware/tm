@@ -94,6 +94,9 @@ export type Me = User & {
   /** GitHub login mapped to this user (UserProfile.github_username). Empty
    *  string when unset — PR review requests can't be routed to them. */
   github_username: string;
+  /** Staff see every app and project; everyone else only their projects in
+   *  tasks, wiki, Drive, LLM wiki and meetings. */
+  is_staff: boolean;
   preferences: MePreferences;
 };
 

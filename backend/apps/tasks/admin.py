@@ -23,6 +23,7 @@ User = get_user_model()
 class ProjectAdmin(admin.ModelAdmin):
     list_display = ("name", "prefix", "github_repo", "task_counter", "updated_at")
     search_fields = ("name", "prefix", "github_repo")
+    filter_horizontal = ("members",)
 
 
 @admin.register(Column)
