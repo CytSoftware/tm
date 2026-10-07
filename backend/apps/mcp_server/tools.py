@@ -21,6 +21,13 @@ from django.db import transaction
 from django.db.models import F, Max, Q
 from django.utils import timezone
 
+from apps.tasks.access import (
+    has_full_access,
+    scope_for_caller,
+    visible_doc_ids,
+    visible_knowledge_slugs,
+    visible_project_ids,
+)
 from apps.tasks.broadcast import broadcast_task_event
 from apps.tasks.models import (
     Bet,
@@ -69,13 +76,22 @@ User = get_user_model()
 # helpers centralize that resolution so each tool stays terse.
 
 
-def _resolve_project(ref: str | int) -> Project:
+def _visible_projects(mcp_user=None):
+    """Projects the caller may touch. ``mcp_user=None`` (a user-less operator
+    credential) and staff see all; anyone else only their own."""
+    qs = Project.objects.all()
+    ids = visible_project_ids(mcp_user) if mcp_user is not None else None
+    return qs if ids is None else qs.filter(pk__in=ids)
+
+
+def _resolve_project(ref: str | int, mcp_user=None) -> Project:
+    qs = _visible_projects(mcp_user)
     if isinstance(ref, int):
-        return Project.objects.get(pk=ref)
+        return qs.get(pk=ref)
     if isinstance(ref, str):
         if ref.isdigit():
-            return Project.objects.get(pk=int(ref))
-        return Project.objects.get(prefix__iexact=ref)
+            return qs.get(pk=int(ref))
+        return qs.get(prefix__iexact=ref)
     raise ValueError(f"Invalid project reference: {ref!r}")
 
 
@@ -293,8 +309,9 @@ def _view_dict(v: View) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def list_projects() -> list[dict[str, Any]]:
-    return [_project_dict(p) for p in Project.objects.prefetch_related("repositories").order_by("name")]
+def list_projects(mcp_user=None) -> list[dict[str, Any]]:
+    qs = _visible_projects(mcp_user).prefetch_related("repositories").order_by("name")
+    return [_project_dict(p) for p in qs]
 
 
 # ---------------------------------------------------------------------------
@@ -302,8 +319,8 @@ def list_projects() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def list_columns(project: str | int) -> list[dict[str, Any]]:
-    proj = _resolve_project(project)
+def list_columns(project: str | int, mcp_user=None) -> list[dict[str, Any]]:
+    proj = _resolve_project(project, mcp_user)
     return [_column_dict(c) for c in proj.columns.order_by("order")]
 
 
@@ -538,6 +555,7 @@ def list_tasks(
     bet: str | int | None = None,
     done: bool | None = None,
     limit: int = 200,
+    mcp_user=None,
 ) -> list[dict[str, Any]]:
     filters: dict[str, Any] = {}
     if project is not None:
@@ -558,12 +576,16 @@ def list_tasks(
         filters["bet"] = bet
     if done is not None:
         filters["done"] = done
-    qs = filter_and_sort_tasks(filters=filters)
+    qs = filter_and_sort_tasks(filters=filters, base=_tasks(mcp_user))
     return [_task_dict(t, include_description=False) for t in qs[:limit]]
 
 
-def get_task(key: str) -> dict[str, Any]:
-    t = base_task_queryset().get(key=key)
+def _tasks(mcp_user=None):
+    return scope_for_caller(base_task_queryset(), mcp_user)
+
+
+def get_task(key: str, mcp_user=None) -> dict[str, Any]:
+    t = _tasks(mcp_user).get(key=key)
     return _task_dict(t)
 
 
@@ -580,7 +602,7 @@ def create_task(
     bet: str | int | None = None,
     mcp_user=None,
 ) -> dict[str, Any]:
-    proj = _resolve_project(project)
+    proj = _resolve_project(project, mcp_user)
     col = _resolve_column(proj, column)
     assignee_users = [_resolve_user(ref) for ref in assignees] if assignees else []
     reporter = _resolve_reporter_for_mcp(mcp_user)
@@ -634,7 +656,7 @@ def update_task(
     reviewer: str | int | None = None,
     mcp_user=None,
 ) -> dict[str, Any]:
-    task = base_task_queryset().get(key=key)
+    task = _tasks(mcp_user).get(key=key)
     dirty = False
 
     old_assignee_ids = set(task.assignees.values_list("id", flat=True))
@@ -725,7 +747,7 @@ def move_task(
     position: str | float | None = None,
     mcp_user=None,
 ) -> dict[str, Any]:
-    task = base_task_queryset().get(key=key)
+    task = _tasks(mcp_user).get(key=key)
     old_column = task.column
     col = _resolve_column(task.project, column)
     task.column = col
@@ -774,7 +796,7 @@ def move_task(
 
 @transaction.atomic
 def delete_task(key: str, mcp_user=None) -> dict[str, Any]:
-    task = base_task_queryset().get(key=key)
+    task = _tasks(mcp_user).get(key=key)
     project_id = task.project_id
     task_key = task.key
     notify_task_event(task, mcp_user, "deleted")
@@ -830,7 +852,7 @@ def list_focus(*, mcp_user) -> list[dict[str, Any]]:
 
     _require_mcp_user(mcp_user, "list_focus")
     qs = (
-        FocusItem.objects.filter(user=mcp_user)
+        scope_for_caller(FocusItem.objects.filter(user=mcp_user), mcp_user, "task__project")
         .select_related("task", "task__column", "task__project")
         .prefetch_related("task__assignees", "task__labels")
         .order_by("period", "position", "id")
@@ -983,11 +1005,13 @@ def list_webhook_deliveries(
 # ---------------------------------------------------------------------------
 
 
-def list_labels(project: str | int | None = None) -> list[dict[str, Any]]:
+def list_labels(project: str | int | None = None, mcp_user=None) -> list[dict[str, Any]]:
     qs = Label.objects.all()
     if project is not None:
-        proj = _resolve_project(project)
+        proj = _resolve_project(project, mcp_user)
         qs = qs.filter(Q(project=proj) | Q(project__isnull=True))
+    elif mcp_user is not None and (ids := visible_project_ids(mcp_user)) is not None:
+        qs = qs.filter(Q(project__isnull=True) | Q(project_id__in=ids))
     return [_label_dict(l) for l in qs.order_by(F("project_id").asc(nulls_last=True), "name")]
 
 
@@ -1333,22 +1357,35 @@ def delete_checkin(checkin_id: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def list_views(project: str | int | None = None) -> list[dict[str, Any]]:
-    qs = View.objects.all().select_related("owner", "project")
+def _views(mcp_user=None):
+    """Non-staff see their own and shared views (as in the UI), minus views
+    pinned to a project they aren't in."""
+    qs = View.objects.all()
+    if mcp_user is not None and not has_full_access(mcp_user):
+        ids = visible_project_ids(mcp_user)
+        qs = qs.filter(Q(owner=mcp_user) | Q(shared=True)).filter(
+            Q(project__isnull=True) | Q(project_id__in=ids)
+        )
+    return qs
+
+
+def list_views(project: str | int | None = None, mcp_user=None) -> list[dict[str, Any]]:
+    qs = _views(mcp_user).select_related("owner", "project")
     if project is not None:
-        proj = _resolve_project(project)
+        proj = _resolve_project(project, mcp_user)
         qs = qs.filter(project=proj)
     return [_view_dict(v) for v in qs.order_by("name")]
 
 
-def query_view(view: str | int) -> list[dict[str, Any]]:
+def query_view(view: str | int, mcp_user=None) -> list[dict[str, Any]]:
+    views = _views(mcp_user)
     if isinstance(view, int) or (isinstance(view, str) and view.isdigit()):
-        v = View.objects.get(pk=int(view))
+        v = views.get(pk=int(view))
     else:
-        v = View.objects.filter(name=view).first()
+        v = views.filter(name=view).first()
         if v is None:
             raise View.DoesNotExist(f"No view named {view!r}.")
-    qs = filter_and_sort_tasks(v.filters, v.sort)
+    qs = filter_and_sort_tasks(v.filters, v.sort, base=_tasks(mcp_user))
     return [_task_dict(t, include_description=False) for t in qs]
 
 
@@ -1592,14 +1629,17 @@ from apps.wiki.query import (
 )
 
 
-def _resolve_wiki_doc(ref: str | int) -> WikiDoc:
-    if isinstance(ref, int):
-        return WikiDoc.objects.get(pk=ref)
-    if isinstance(ref, str):
-        if ref.isdigit():
-            return WikiDoc.objects.get(pk=int(ref))
-        return WikiDoc.objects.get(key=ref)
-    raise ValueError(f"Invalid doc reference: {ref!r}")
+def _resolve_wiki_doc(ref: str | int, mcp_user=None) -> WikiDoc:
+    if isinstance(ref, int) or (isinstance(ref, str) and ref.isdigit()):
+        doc = WikiDoc.objects.get(pk=int(ref))
+    elif isinstance(ref, str):
+        doc = WikiDoc.objects.get(key=ref)
+    else:
+        raise ValueError(f"Invalid doc reference: {ref!r}")
+    visible = visible_doc_ids(mcp_user) if mcp_user is not None else None
+    if visible is not None and doc.pk not in visible:
+        raise WikiDoc.DoesNotExist(f"No wiki page {ref!r}.")
+    return doc
 
 
 def _wiki_doc_dict(d: WikiDoc, *, include_content: bool = False) -> dict[str, Any]:
@@ -1631,28 +1671,31 @@ def list_wiki_docs(
     project: str | int | None = None,
     search: str | None = None,
     limit: int = 200,
+    mcp_user=None,
 ) -> list[dict[str, Any]]:
     filters: dict[str, Any] = {}
     if parent is not None:
         if isinstance(parent, str) and parent.lower() in ("root", "none", "null"):
             filters["parent"] = "root"
         else:
-            filters["parent"] = _resolve_wiki_doc(parent).id
+            filters["parent"] = _resolve_wiki_doc(parent, mcp_user).id
     if project is not None:
         if isinstance(project, str) and project.lower() in ("none", "null"):
             filters["project"] = "none"
         else:
-            filters["project"] = _resolve_project(project).id
+            filters["project"] = _resolve_project(project, mcp_user).id
     if search:
         filters["search"] = search
     qs = filter_and_sort_wiki_docs(filters=filters)
+    if mcp_user is not None and (visible := visible_doc_ids(mcp_user)) is not None:
+        qs = qs.filter(pk__in=visible)
     return [_wiki_doc_dict(d) for d in qs[:limit]]
 
 
-def get_wiki_doc(key: str) -> dict[str, Any]:
+def get_wiki_doc(key: str, mcp_user=None) -> dict[str, Any]:
     from apps.wiki.content_ops import serialize_markdown
 
-    d = base_wiki_queryset().get(key=key)
+    d = base_wiki_queryset().get(pk=_resolve_wiki_doc(key, mcp_user).pk)
     data = _wiki_doc_dict(d, include_content=True)
     markdown = serialize_markdown(d.content)
     if markdown is not None:
@@ -1676,8 +1719,8 @@ def create_wiki_doc(
     mcp_user=None,
 ) -> dict[str, Any]:
     actor = _resolve_reporter_for_mcp(mcp_user)
-    parent_obj = _resolve_wiki_doc(parent) if parent is not None else None
-    project_obj = _resolve_project(project) if project is not None else None
+    parent_obj = _resolve_wiki_doc(parent, mcp_user) if parent is not None else None
+    project_obj = _resolve_project(project, mcp_user) if project is not None else None
 
     doc = WikiDoc(
         title=title or "Untitled",
@@ -1703,10 +1746,11 @@ def update_wiki_doc(
     project: str | int | None = None,
     clear_parent: bool = False,
     clear_project: bool = False,
+    mcp_user=None,
 ) -> dict[str, Any]:
     from apps.wiki.views import _would_cycle
 
-    doc = WikiDoc.objects.get(key=key)
+    doc = _resolve_wiki_doc(key, mcp_user)
     parent_changed = False
 
     if title is not None:
@@ -1716,7 +1760,7 @@ def update_wiki_doc(
         doc.parent = None
         parent_changed = True
     elif parent is not None:
-        parent_obj = _resolve_wiki_doc(parent)
+        parent_obj = _resolve_wiki_doc(parent, mcp_user)
         if parent_obj.id == doc.id:
             raise ValueError("A page cannot be its own parent.")
         if _would_cycle(parent_obj.id, doc.id):
@@ -1727,7 +1771,7 @@ def update_wiki_doc(
     if clear_project:
         doc.project = None
     elif project is not None:
-        doc.project = _resolve_project(project)
+        doc.project = _resolve_project(project, mcp_user)
 
     if parent_changed:
         doc.position = _wiki_tail_position(doc.parent_id, exclude_id=doc.id)
@@ -1742,8 +1786,8 @@ def update_wiki_doc(
 
 
 @transaction.atomic
-def delete_wiki_doc(key: str) -> dict[str, Any]:
-    doc = WikiDoc.objects.get(key=key)
+def delete_wiki_doc(key: str, mcp_user=None) -> dict[str, Any]:
+    doc = _resolve_wiki_doc(key, mcp_user)
     doc_id = doc.id
     doc.delete()  # cascades the subtree
     broadcast_wiki_event("wiki.deleted", {"key": key})
@@ -1758,16 +1802,25 @@ def delete_wiki_doc(key: str) -> dict[str, Any]:
 # truth (no models). Agents get list / read / upload. Delete is intentionally
 # NOT exposed over MCP — deletes touch real company files (UI/human only).
 
-def drive_list(prefix: str = "", token: str | None = None) -> dict[str, Any]:
+def _drive_restricted(mcp_user) -> bool:
+    return mcp_user is not None and not has_full_access(mcp_user)
+
+
+def drive_list(prefix: str = "", token: str | None = None, mcp_user=None) -> dict[str, Any]:
     from apps.drive import b2
+    from apps.drive.views import shared_listing
+
+    if _drive_restricted(mcp_user):
+        return shared_listing(mcp_user)
     return b2.list_objects(prefix, token=token)
 
 
-def drive_read(key: str, max_bytes: int = 65536) -> dict[str, Any]:
+def drive_read(key: str, max_bytes: int = 65536, mcp_user=None) -> dict[str, Any]:
     from apps.drive import b2
+    from apps.drive.views import can_reach
 
     max_bytes = min(max(0, max_bytes), 1_048_576)  # cap at 1 MB — no OOM via a huge read
-    meta = b2.head(key)
+    meta = b2.head(key) if not _drive_restricted(mcp_user) or can_reach(mcp_user, key) else None
     if meta is None:
         raise ValueError(f"No such Drive object: {key!r}")
     out = dict(meta)
@@ -1810,6 +1863,12 @@ def drive_upload(key: str, content: str = "", content_base64: str | None = None,
     else:
         data = content.encode("utf-8")
 
+    if _drive_restricted(mcp_user):
+        from apps.drive.views import claim_upload_key
+
+        # Same rule as the UI: the server picks the key under uploads/, so an
+        # employee can never overwrite a file they can't see.
+        key = claim_upload_key(mcp_user, key)
     result = b2.put_bytes(key, data, content_type)
     if mcp_user is not None:  # attribute the write for audit (B2 has no per-user field)
         logging.getLogger("apps.mcp_server").info(
@@ -1828,13 +1887,25 @@ def drive_upload(key: str, content: str = "", content_base64: str | None = None,
 # (via the /api/knowledge DRF endpoints + frontend tab); agents create/update
 # here. Single writer, last-write-wins — no synthesis worker yet.
 
-def knowledge_list() -> list[dict[str, Any]]:
-    from apps.drive import b2
-    return b2.wiki_list()
+def _visible_slugs(mcp_user) -> set[str] | None:
+    return visible_knowledge_slugs(mcp_user) if mcp_user is not None else None
 
 
-def knowledge_read(slug: str) -> dict[str, Any]:
+def knowledge_list(mcp_user=None) -> list[dict[str, Any]]:
     from apps.drive import b2
+
+    pages = b2.wiki_list()
+    if (visible := _visible_slugs(mcp_user)) is not None:
+        pages = [p for p in pages if p["slug"] in visible]
+    return pages
+
+
+def knowledge_read(slug: str, mcp_user=None) -> dict[str, Any]:
+    from apps.drive import b2
+
+    visible = _visible_slugs(mcp_user)
+    if visible is not None and b2.slugify(slug) not in visible:
+        raise b2.B2NotFound(f"No such wiki page: {slug!r}")
     return b2.wiki_read(slug)
 
 
@@ -1893,10 +1964,13 @@ def _agent_name(mcp_user) -> str:
     return getattr(mcp_user, "username", None) or "mcp"
 
 
-def knowledge_write(slug: str, markdown: str, mcp_user=None) -> dict[str, Any]:
+def knowledge_write(
+    slug: str, markdown: str, projects: list[str | int] | None = None, mcp_user=None
+) -> dict[str, Any]:
     import logging
 
     from apps.drive import b2
+    from apps.drive.models import KnowledgePageProject
 
     if len((markdown or "").encode("utf-8")) > 5_000_000:
         raise ValueError("Markdown too large (max 5 MB per wiki page).")
@@ -1906,7 +1980,23 @@ def knowledge_write(slug: str, markdown: str, mcp_user=None) -> dict[str, Any]:
             "content pages (e.g. entities/people/<name>) — the index and log "
             "update automatically. Call knowledge_schema for the conventions."
         )
+    filed = [_resolve_project(p, mcp_user) for p in projects] if projects else None
+    visible = _visible_slugs(mcp_user)
+    if visible is not None:
+        norm = b2._wiki_norm(slug)
+        if not filed:
+            raise ValueError(
+                "Pass projects=[...] — your pages must be filed under at least "
+                "one of your projects, or nobody but staff could read them."
+            )
+        if norm not in visible and b2._read_wiki_raw(norm) is not None:
+            raise ValueError(f"{norm!r} already exists and you don't have access to it.")
     result = b2.wiki_write(slug, markdown)
+    if filed is not None:
+        KnowledgePageProject.objects.filter(slug=result["slug"]).delete()
+        KnowledgePageProject.objects.bulk_create(
+            KnowledgePageProject(slug=result["slug"], project=p) for p in filed
+        )
     b2.append_log("write", f"wrote {result['slug']}", [result["slug"]], _agent_name(mcp_user))
     try:
         b2.rebuild_index()
@@ -1926,10 +2016,16 @@ def knowledge_delete(slug: str, mcp_user=None) -> dict[str, Any]:
 
     from apps.drive import b2
 
+    from apps.drive.models import KnowledgePageProject
+
     norm = b2._wiki_norm(slug)
     if norm in b2.RESERVED_SLUGS:
         raise ValueError("Cannot delete the auto-maintained 'index'/'log' pages.")
+    visible = _visible_slugs(mcp_user)
+    if visible is not None and norm not in visible:
+        raise b2.B2NotFound(f"No such wiki page: {slug!r}")
     result = b2.wiki_delete(slug)
+    KnowledgePageProject.objects.filter(slug=norm).delete()
     b2.append_log("delete", f"deleted {norm}", [norm], _agent_name(mcp_user))
     try:
         b2.rebuild_index()

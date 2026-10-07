@@ -182,6 +182,30 @@ READ_ONLY_TOOLS = frozenset({
     "search_deals",
 })
 
+#: Tools a non-staff account may call — the MCP mirror of ``NON_STAFF_API``
+#: (``apps/tasks/access.py``). Each one scopes its results to the caller's
+#: projects / shares. Same deliberate shape as ``READ_ONLY_TOOLS``: a tool added
+#: later and forgotten here is staff-only by default.
+NON_STAFF_TOOLS = frozenset({
+    # tasks
+    "list_projects", "list_columns", "list_labels", "list_users", "list_views",
+    "query_view", "list_tasks", "get_task", "create_task", "update_task",
+    "move_task", "delete_task", "list_focus", "add_focus", "remove_focus",
+    # wiki
+    "list_wiki_docs", "get_wiki_doc", "create_wiki_doc", "update_wiki_doc",
+    "delete_wiki_doc", "set_wiki_content", "append_wiki_content",
+    "insert_wiki_content",
+    # drive
+    "drive_list", "drive_read", "drive_upload",
+    # LLM wiki
+    "knowledge_list", "knowledge_read", "knowledge_schema", "knowledge_write",
+    "knowledge_delete",
+    # meetings
+    "list_meetings", "search_meetings", "get_meeting", "get_related_meetings",
+    "list_meeting_entities", "update_meeting", "set_meeting_action_item",
+    "create_task_from_meeting_action_item", "link_meeting_task", "link_meetings",
+})
+
 
 class _ScopedFastMCP(FastMCP):
     """FastMCP with OAuth scope enforcement on tool calls.
@@ -193,12 +217,11 @@ class _ScopedFastMCP(FastMCP):
     """
 
     async def call_tool(self, name: str, arguments: dict[str, Any]):
-        # ponytail: tools don't filter by project membership yet, so a
-        # non-staff account gets no MCP at all. A user-less credential (legacy
-        # CYT_MCP_TOKEN, stdio) is the operator's own and stays unrestricted.
+        # A user-less credential (legacy CYT_MCP_TOKEN, stdio) is the
+        # operator's own and stays unrestricted.
         user = _get_mcp_user()
-        if user is not None and not has_full_access(user):
-            raise ValueError("MCP access is limited to staff accounts.")
+        if user is not None and not has_full_access(user) and name not in NON_STAFF_TOOLS:
+            raise ValueError(f"{name} is limited to staff accounts.")
         if name not in READ_ONLY_TOOLS:
             _require_write_scope(name)
         return await super().call_tool(name, arguments)
@@ -244,7 +267,7 @@ def _async(fn):
 @mcp.tool()
 async def list_projects() -> list[dict[str, Any]]:
     """List all projects in the task tracker."""
-    return await _async(tools.list_projects)()
+    return await _async(tools.list_projects)(mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -287,13 +310,14 @@ async def list_tasks(
         bet=bet,
         done=done,
         limit=limit,
+        mcp_user=_get_mcp_user(),
     )
 
 
 @mcp.tool()
 async def get_task(key: str) -> dict[str, Any]:
     """Return the full task (including description) for a human key like ``"CYT-001"``."""
-    return await _async(tools.get_task)(key)
+    return await _async(tools.get_task)(key, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -402,7 +426,7 @@ async def list_users() -> list[dict[str, Any]]:
 @mcp.tool()
 async def list_columns(project: str | int) -> list[dict[str, Any]]:
     """List columns for a project, ordered left-to-right."""
-    return await _async(tools.list_columns)(project=project)
+    return await _async(tools.list_columns)(project=project, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -506,7 +530,7 @@ async def get_weekly_completions(
 async def list_labels(project: str | int | None = None) -> list[dict[str, Any]]:
     """List labels. With ``project`` set, returns that project's labels plus
     global (project-less) labels. Without ``project``, returns every label."""
-    return await _async(tools.list_labels)(project=project)
+    return await _async(tools.list_labels)(project=project, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -710,7 +734,7 @@ async def delete_checkin(checkin_id: int) -> dict[str, Any]:
 @mcp.tool()
 async def list_views(project: str | int | None = None) -> list[dict[str, Any]]:
     """List saved views, optionally scoped to a project."""
-    return await _async(tools.list_views)(project=project)
+    return await _async(tools.list_views)(project=project, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -719,7 +743,7 @@ async def query_view(view: str | int) -> list[dict[str, Any]]:
 
     ``view`` can be the view's name or its numeric id.
     """
-    return await _async(tools.query_view)(view)
+    return await _async(tools.query_view)(view, mcp_user=_get_mcp_user())
 
 
 # ---------------------------------------------------------------------------
@@ -980,14 +1004,15 @@ async def list_wiki_docs(
     key / title / body text.
     """
     return await _async(tools.list_wiki_docs)(
-        parent=parent, project=project, search=search, limit=limit
+        parent=parent, project=project, search=search, limit=limit,
+        mcp_user=_get_mcp_user(),
     )
 
 
 @mcp.tool()
 async def get_wiki_doc(key: str) -> dict[str, Any]:
     """Return a wiki page (with body content + plain text) for a key like ``"DOC-001"``."""
-    return await _async(tools.get_wiki_doc)(key)
+    return await _async(tools.get_wiki_doc)(key, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -1030,13 +1055,14 @@ async def update_wiki_doc(
         project=project,
         clear_parent=clear_parent,
         clear_project=clear_project,
+        mcp_user=_get_mcp_user(),
     )
 
 
 @mcp.tool()
 async def delete_wiki_doc(key: str) -> dict[str, Any]:
     """Delete a wiki page and its entire subtree of child pages."""
-    return await _async(tools.delete_wiki_doc)(key)
+    return await _async(tools.delete_wiki_doc)(key, mcp_user=_get_mcp_user())
 
 
 async def _wiki_apply(
@@ -1052,6 +1078,7 @@ async def _wiki_apply(
 
     user = _get_mcp_user()
     user_id = user.id if user is not None else None
+    await _async(tools._resolve_wiki_doc)(key, mcp_user=user)  # refuses hidden pages
 
     bridge_url = os.environ.get("CYT_BROADCAST_URL")
     if bridge_url:
@@ -1071,7 +1098,7 @@ async def _wiki_apply(
             index=index,
             user_id=user_id,
         )
-    return await _async(tools.get_wiki_doc)(key)
+    return await _async(tools.get_wiki_doc)(key, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -1124,7 +1151,7 @@ async def drive_list(prefix: str = "", token: str | None = None) -> dict[str, An
     through large folders. The internal ``llm-wiki/`` and trash prefixes are
     hidden.
     """
-    return await _async(tools.drive_list)(prefix=prefix, token=token)
+    return await _async(tools.drive_list)(prefix=prefix, token=token, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -1134,7 +1161,7 @@ async def drive_read(key: str, max_bytes: int = 65536) -> dict[str, Any]:
     ``key`` is the object key from ``drive_list`` (e.g. ``"docs/spec.pdf"``).
     Small UTF-8 text files are also returned inline as ``text``.
     """
-    return await _async(tools.drive_read)(key=key, max_bytes=max_bytes)
+    return await _async(tools.drive_read)(key=key, max_bytes=max_bytes, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -1168,7 +1195,7 @@ async def knowledge_list() -> list[dict[str, Any]]:
     Returns ``[{slug, title, size, updated_at}, ...]``. Pages live in B2 under
     the ``llm-wiki/`` prefix, separate from the Drive.
     """
-    return await _async(tools.knowledge_list)()
+    return await _async(tools.knowledge_list)(mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -1177,7 +1204,7 @@ async def knowledge_read(slug: str) -> dict[str, Any]:
 
     ``slug`` may be nested, e.g. ``entities/people/ali-soukarieh``.
     """
-    return await _async(tools.knowledge_read)(slug=slug)
+    return await _async(tools.knowledge_read)(slug=slug, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -1203,7 +1230,9 @@ async def knowledge_schema() -> dict[str, Any]:
 
 
 @mcp.tool()
-async def knowledge_write(slug: str, markdown: str) -> dict[str, Any]:
+async def knowledge_write(
+    slug: str, markdown: str, projects: list[str | int] | None = None
+) -> dict[str, Any]:
     """Create or update an LLM-wiki page (Markdown). FOLLOW THE STRUCTURE.
 
     Call ``knowledge_schema`` for the full rules. Key points:
@@ -1217,9 +1246,14 @@ async def knowledge_write(slug: str, markdown: str) -> dict[str, Any]:
       rather than duplicating.
     The ``index`` catalog and ``log`` are auto-maintained by the server on every
     write — do not create or edit them yourself.
+
+    ``projects`` (prefixes or ids) files the page under those TM projects, which
+    decides which non-staff members can read it; passing it replaces the
+    page's current projects. Non-staff callers must pass it, using only their
+    own projects. A page under no project is visible to staff only.
     """
     return await _async(tools.knowledge_write)(
-        slug=slug, markdown=markdown, mcp_user=_get_mcp_user(),
+        slug=slug, markdown=markdown, projects=projects, mcp_user=_get_mcp_user(),
     )
 
 
@@ -1420,6 +1454,7 @@ async def list_meetings(
         tag=tag,
         date_from=date_from,
         date_to=date_to,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -1452,6 +1487,7 @@ async def search_meetings(
         company=company,
         date_from=date_from,
         date_to=date_to,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -1466,7 +1502,7 @@ async def get_meeting(meeting: str, include_transcript: bool = False) -> dict[st
     from apps.meetings import mcp_tools
 
     return await _async(mcp_tools.get_meeting)(
-        meeting, include_transcript=include_transcript
+        meeting, include_transcript=include_transcript, mcp_user=_get_mcp_user()
     )
 
 
@@ -1478,7 +1514,9 @@ async def get_related_meetings(meeting: str, limit: int = 12) -> list[dict[str, 
     """
     from apps.meetings import mcp_tools
 
-    return await _async(mcp_tools.get_related_meetings)(meeting, limit=limit)
+    return await _async(mcp_tools.get_related_meetings)(
+        meeting, limit=limit, mcp_user=_get_mcp_user()
+    )
 
 
 @mcp.tool()
@@ -1492,7 +1530,7 @@ async def list_meeting_entities(
     from apps.meetings import mcp_tools
 
     return await _async(mcp_tools.list_meeting_entities)(
-        kind=kind, search=search, limit=limit
+        kind=kind, search=search, limit=limit, mcp_user=_get_mcp_user()
     )
 
 
@@ -1536,6 +1574,7 @@ async def update_meeting(
         companies=companies,
         mentioned_people=mentioned_people,
         mentioned_companies=mentioned_companies,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -1557,7 +1596,9 @@ async def set_meeting_action_item(
     ``get_meeting``'s ``action_items``."""
     from apps.meetings import mcp_tools
 
-    return await _async(mcp_tools.set_meeting_action_item)(meeting, item_id, done)
+    return await _async(mcp_tools.set_meeting_action_item)(
+        meeting, item_id, done, mcp_user=_get_mcp_user()
+    )
 
 
 @mcp.tool()
@@ -1585,7 +1626,9 @@ async def link_meeting_task(
     ``unlink=true``. Idempotent."""
     from apps.meetings import mcp_tools
 
-    return await _async(mcp_tools.link_meeting_task)(meeting, task, unlink=unlink)
+    return await _async(mcp_tools.link_meeting_task)(
+        meeting, task, unlink=unlink, mcp_user=_get_mcp_user()
+    )
 
 
 @mcp.tool()
@@ -1604,7 +1647,7 @@ async def link_meetings(
     from apps.meetings import mcp_tools
 
     return await _async(mcp_tools.link_meetings)(
-        meeting, other, kind=kind, note=note, unlink=unlink
+        meeting, other, kind=kind, note=note, unlink=unlink, mcp_user=_get_mcp_user()
     )
 
 

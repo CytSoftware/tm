@@ -351,11 +351,12 @@ class McpEntryPointTests(MeetingToolTestCase):
                 self._call(name, **args)
         self.assertEqual(Meeting.objects.count(), 1)
 
-    def test_non_staff_account_gets_no_mcp(self):
+    def test_non_staff_account_is_limited_to_employee_tools(self):
         self.user.is_staff = False
         self._as(self.user, ["read", "write"])
-        with self.assertRaisesMessage(Exception, "staff accounts"):
-            self._call("list_meetings")
+        self.assertEqual(self._call("list_meetings")[1]["result"], [])
+        with self.assertRaisesMessage(Exception, "limited to staff"):
+            self._call("delete_meeting", meeting="MTG-001")
 
     def test_push_is_attributed_to_the_requests_user(self):
         self._as(self.user, ["read", "write"])

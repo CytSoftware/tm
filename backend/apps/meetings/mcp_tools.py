@@ -17,6 +17,7 @@ from django.conf import settings
 from django.db.models import Count, Q
 from rest_framework.exceptions import ValidationError
 
+from apps.tasks.access import can_see_project, scope_for_caller, visible_project_ids
 from apps.tasks.models import Task, TransitionSource
 
 from . import services
@@ -91,11 +92,11 @@ def _flatten_errors(detail: Any, prefix: str = "") -> str:
     return f"{prefix.rstrip('.')}: {detail}"
 
 
-def _get_meeting(ref: str) -> Meeting:
+def _get_meeting(ref: str, mcp_user=None) -> Meeting:
     """Accept the human key (``MTG-014``) or the pipeline's recording stem."""
     ref = (ref or "").strip()
     meeting = (
-        base_meeting_queryset()
+        scope_for_caller(base_meeting_queryset(), mcp_user)
         .filter(Q(key__iexact=ref) | Q(stem=ref))
         .first()
     )
@@ -131,9 +132,20 @@ def _get_entity(ref: str | int, kind: str | None = None) -> Entity:
     return found[0]
 
 
-def _detail(meeting: Meeting, *, include_transcript: bool = True) -> dict[str, Any]:
+def _require_project_access(project: Any, mcp_user) -> None:
+    """Refuse to file a meeting or task under a project the caller isn't in."""
+    if mcp_user is None:
+        return
+    proj = services.resolve_project(project)
+    if not can_see_project(mcp_user, proj.id if proj else None):
+        raise ValueError("Pick a project you have access to.")
+
+
+def _detail(
+    meeting: Meeting, *, include_transcript: bool = True, mcp_user=None
+) -> dict[str, Any]:
     fresh = base_meeting_queryset().get(pk=meeting.pk)
-    data = _plain(MeetingDetailSerializer(fresh).data)
+    data = _plain(MeetingDetailSerializer(fresh, context={"user": mcp_user}).data)
     if not include_transcript:
         data["transcript_chars"] = len(data.pop("transcript_md") or "")
     data.pop("snippet", None)
@@ -210,28 +222,40 @@ def _filters(filters: dict[str, Any]) -> dict[str, Any]:
     return chosen
 
 
-def list_meetings(limit: int = 50, **filters: Any) -> list[dict[str, Any]]:
+def list_meetings(limit: int = 50, mcp_user=None, **filters: Any) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), MAX_LIST_LIMIT))
     chosen = _filters(filters)
-    return _summaries(filter_meetings(chosen, light=True)[:limit])
+    qs = scope_for_caller(filter_meetings(chosen, light=True), mcp_user)
+    return _summaries(qs[:limit])
 
 
-def search_meetings(query: str, limit: int = 20, **filters: Any) -> list[dict[str, Any]]:
+def search_meetings(
+    query: str, limit: int = 20, mcp_user=None, **filters: Any
+) -> list[dict[str, Any]]:
     query = (query or "").strip()
     if not query:
         raise ValueError("query is required — use list_meetings to browse.")
     limit = max(1, min(int(limit), MAX_LIST_LIMIT))
     chosen = _filters(filters)
     chosen["search"] = query
-    return _summaries(filter_meetings(chosen)[:limit], search=query)
+    qs = scope_for_caller(filter_meetings(chosen), mcp_user)
+    return _summaries(qs[:limit], search=query)
 
 
-def get_meeting(meeting: str, include_transcript: bool = False) -> dict[str, Any]:
-    return _detail(_get_meeting(meeting), include_transcript=include_transcript)
+def get_meeting(
+    meeting: str, include_transcript: bool = False, mcp_user=None
+) -> dict[str, Any]:
+    return _detail(
+        _get_meeting(meeting, mcp_user),
+        include_transcript=include_transcript,
+        mcp_user=mcp_user,
+    )
 
 
-def get_related_meetings(meeting: str, limit: int = 12) -> list[dict[str, Any]]:
-    rows = related_meetings(_get_meeting(meeting), limit=max(1, min(int(limit), 50)))
+def get_related_meetings(meeting: str, limit: int = 12, mcp_user=None) -> list[dict[str, Any]]:
+    rows = related_meetings(
+        _get_meeting(meeting, mcp_user), limit=max(1, min(int(limit), 50)), user=mcp_user
+    )
     for row in rows:
         row["started_at"] = row["started_at"].isoformat()
         row["url"] = f"{settings.FRONTEND_URL}/meetings?m={row['key']}"
@@ -239,11 +263,20 @@ def get_related_meetings(meeting: str, limit: int = 12) -> list[dict[str, Any]]:
 
 
 def list_meeting_entities(
-    kind: str | None = None, search: str | None = None, limit: int = 200
+    kind: str | None = None, search: str | None = None, limit: int = 200, mcp_user=None
 ) -> list[dict[str, Any]]:
+    # Same as the REST list: non-staff only see people/companies from meetings
+    # they can open, and only those meetings are counted.
+    ids = visible_project_ids(mcp_user) if mcp_user is not None else None
     qs = Entity.objects.select_related("company").annotate(
-        meeting_count=Count("meetings", distinct=True)
+        meeting_count=Count(
+            "meetings",
+            filter=None if ids is None else Q(meetings__project_id__in=ids),
+            distinct=True,
+        )
     )
+    if ids is not None:
+        qs = qs.filter(meeting_count__gt=0)
     if kind:
         qs = qs.filter(kind=kind)
     if search:
@@ -308,9 +341,12 @@ def update_meeting(
     mentioned_people: list[Any] | None = None,
     mentioned_companies: list[Any] | None = None,
     clear_project: bool = False,
+    mcp_user=None,
     **fields: Any,
 ) -> dict[str, Any]:
-    target = _get_meeting(meeting)
+    target = _get_meeting(meeting, mcp_user)
+    if clear_project or fields.get("project") is not None:
+        _require_project_access(None if clear_project else fields["project"], mcp_user)
     data = _drop_none(
         {
             **fields,
@@ -330,7 +366,7 @@ def update_meeting(
         raise ValueError(f"Invalid meeting data: {_flatten_errors(exc.detail)}")
     services.curate_meeting(target, serializer.validated_data)
     broadcast_meeting_event("meeting.updated", {"key": target.key})
-    return _detail(target, include_transcript=False)
+    return _detail(target, include_transcript=False, mcp_user=mcp_user)
 
 
 def delete_meeting(meeting: str) -> dict[str, Any]:
@@ -341,11 +377,13 @@ def delete_meeting(meeting: str) -> dict[str, Any]:
     return {"deleted": key, "title": title}
 
 
-def set_meeting_action_item(meeting: str, item_id: str, done: bool) -> dict[str, Any]:
-    target = _get_meeting(meeting)
+def set_meeting_action_item(
+    meeting: str, item_id: str, done: bool, mcp_user=None
+) -> dict[str, Any]:
+    target = _get_meeting(meeting, mcp_user)
     services.set_action_item_done(target, item_id, done)
     broadcast_meeting_event("meeting.updated", {"key": target.key})
-    return _detail(target, include_transcript=False)
+    return _detail(target, include_transcript=False, mcp_user=mcp_user)
 
 
 def create_task_from_meeting_action_item(
@@ -354,7 +392,8 @@ def create_task_from_meeting_action_item(
     # Local import: apps.mcp_server.tools imports half the project.
     from apps.mcp_server.tools import _resolve_reporter_for_mcp, _task_dict
 
-    target = _get_meeting(meeting)
+    target = _get_meeting(meeting, mcp_user)
+    _require_project_access(project if project is not None else target.project, mcp_user)
     task = services.create_task_from_action_item(
         target,
         item_id,
@@ -366,15 +405,17 @@ def create_task_from_meeting_action_item(
     return {"task": _task_dict(task), "meeting": target.key}
 
 
-def link_meeting_task(meeting: str, task: str, unlink: bool = False) -> dict[str, Any]:
-    target = _get_meeting(meeting)
+def link_meeting_task(
+    meeting: str, task: str, unlink: bool = False, mcp_user=None
+) -> dict[str, Any]:
+    target = _get_meeting(meeting, mcp_user)
     try:
-        task_obj = Task.objects.get(key__iexact=task.strip())
+        task_obj = scope_for_caller(Task.objects.all(), mcp_user).get(key__iexact=task.strip())
     except Task.DoesNotExist:
         raise ValueError(f"Task {task!r} not found.")
     (services.unlink_task if unlink else services.link_task)(target, task_obj)
     broadcast_meeting_event("meeting.updated", {"key": target.key})
-    return _detail(target, include_transcript=False)
+    return _detail(target, include_transcript=False, mcp_user=mcp_user)
 
 
 def link_meetings(
@@ -383,15 +424,16 @@ def link_meetings(
     kind: str = "follow_up",
     note: str = "",
     unlink: bool = False,
+    mcp_user=None,
 ) -> list[dict[str, Any]]:
-    a, b = _get_meeting(meeting), _get_meeting(other)
+    a, b = _get_meeting(meeting, mcp_user), _get_meeting(other, mcp_user)
     if unlink:
         services.unlink_meetings(a, b)
     else:
         services.link_meetings(a, b, kind=kind, note=note)
     for m in (a, b):
         broadcast_meeting_event("meeting.updated", {"key": m.key})
-    return get_related_meetings(a.key)
+    return get_related_meetings(a.key, mcp_user=mcp_user)
 
 
 def update_meeting_entity(

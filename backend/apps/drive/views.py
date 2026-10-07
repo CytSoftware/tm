@@ -31,12 +31,12 @@ def _not_found() -> Response:
     return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
 
-def _can_reach(user, key: str) -> bool:
+def can_reach(user, key: str) -> bool:
     visible = visible_drive_keys(user)
     return visible is None or b2._clean(key) in visible
 
 
-def _shared_listing(user) -> dict:
+def shared_listing(user) -> dict:
     """Flat list of the files a non-staff user can reach — no folders.
 
     ponytail: one HEAD per file; fine for a handful of shares, batch it if
@@ -52,7 +52,7 @@ def _shared_listing(user) -> dict:
     return {"prefix": "", "folders": [], "files": files, "next_token": None}
 
 
-def _claim_upload_key(user, filename: str) -> str:
+def claim_upload_key(user, filename: str) -> str:
     """Reserve ``uploads/<name>``, suffixing ``(2)``, ``(3)``… past any
     existing object or reservation."""
     stem, ext = os.path.splitext(os.path.basename(filename) or "file")
@@ -87,7 +87,7 @@ class DriveListView(APIView):
         token = request.query_params.get("token") or None
         try:
             if not has_full_access(request.user):
-                return Response(_shared_listing(request.user))
+                return Response(shared_listing(request.user))
             return Response(b2.list_objects(prefix, token=token))
         except b2.B2Error as exc:
             return Response({"detail": str(exc)}, status=getattr(exc, "status_code", 400))
@@ -106,7 +106,7 @@ class DriveUploadUrlView(APIView):
         path = s.validated_data["path"]
         try:
             if not has_full_access(request.user):
-                path = _claim_upload_key(request.user, path)
+                path = claim_upload_key(request.user, path)
             data = b2.presign_put(
                 path,
                 s.validated_data.get("content_type") or "application/octet-stream",
@@ -131,7 +131,7 @@ class DriveDownloadUrlView(APIView):
         # ?disposition=inline serves with the object's own Content-Type (for the
         # in-browser viewer); the default forces a download (attachment).
         inline = request.query_params.get("disposition") == "inline"
-        if not _can_reach(request.user, key):
+        if not can_reach(request.user, key):
             return _not_found()
         try:
             url = b2.presign_get(

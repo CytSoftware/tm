@@ -270,7 +270,7 @@ def add_focus(*, user, task_key: str, period: str = FocusPeriod.WEEK) -> FocusIt
     Mirrors ``FocusListView.post`` so MCP and DRF share one code path."""
     if period not in dict(FocusPeriod.choices):
         raise ValidationError({"period": f"Invalid period: {period!r}"})
-    task = get_object_or_404(Task, key=task_key)
+    task = get_object_or_404(restrict_to_projects(Task.objects.all(), user), key=task_key)
     with transaction.atomic():
         item, created = FocusItem.objects.select_for_update().get_or_create(
             user=user,

@@ -163,8 +163,10 @@ class MeetingDetailSerializer(MeetingListSerializer):
 
     def get_linked_tasks(self, obj):
         links = obj.task_links.select_related("task__column", "task__project")
-        if (request := self.context.get("request")) is not None:
-            links = restrict_to_projects(links, request.user, "task__project")
+        # ``user`` is passed by the MCP tools, ``request`` by DRF.
+        user = self.context.get("user") or getattr(self.context.get("request"), "user", None)
+        if user is not None:
+            links = restrict_to_projects(links, user, "task__project")
         return [
             {
                 "key": link.task.key,

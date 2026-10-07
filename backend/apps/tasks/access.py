@@ -171,3 +171,9 @@ def visible_knowledge_slugs(user) -> set[str] | None:
     for slug, project_id in KnowledgePageProject.objects.values_list("slug", "project_id"):
         filed[slug].add(project_id)
     return {slug for slug, ids in filed.items() if ids <= projects}
+
+
+def scope_for_caller(qs: QuerySet, user, field: str = "project") -> QuerySet:
+    """``restrict_to_projects`` for MCP, where ``user=None`` is a user-less
+    operator credential (legacy token, stdio) and stays unrestricted."""
+    return qs if user is None else restrict_to_projects(qs, user, field)

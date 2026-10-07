@@ -938,3 +938,56 @@ class PersonalTokenApiTests(TestCase):
     def test_requires_authentication(self):
         self.client.logout()
         self.assertIn(self.client.get("/api/mcp/tokens/").status_code, (401, 403))
+
+
+class NonStaffMcpScopeTests(TestCase):
+    """MCP mirrors the UI: a non-staff caller sees only their projects."""
+
+    def setUp(self):
+        from apps.tasks.models import Project, Task
+        from apps.wiki.models import Doc
+
+        self.mine = Project.objects.create(name="Mowafeq", prefix="MOW")
+        self.theirs = Project.objects.create(name="Shelter", prefix="SHE")
+        self.emp = User.objects.create_user("emp")
+        self.boss = User.objects.create_user("boss", is_staff=True)
+        self.mine.members.add(self.emp)
+        Task.objects.create(project=self.mine, title="ours", reporter=self.boss)
+        self.hidden = Task.objects.create(project=self.theirs, title="theirs", reporter=self.boss)
+        self.page = Doc.objects.create(title="theirs", project=self.theirs)
+
+    def test_tasks_are_scoped_to_the_callers_projects(self):
+        from . import tools
+
+        self.assertEqual([t["title"] for t in tools.list_tasks(mcp_user=self.emp)], ["ours"])
+        self.assertEqual(len(tools.list_tasks(mcp_user=self.boss)), 2)
+        self.assertEqual([p["prefix"] for p in tools.list_projects(mcp_user=self.emp)], ["MOW"])
+        with self.assertRaises(Exception):
+            tools.get_task(self.hidden.key, mcp_user=self.emp)
+        with self.assertRaises(Exception):
+            tools.create_task(project="SHE", title="x", mcp_user=self.emp)
+        tools.create_task(project="MOW", title="new", mcp_user=self.emp)
+
+    def test_wiki_pages_are_scoped_to_the_callers_projects(self):
+        from . import tools
+
+        self.assertEqual(tools.list_wiki_docs(mcp_user=self.emp), [])
+        with self.assertRaises(Exception):
+            tools.get_wiki_doc(self.page.key, mcp_user=self.emp)
+        with self.assertRaises(Exception):
+            tools.create_wiki_doc(title="x", project="SHE", mcp_user=self.emp)
+        own = tools.create_wiki_doc(title="draft", project="MOW", mcp_user=self.emp)
+        self.assertEqual([d["key"] for d in tools.list_wiki_docs(mcp_user=self.emp)], [own["key"]])
+
+    def test_llm_wiki_writes_must_be_filed_under_the_callers_projects(self):
+        from . import tools
+
+        with self.assertRaisesMessage(ValueError, "Pass projects"):
+            tools.knowledge_write("concepts/x", "# x", mcp_user=self.emp)
+        with self.assertRaises(Exception):  # not one of theirs
+            tools.knowledge_write("concepts/x", "# x", projects=["SHE"], mcp_user=self.emp)
+
+    def test_every_employee_tool_exists(self):
+        from .server import NON_STAFF_TOOLS, mcp
+
+        self.assertEqual(NON_STAFF_TOOLS - set(mcp._tool_manager._tools), set())
