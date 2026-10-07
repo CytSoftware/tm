@@ -17,7 +17,8 @@ class MergeWorkflowTests(TestCase):
         self.user = get_user_model().objects.create_user('dev')
         self.project = Project.objects.create(name='Mowafeq', prefix='CYT')
         self.repo = ProjectRepository.objects.create(project=self.project, repo_id=999, repo_full_name='owner/repo')
-        self.dev = Column.objects.create(project=self.project, name='In Dev', kind='review', order=6)
+        self.dev = Column.objects.create(project=self.project, name='In Dev', kind='review',
+                                         order=self.project.columns.order_by('-order').first().order + 1)
         self.task = self.new_task('One')
         self.read = Mock(return_value={'status': 'ahead'})
         @contextmanager
