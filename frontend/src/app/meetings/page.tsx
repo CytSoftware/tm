@@ -3,8 +3,9 @@
 /**
  * Meetings — recorded conversations pushed in by the recording pipeline.
  *
- * Three views over the *same* filtered set: a node graph (meetings ↔ people ↔
- * companies ↔ projects), a swimlane timeline, and a grouped list. Opening a
+ * Three views over the *same* filtered set: a grouped list (the default), a
+ * node graph (meetings ↔ people ↔ companies ↔ projects), and a swimlane
+ * timeline. Opening a
  * meeting slides a detail pane in beside whichever view you're on.
  *
  * Everything that defines what you're looking at — view, grouping, filters,
@@ -51,9 +52,9 @@ import { cn } from "@/lib/utils";
 type ViewMode = "graph" | "timeline" | "list";
 
 const VIEWS: { id: ViewMode; label: string; icon: typeof List }[] = [
+  { id: "list", label: "List", icon: List },
   { id: "graph", label: "Graph", icon: Share2 },
   { id: "timeline", label: "Timeline", icon: GanttChart },
-  { id: "list", label: "List", icon: List },
 ];
 
 /** Group-by options differ per view: the graph can float free ("none"), and
@@ -100,7 +101,7 @@ function Meetings() {
   useEffect(() => connectMeetingsSocket(queryClient), [queryClient]);
 
   const view = (VIEWS.find((v) => v.id === params.get("view"))?.id ??
-    "graph") as ViewMode;
+    "list") as ViewMode;
   const groupOptions = GROUPS[view];
   const group =
     groupOptions.find((g) => g.id === params.get("group"))?.id ??
@@ -204,7 +205,7 @@ function Meetings() {
                 title={v.label}
                 onClick={() =>
                   setParams({
-                    view: v.id === "graph" ? null : v.id,
+                    view: v.id === "list" ? null : v.id,
                     group: null,
                   })
                 }

@@ -1,5 +1,5 @@
-"""Non-staff access: project membership gates tasks, meetings and wiki;
-explicit rows gate Drive and the LLM wiki; every other app is refused.
+"""Non-staff access: no tasks at all; project membership gates meetings and
+wiki; explicit rows gate Drive and the LLM wiki; every other app is refused.
 
     uv run python manage.py test apps.tasks.test_access
 """
@@ -31,28 +31,31 @@ class NonStaffAccessTests(TestCase):
         self.client.force_login(self.employee)
 
     def test_only_listed_apps_are_reachable(self):
-        self.assertEqual(self.client.get("/api/tasks/").status_code, 200)
         self.assertEqual(self.client.get("/api/meetings/").status_code, 200)
-        for path in ("/api/bets/", "/api/integrations/routines/", "/api/progress/",
+        self.assertEqual(self.client.get("/api/wiki-docs/").status_code, 200)
+        for path in ("/api/tasks/", "/api/columns/", "/api/me/focus/", "/api/bets/",
+                     "/api/integrations/routines/", "/api/crm/contacts/",
                      "/api/analytics/throughput/", "/api/mcp/tokens/"):
             self.assertEqual(self.client.get(path).status_code, 403, path)
-        self.assertEqual(self.client.post("/api/columns/", {}).status_code, 403)
-
-    def test_tasks_are_limited_to_member_projects(self):
-        Task.objects.create(project=self.mine, title="visible", reporter=self.boss)
-        hidden = Task.objects.create(project=self.theirs, title="hidden", reporter=self.boss)
-        titles = [t["title"] for t in self.client.get("/api/tasks/").json()["results"]]
-        self.assertEqual(titles, ["visible"])
-        self.assertEqual(self.client.get(f"/api/tasks/{hidden.key}/").status_code, 404)
-        resp = self.client.post(
-            "/api/tasks/", {"title": "x", "project_id": self.theirs.id},
-            content_type="application/json",
-        )
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(self.client.post("/api/projects/", {}).status_code, 403)
         self.assertEqual(
             [p["prefix"] for p in self.client.get("/api/projects/").json()["results"]],
             ["MOW"],
         )
+
+    def test_meetings_show_no_tasks(self):
+        task = Task.objects.create(project=self.mine, title="t", reporter=self.boss)
+        meeting = Meeting.objects.create(
+            stem="a", title="ours", started_at=timezone.now(), project=self.mine
+        )
+        meeting.tasks.add(task, through_defaults={})
+        detail = self.client.get(f"/api/meetings/{meeting.key}/").json()
+        self.assertEqual(detail["linked_tasks"], [])
+        resp = self.client.post(
+            f"/api/meetings/{meeting.key}/tasks/", {"task": task.key},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 403)
 
     def test_meetings_without_a_member_project_are_hidden(self):
         now = timezone.now()

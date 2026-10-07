@@ -1,12 +1,14 @@
 """Who can see what.
 
-Staff see everything. A non-staff user sees only what belongs to a project
-they are a member of (``Project.members``, edited in the Django admin), plus
-wiki pages they created and Drive files they uploaded or were shared. Anything
-without a project is staff-only — new content is hidden until someone files it.
+Staff see everything. A non-staff user never sees tasks, and in meetings and
+the wiki sees only what belongs to a project they are a member of
+(``Project.members``, edited in the Django admin), plus wiki pages they created
+and Drive files they uploaded or were shared. Anything without a project is
+staff-only — new content is hidden until someone files it.
 
-Every REST read path for tasks, meetings, wiki, Drive and the LLM wiki goes
-through these helpers. Non-staff are kept out of every other app by
+Every REST read path for meetings, wiki, Drive and the LLM wiki goes through
+these helpers. Task endpoints keep their project filters too, as a second
+line behind the middleware. Non-staff are kept out of every other app by
 ``NonStaffAccessMiddleware`` and out of MCP by ``_ScopedFastMCP.call_tool``.
 """
 
@@ -19,21 +21,15 @@ from rest_framework.permissions import BasePermission
 SAFE = frozenset({"GET", "HEAD", "OPTIONS"})
 
 #: The only API prefixes a non-staff user may call, and with which methods
-#: (``None`` = any). Everything else — bets, routines, services, PR reviews,
-#: monitoring, analytics, progress, webhooks, MCP token management — is
+#: (``None`` = any). Everything else — tasks, bets, routines, services, PR
+#: reviews, CRM, monitoring, analytics, webhooks, MCP token management — is
 #: refused, so an endpoint added later is staff-only until listed here.
 NON_STAFF_API: tuple[tuple[str, frozenset[str] | None], ...] = (
     ("/api/auth/", None),
-    ("/api/tasks/", None),
-    ("/api/projects/", None),  # writes: ProjectViewSet.staff_only_actions
-    ("/api/columns/", SAFE),
-    ("/api/labels/", SAFE),
-    ("/api/views/", None),
+    ("/api/projects/", SAFE),  # names for the meetings filter; no tasks
     ("/api/users/", SAFE),
     ("/api/notifications/", None),
-    ("/api/me/focus/", None),
     ("/api/uploads/", None),
-    ("/api/settings/staleness/", SAFE),
     ("/api/wiki-docs/", None),
     ("/api/drive/", None),
     ("/api/knowledge/", SAFE),

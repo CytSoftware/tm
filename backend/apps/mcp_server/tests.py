@@ -956,17 +956,25 @@ class NonStaffMcpScopeTests(TestCase):
         self.hidden = Task.objects.create(project=self.theirs, title="theirs", reporter=self.boss)
         self.page = Doc.objects.create(title="theirs", project=self.theirs)
 
-    def test_tasks_are_scoped_to_the_callers_projects(self):
+    def test_task_tools_are_staff_only(self):
+        from asgiref.sync import async_to_sync
+
+        from .auth import SCOPE_SCOPES_KEY, SCOPE_USER_KEY
+        from .server import mcp
+
+        token = fake_request_ctx({SCOPE_USER_KEY: self.emp, SCOPE_SCOPES_KEY: ["read", "write"]})
+        try:
+            for name in ("list_tasks", "create_task", "link_meeting_task"):
+                with self.assertRaisesMessage(Exception, "limited to staff"):
+                    async_to_sync(mcp.call_tool)(name, {})
+        finally:
+            reset_request_ctx(token)
+
+    def test_projects_are_scoped_to_the_caller(self):
         from . import tools
 
-        self.assertEqual([t["title"] for t in tools.list_tasks(mcp_user=self.emp)], ["ours"])
-        self.assertEqual(len(tools.list_tasks(mcp_user=self.boss)), 2)
         self.assertEqual([p["prefix"] for p in tools.list_projects(mcp_user=self.emp)], ["MOW"])
-        with self.assertRaises(Exception):
-            tools.get_task(self.hidden.key, mcp_user=self.emp)
-        with self.assertRaises(Exception):
-            tools.create_task(project="SHE", title="x", mcp_user=self.emp)
-        tools.create_task(project="MOW", title="new", mcp_user=self.emp)
+        self.assertEqual(len(tools.list_projects(mcp_user=self.boss)), 2)
 
     def test_wiki_pages_are_scoped_to_the_callers_projects(self):
         from . import tools

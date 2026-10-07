@@ -258,24 +258,26 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
               }}
             />
           )}
-          <NavLink
-            icon={
-              <LayoutDashboard
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="Tasks"
-            active={pathname.startsWith("/board")}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/board");
-              onClose?.();
-            }}
-          />
+          {canOpen(user, "/board") && (
+            <NavLink
+              icon={
+                <LayoutDashboard
+                  className={
+                    isCollapsed
+                      ? "size-4"
+                      : "size-3.5 shrink-0 text-muted-foreground"
+                  }
+                />
+              }
+              label="Tasks"
+              active={pathname.startsWith("/board")}
+              collapsed={isCollapsed}
+              onNavigate={() => {
+                router.push("/board");
+                onClose?.();
+              }}
+            />
+          )}
           {/* Sits under Tasks: it's the "which board am I on" surface, and
               the only route that can reach an archived project. */}
           {canOpen(user, "/projects") && (

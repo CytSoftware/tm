@@ -90,7 +90,8 @@ class MeetingViewSet(viewsets.ModelViewSet):
     lookup_value_regex = r"[A-Za-z0-9\-]+"
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
     permission_classes = [permissions.IsAuthenticated, StaffOnlyActions]
-    staff_only_actions = {"create", "destroy"}
+    # Tasks are staff-only, so are the meeting actions that touch them.
+    staff_only_actions = {"create", "destroy", "action_item_create_task", "tasks"}
 
     def get_queryset(self):
         if self.action == "list":

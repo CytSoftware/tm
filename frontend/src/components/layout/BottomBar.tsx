@@ -9,21 +9,32 @@
  *
  * Five slots: Home, Tasks, a raised center Quick Add, Search, Menu. Home and
  * Tasks are real navigation (usePathname/useRouter); Search/Menu/Quick Add
- * are callbacks so Shell owns the palette/sheet/task-dialog state.
+ * are callbacks so Shell owns the palette/sheet/task-dialog state. Non-staff
+ * users have no tasks, so they get Wiki, Drive, Meetings and Menu instead.
  */
 
-import { Home, LayoutDashboard, Menu, Plus, Search } from "lucide-react";
+import {
+  AudioLines,
+  BookText,
+  HardDrive,
+  Home,
+  LayoutDashboard,
+  Menu,
+  Plus,
+  Search,
+} from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 
 type BottomBarProps = {
+  staff: boolean;
   onQuickAdd: () => void;
   onSearch: () => void;
   onMenu: () => void;
 };
 
-export function BottomBar({ onQuickAdd, onSearch, onMenu }: BottomBarProps) {
+export function BottomBar({ staff, onQuickAdd, onSearch, onMenu }: BottomBarProps) {
   const router = useRouter();
   const pathname = usePathname();
 
@@ -35,36 +46,55 @@ export function BottomBar({ onQuickAdd, onSearch, onMenu }: BottomBarProps) {
       className="lg:hidden shrink-0 pb-safe border-t border-border/80 bg-background"
       aria-label="Primary"
     >
-      <div className="grid grid-cols-5 items-center px-1">
-        <NavSlot
-          icon={<Home className="size-5" />}
-          label="Home"
-          active={homeActive}
-          onClick={() => router.push("/")}
-        />
-        <NavSlot
-          icon={<LayoutDashboard className="size-5" />}
-          label="Tasks"
-          active={tasksActive}
-          onClick={() => router.push("/board")}
-        />
-        <div className="flex items-center justify-center py-1.5">
-          <button
-            type="button"
-            onClick={onQuickAdd}
-            aria-label="New task"
-            className="tap-target size-11 rounded-full bg-foreground text-background grid place-items-center shadow-sm active:translate-y-px transition-transform"
-          >
-            <Plus className="size-5" />
-          </button>
+      {!staff ? (
+        <div className="grid grid-cols-4 items-center px-1">
+          {[
+            { href: "/wiki", label: "Wiki", icon: BookText },
+            { href: "/drive", label: "Drive", icon: HardDrive },
+            { href: "/meetings", label: "Meetings", icon: AudioLines },
+          ].map(({ href, label, icon: Icon }) => (
+            <NavSlot
+              key={href}
+              icon={<Icon className="size-5" />}
+              label={label}
+              active={pathname.startsWith(href)}
+              onClick={() => router.push(href)}
+            />
+          ))}
+          <NavSlot icon={<Menu className="size-5" />} label="Menu" onClick={onMenu} />
         </div>
-        <NavSlot
-          icon={<Search className="size-5" />}
-          label="Search"
-          onClick={onSearch}
-        />
-        <NavSlot icon={<Menu className="size-5" />} label="Menu" onClick={onMenu} />
-      </div>
+      ) : (
+        <div className="grid grid-cols-5 items-center px-1">
+          <NavSlot
+            icon={<Home className="size-5" />}
+            label="Home"
+            active={homeActive}
+            onClick={() => router.push("/")}
+          />
+          <NavSlot
+            icon={<LayoutDashboard className="size-5" />}
+            label="Tasks"
+            active={tasksActive}
+            onClick={() => router.push("/board")}
+          />
+          <div className="flex items-center justify-center py-1.5">
+            <button
+              type="button"
+              onClick={onQuickAdd}
+              aria-label="New task"
+              className="tap-target size-11 rounded-full bg-foreground text-background grid place-items-center shadow-sm active:translate-y-px transition-transform"
+            >
+              <Plus className="size-5" />
+            </button>
+          </div>
+          <NavSlot
+            icon={<Search className="size-5" />}
+            label="Search"
+            onClick={onSearch}
+          />
+          <NavSlot icon={<Menu className="size-5" />} label="Menu" onClick={onMenu} />
+        </div>
+      )}
     </nav>
   );
 }

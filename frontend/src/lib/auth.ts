@@ -33,14 +33,15 @@ export async function logout(): Promise<void> {
  *  (`NON_STAFF_API` in `apps/tasks/access.py`); this only keeps them out of
  *  pages whose every request would be refused. */
 const NON_STAFF_ROUTES = [
-  "/board",
-  "/focus",
   "/wiki",
   "/drive",
   "/llm-wiki",
   "/meetings",
   "/settings/quick-actions",
 ];
+
+/** Where a non-staff user lands when they open a page they can't use. */
+export const NON_STAFF_HOME = "/wiki";
 
 export function canOpen(user: Me, path: string): boolean {
   return (

@@ -452,6 +452,9 @@ function Actions({ meeting }: { meeting: Meeting }) {
   const createTask = useCreateTaskFromActionItem(meeting.key);
   const projects = useProjectsQuery({ includeArchived: false });
   const { openTaskByKey } = useTaskDialog();
+  // Tasks are staff-only: employees tick action items but never see tasks.
+  const { data: me } = useQuery({ queryKey: meKey(), queryFn: fetchMe });
+  const staff = !!me?.is_staff;
   // Only needed when the meeting itself has no project to file tasks under.
   const [projectId, setProjectId] = useState("");
 
@@ -479,7 +482,7 @@ function Actions({ meeting }: { meeting: Meeting }) {
         </p>
       ) : (
         <>
-          {needsProject && (
+          {staff && needsProject && (
             <label className="mb-3 flex items-center gap-2 text-[12px] text-muted-foreground">
               Create tasks in
               <select
@@ -537,7 +540,7 @@ function Actions({ meeting }: { meeting: Meeting }) {
                     </p>
                   )}
                 </div>
-                {item.task_key ? (
+                {!staff ? null : item.task_key ? (
                   <button
                     type="button"
                     onClick={() => openTaskByKey(item.task_key!)}
@@ -569,7 +572,7 @@ function Actions({ meeting }: { meeting: Meeting }) {
         </>
       )}
 
-      {otherTasks.length > 0 && (
+      {staff && otherTasks.length > 0 && (
         <>
           <h3 className="mb-1 mt-5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Linked tasks

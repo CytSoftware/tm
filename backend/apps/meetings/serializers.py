@@ -4,7 +4,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 
-from apps.tasks.access import restrict_to_projects
+from apps.tasks.access import has_full_access
 
 from .models import (
     Entity,
@@ -163,10 +163,11 @@ class MeetingDetailSerializer(MeetingListSerializer):
 
     def get_linked_tasks(self, obj):
         links = obj.task_links.select_related("task__column", "task__project")
-        # ``user`` is passed by the MCP tools, ``request`` by DRF.
+        # ``user`` is passed by the MCP tools, ``request`` by DRF. Tasks are
+        # staff-only, so a non-staff viewer gets none.
         user = self.context.get("user") or getattr(self.context.get("request"), "user", None)
-        if user is not None:
-            links = restrict_to_projects(links, user, "task__project")
+        if user is not None and not has_full_access(user):
+            return []
         return [
             {
                 "key": link.task.key,

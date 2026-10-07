@@ -187,10 +187,8 @@ READ_ONLY_TOOLS = frozenset({
 #: projects / shares. Same deliberate shape as ``READ_ONLY_TOOLS``: a tool added
 #: later and forgotten here is staff-only by default.
 NON_STAFF_TOOLS = frozenset({
-    # tasks
-    "list_projects", "list_columns", "list_labels", "list_users", "list_views",
-    "query_view", "list_tasks", "get_task", "create_task", "update_task",
-    "move_task", "delete_task", "list_focus", "add_focus", "remove_focus",
+    # directory (no tasks — those are staff-only)
+    "list_projects", "list_users",
     # wiki
     "list_wiki_docs", "get_wiki_doc", "create_wiki_doc", "update_wiki_doc",
     "delete_wiki_doc", "set_wiki_content", "append_wiki_content",
@@ -203,7 +201,7 @@ NON_STAFF_TOOLS = frozenset({
     # meetings
     "list_meetings", "search_meetings", "get_meeting", "get_related_meetings",
     "list_meeting_entities", "update_meeting", "set_meeting_action_item",
-    "create_task_from_meeting_action_item", "link_meeting_task", "link_meetings",
+    "link_meetings",
 })
 
 

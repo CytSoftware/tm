@@ -150,9 +150,9 @@ Leads, deals and follow-ups, filled mostly by agents. Plan + rationale: `docs/pl
 
 ### Access control (`apps/tasks/access.py`)
 
-Staff (`is_staff`/`is_superuser`) see everything. Non-staff users are employees: they see only tasks, wiki, Drive, LLM wiki and meetings, and inside those only what is granted. All grants are edited in the Django admin.
+Staff (`is_staff`/`is_superuser`) see everything. Non-staff users are employees: they see only the wiki, Drive, LLM wiki and meetings — **never tasks** (no board, palette, quick-add, or linked tasks on meetings) — and inside those only what is granted. All grants are edited in the Django admin.
 
-- **Projects:** `Project.members` gates tasks, columns, labels, meetings and wiki pages. Anything with no project is staff-only. A wiki page without a project inherits its nearest ancestor's (`visible_doc_ids`), and pages a user created stay visible to them.
+- **Projects:** `Project.members` gates meetings and wiki pages. Anything with no project is staff-only. A wiki page without a project inherits its nearest ancestor's (`visible_doc_ids`), and pages a user created stay visible to them.
 - **Drive:** per user, not per project. `DriveFile` rows (`apps/drive/models.py`) grant a key to its uploader and to `shared_with`. Non-staff get a flat file list and no folders. Their uploads go to `uploads/` under a server-chosen key, so they can never overwrite a file they can't see.
 - **LLM wiki:** `KnowledgePageProject` files a slug under projects. No row = staff-only. Several rows = the user must be a member of **all** of them, because one synthesized page mixes facts.
 - **Fail closed:** `NonStaffAccessMiddleware` refuses every `/api/` prefix not in `NON_STAFF_API`, so a new endpoint is staff-only until listed. The frontend mirror is `NON_STAFF_ROUTES` in `frontend/src/lib/auth.ts`; it only hides nav and redirects, it is not the enforcement.

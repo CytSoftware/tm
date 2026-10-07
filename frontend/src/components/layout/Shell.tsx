@@ -8,7 +8,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { GlobalShortcuts } from "@/components/GlobalShortcuts";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { meKey, myTasksKey, toReviewKey } from "@/lib/query-keys";
-import { canOpen, fetchMe } from "@/lib/auth";
+import { canOpen, fetchMe, NON_STAFF_HOME } from "@/lib/auth";
 import { ensureCsrfCookie } from "@/lib/api";
 import { connectNotificationSocket } from "@/lib/ws";
 import { usePalette } from "@/lib/palette";
@@ -119,11 +119,11 @@ export function Shell({ children }: { children: ReactNode }) {
     router.replace("/login");
   }, [needsLogin, pathname, router]);
 
-  // Non-staff users only reach tasks/wiki/drive/LLM wiki/meetings; anything
-  // else (including Home, which is all bets + analytics) lands on the board.
+  // Non-staff users only reach wiki/drive/LLM wiki/meetings; anything else
+  // (including Home and the task board) lands on NON_STAFF_HOME.
   const blocked = meQuery.data ? !canOpen(meQuery.data, pathname) : false;
   useEffect(() => {
-    if (blocked && !STANDALONE_ROUTES.includes(pathname)) router.replace("/board");
+    if (blocked && !STANDALONE_ROUTES.includes(pathname)) router.replace(NON_STAFF_HOME);
   }, [blocked, pathname, router]);
 
   // Global notification socket — one per authenticated session, mounted
@@ -167,7 +167,8 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <TaskDialogProvider>
-      <GlobalShortcuts />
+      {/* Both are task tools (quick-add, task search) — staff only. */}
+      {user.is_staff && <GlobalShortcuts />}
       <div className="h-dvh flex flex-col lg:flex-row overflow-hidden">
         {/* Inline sidebar — desktop only */}
         <div className="hidden lg:flex shrink-0">
@@ -200,6 +201,7 @@ export function Shell({ children }: { children: ReactNode }) {
             *outside* the provider it returns and can't call the hook
             directly. */}
         <MobileBottomBar
+          staff={user.is_staff}
           onSearch={() => setPaletteOpen(true)}
           onMenu={() => setMobileOpen(true)}
         />
@@ -221,10 +223,12 @@ export function Shell({ children }: { children: ReactNode }) {
           </SheetContent>
         </Sheet>
       </div>
-      <CommandPalette
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-      />
+      {user.is_staff && (
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
     </TaskDialogProvider>
   );
 }
@@ -237,15 +241,18 @@ export function Shell({ children }: { children: ReactNode }) {
  * provider it returns.
  */
 function MobileBottomBar({
+  staff,
   onSearch,
   onMenu,
 }: {
+  staff: boolean;
   onSearch: () => void;
   onMenu: () => void;
 }) {
   const { createTask } = useTaskDialog();
   return (
     <BottomBar
+      staff={staff}
       onQuickAdd={() => createTask()}
       onSearch={onSearch}
       onMenu={onMenu}
