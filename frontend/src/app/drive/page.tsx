@@ -176,6 +176,10 @@ export default function DrivePage() {
   const [moving, setMoving] = useState<DriveItem | null>(null);
   const [sharing, setSharing] = useState<DriveItem | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Multi-file upload: one file at a time, so progress and failures are per file.
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [failed, setFailed] = useState<{ name: string; error: string }[]>([]);
+  const [dragOver, setDragOver] = useState(false);
 
   const { data: me } = useQuery({ queryKey: meKey(), queryFn: fetchMe });
   const staff = !!me?.is_staff;
@@ -198,10 +202,41 @@ export default function DrivePage() {
     setPrefix(folder);
   }
 
+  async function uploadAll(files: File[]) {
+    if (!files.length || progress) return;
+    const folder = writable ? prefix : INBOX;
+    const errors: { name: string; error: string }[] = [];
+    setFailed([]);
+    setProgress({ done: 0, total: files.length });
+    for (const [i, file] of files.entries()) {
+      try {
+        await upload.mutateAsync({ file, folder });
+      } catch (e) {
+        errors.push({ name: file.name, error: e instanceof Error ? e.message : "Upload failed." });
+      }
+      setProgress({ done: i + 1, total: files.length });
+    }
+    setProgress(null);
+    setFailed(errors);
+  }
+
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (file) upload.mutate({ file, folder: writable ? prefix : INBOX });
+    void uploadAll(files);
+  }
+
+  // Desktop drag-and-drop from the OS; touch devices use the Upload button.
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    void uploadAll(Array.from(e.dataTransfer.files));
+  }
+
+  function onDragOver(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    setDragOver(true);
   }
 
   function onNewFolder() {
@@ -294,18 +329,18 @@ export default function DrivePage() {
               <span className="max-sm:hidden">New folder</span>
             </Button>
           )}
-          <input ref={fileRef} type="file" className="hidden" onChange={onPick} />
+          <input ref={fileRef} type="file" multiple className="hidden" onChange={onPick} />
           <Button
             type="button"
             size="sm"
             className="h-8"
-            disabled={upload.isPending}
+            disabled={progress != null}
             onClick={() => fileRef.current?.click()}
             title={writable ? undefined : "Not inside a category — it goes to To be organized"}
           >
             <Upload className="size-3.5" />
-            {upload.isPending
-              ? "Uploading…"
+            {progress
+              ? `Uploading ${Math.min(progress.done + 1, progress.total)}/${progress.total}…`
               : writable
                 ? "Upload"
                 : "Upload to To be organized"}
@@ -321,7 +356,22 @@ export default function DrivePage() {
         onBack={() => setSelected(null)}
         backLabel="Files"
         master={
-          <div className="flex-1 min-h-0 overflow-y-auto">
+          <div
+            className={cn(
+              "flex-1 min-h-0 overflow-y-auto",
+              dragOver && "bg-accent/40 outline-2 -outline-offset-2 outline-dashed outline-ring",
+            )}
+            onDragOver={onDragOver}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false);
+            }}
+            onDrop={onDrop}
+          >
+            {dragOver && (
+              <div className="px-4 py-2 text-[12px] text-muted-foreground border-b border-border/60">
+                Drop to upload to {writable ? `/${prefix}` : "To be organized"}
+              </div>
+            )}
             {list.isLoading ? (
               <div className="p-4 text-[13px] text-muted-foreground">Loading…</div>
             ) : list.isError ? (
@@ -395,9 +445,16 @@ export default function DrivePage() {
                 )}
               </ul>
             )}
-            {upload.isError && (
-              <div className="p-3 text-[12px] text-destructive">
-                {(upload.error as Error)?.message}
+            {failed.length > 0 && (
+              <div className="p-3 text-[12px] text-destructive space-y-0.5">
+                <p className="font-medium">
+                  {failed.length} file{failed.length > 1 ? "s" : ""} didn&apos;t upload:
+                </p>
+                {failed.map((f) => (
+                  <p key={f.name} className="truncate">
+                    {f.name} — {f.error}
+                  </p>
+                ))}
               </div>
             )}
             {actionError && !selected && (
