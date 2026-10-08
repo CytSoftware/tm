@@ -153,6 +153,15 @@ def visible_drive_keys(user) -> set[str] | None:
     )
 
 
+def can_reach_drive(user, key: str) -> bool:
+    """A key the user uploaded or was shared — or anything inside a folder
+    (a ``DriveFile`` key ending ``/``) they uploaded or were shared."""
+    visible = visible_drive_keys(user)
+    if visible is None:
+        return True
+    return key in visible or any(f.endswith("/") and key.startswith(f) for f in visible)
+
+
 def visible_knowledge_slugs(user) -> set[str] | None:
     """LLM-wiki slugs a non-staff user can read (``None`` = all): every
     project the page is filed under must be one of theirs."""

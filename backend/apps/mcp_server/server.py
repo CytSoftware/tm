@@ -1144,10 +1144,11 @@ async def insert_wiki_content(
 async def drive_list(prefix: str = "", token: str | None = None) -> dict[str, Any]:
     """List folders and files in the company Drive (Backblaze B2) under a prefix.
 
-    ``prefix`` is a folder path like ``"docs/"`` (empty = bucket root). Returns
-    ``{prefix, folders, files, next_token}``; pass ``next_token`` back to page
-    through large folders. The internal ``llm-wiki/`` and trash prefixes are
-    hidden.
+    ``prefix`` is a folder path like ``"mowafeq/sales/"`` (empty = root). The
+    root lists one folder per TM project plus ``to-be-organized/``; each project
+    lists its categories (see ``drive_upload``). Returns ``{prefix, folders,
+    files, next_token}``; pass ``next_token`` back to page through large
+    folders. System folders (meetings, sources, backups) are not available.
     """
     return await _async(tools.drive_list)(prefix=prefix, token=token, mcp_user=_get_mcp_user())
 
@@ -1164,20 +1165,47 @@ async def drive_read(key: str, max_bytes: int = 65536) -> dict[str, Any]:
 
 @mcp.tool()
 async def drive_upload(
-    key: str,
+    filename: str,
+    project: str | int | None = None,
+    category: str | None = None,
+    client: str | None = None,
+    subfolder: str | None = None,
     content: str = "",
     content_base64: str | None = None,
     content_type: str = "text/plain; charset=utf-8",
 ) -> dict[str, Any]:
-    """Create or overwrite a Drive file with inline content.
+    """Create or overwrite a Drive file with inline content. The server files it.
+
+    The Drive is organized by TM project, then a fixed category:
+    ``<project>/<category>/[<client>/][<subfolder>/]<filename>``. You choose:
+
+    - ``project`` — the TM project's prefix or id (``MOW``, ``SHE``…); company-wide
+      files go in ``GEN`` (general). See ``list_projects``.
+    - ``category`` — one of:
+      ``brand`` (logos, guidelines, brand videos, screenshots),
+      ``sales`` (decks, one-pagers, outreach, campaigns, tenders, GTM strategy,
+      market and competitor research),
+      ``clients`` (needs ``client`` = the company, e.g. ``"Egis"``: contracts,
+      proposals, invoices, client files and call notes),
+      ``product`` (specs, demos, demo data, tutorials, bug reports, customer
+      feedback, product research),
+      ``fundraising`` (accelerators, investor applications),
+      ``admin`` (legal, finance, HR, company documents, regulations),
+      ``archive`` (anything superseded).
+      There is no research folder: file research with the domain it serves.
+    - ``subfolder`` — optional finer grouping inside it, e.g. ``"decks"``.
+
+    Not sure where it belongs? Omit both ``project`` and ``category``: it lands
+    in ``to-be-organized/`` for a person to file.
 
     Provide text via ``content`` or binary via ``content_base64`` (exactly one).
-    ``key`` is the destination path like ``"notes/todo.md"``. Deleting Drive
-    files is intentionally not available over MCP.
+    Returns the final ``key``. Deleting Drive files is not available over MCP.
     """
     return await _async(tools.drive_upload)(
-        key=key, content=content, content_base64=content_base64,
-        content_type=content_type, mcp_user=_get_mcp_user(),
+        filename=filename, project=project, category=category, client=client,
+        subfolder=subfolder, content=content,
+        content_base64=content_base64, content_type=content_type,
+        mcp_user=_get_mcp_user(),
     )
 
 

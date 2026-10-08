@@ -1807,20 +1807,23 @@ def _drive_restricted(mcp_user) -> bool:
 
 
 def drive_list(prefix: str = "", token: str | None = None, mcp_user=None) -> dict[str, Any]:
-    from apps.drive import b2
-    from apps.drive.views import shared_listing
+    from apps.drive.views import listing
 
-    if _drive_restricted(mcp_user):
-        return shared_listing(mcp_user)
-    return b2.list_objects(prefix, token=token)
+    # Same listing as the Drive page; system folders are never shown here.
+    return listing(mcp_user, prefix, token, full=not _drive_restricted(mcp_user))
 
 
 def drive_read(key: str, max_bytes: int = 65536, mcp_user=None) -> dict[str, Any]:
     from apps.drive import b2
     from apps.drive.views import can_reach
 
+    from apps.drive.layout import is_hidden
+
     max_bytes = min(max(0, max_bytes), 1_048_576)  # cap at 1 MB — no OOM via a huge read
-    meta = b2.head(key) if not _drive_restricted(mcp_user) or can_reach(mcp_user, key) else None
+    reachable = not is_hidden(b2._clean(key)) and (
+        not _drive_restricted(mcp_user) or can_reach(mcp_user, key)
+    )
+    meta = b2.head(key) if reachable else None
     if meta is None:
         raise ValueError(f"No such Drive object: {key!r}")
     out = dict(meta)
@@ -1842,7 +1845,10 @@ def drive_read(key: str, max_bytes: int = 65536, mcp_user=None) -> dict[str, Any
     return out
 
 
-def drive_upload(key: str, content: str = "", content_base64: str | None = None,
+def drive_upload(filename: str, project: str | int | None = None,
+                 category: str | None = None, client: str | None = None,
+                 subfolder: str | None = None,
+                 content: str = "", content_base64: str | None = None,
                  content_type: str = "text/plain; charset=utf-8",
                  mcp_user=None) -> dict[str, Any]:
     import base64 as _b64
@@ -1850,6 +1856,22 @@ def drive_upload(key: str, content: str = "", content_base64: str | None = None,
     import logging
 
     from apps.drive import b2
+    from apps.drive.layout import INBOX, drive_path
+
+    # The path always comes from the Drive layout (apps/drive/layout.py):
+    # project + category, or to-be-organized/ when the caller isn't sure.
+    if project is None and category is None:
+        name = (filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+        if not name:
+            raise ValueError("A file name is required.")
+        key = INBOX + name
+    elif project is None or not category:
+        raise ValueError("Pass both `project` and `category`, or neither for to-be-organized/.")
+    else:
+        key = drive_path(
+            _resolve_project(project, mcp_user), category, filename,
+            client=client, subfolder=subfolder,
+        )
 
     if content and content_base64:
         raise ValueError("Provide either `content` or `content_base64`, not both.")
@@ -1864,11 +1886,12 @@ def drive_upload(key: str, content: str = "", content_base64: str | None = None,
         data = content.encode("utf-8")
 
     if _drive_restricted(mcp_user):
-        from apps.drive.views import claim_upload_key
+        from apps.drive.views import _writable, claim_upload_key
 
-        # Same rule as the UI: the server picks the key under uploads/, so an
-        # employee can never overwrite a file they can't see.
-        key = claim_upload_key(mcp_user, key)
+        # Same rules as the UI: only into a folder they can reach (or the
+        # inbox), and never over an existing file — a taken name gets " (2)".
+        folder, _, name = key.rpartition("/")
+        key = claim_upload_key(mcp_user, name, _writable(mcp_user, folder))
     result = b2.put_bytes(key, data, content_type)
     if mcp_user is not None:  # attribute the write for audit (B2 has no per-user field)
         logging.getLogger("apps.mcp_server").info(

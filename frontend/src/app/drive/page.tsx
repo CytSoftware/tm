@@ -16,22 +16,32 @@ import {
   Download,
   File as FileIcon,
   Folder,
+  FolderInput,
+  FolderPlus,
   HardDrive,
   Home,
+  Share2,
   Trash2,
   Upload,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { type DriveItem, MoveDialog, ShareDialog } from "@/components/drive/DriveDialogs";
 import {
   type DriveFile,
+  INBOX,
   downloadObject,
   getViewUrl,
+  isWritable,
+  useCreateFolder,
   useDeleteObject,
   useDriveList,
   useUploadFile,
 } from "@/hooks/use-drive";
 import { MasterDetail } from "@/components/layout/MasterDetail";
+import { fetchMe } from "@/lib/auth";
+import { meKey } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
 const TEXT_CAP = 1_500_000; // 1.5 MB — inline-preview text under this
@@ -47,8 +57,14 @@ function formatSize(bytes: number): string {
 }
 
 function folderLabel(prefix: string): string {
+  if (prefix === INBOX) return "To be organized";
   const parts = prefix.replace(/\/$/, "").split("/");
   return parts[parts.length - 1] || prefix;
+}
+
+/** Project and category folders are fixed; anything deeper can move. */
+function isMovableFolder(folder: string): boolean {
+  return folder !== INBOX && isWritable(folder.replace(/[^/]+\/$/, ""));
 }
 
 type Kind = "image" | "pdf" | "video" | "audio" | "text" | "other";
@@ -156,13 +172,21 @@ export default function DrivePage() {
   const [prefix, setPrefix] = useState("");
   const [selected, setSelected] = useState<DriveFile | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [showSystem, setShowSystem] = useState(false);
+  const [moving, setMoving] = useState<DriveItem | null>(null);
+  const [sharing, setSharing] = useState<DriveItem | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const list = useDriveList(prefix);
-  const upload = useUploadFile(prefix);
+  const { data: me } = useQuery({ queryKey: meKey(), queryFn: fetchMe });
+  const staff = !!me?.is_staff;
+  const list = useDriveList(prefix, staff && showSystem);
+  const upload = useUploadFile();
+  const newFolder = useCreateFolder();
   const del = useDeleteObject();
 
   const segments = prefix.replace(/\/$/, "").split("/").filter(Boolean);
+  // Above a category (root, a project) is locked: uploads go to the inbox.
+  const writable = isWritable(prefix);
 
   function goTo(index: number) {
     setSelected(null);
@@ -177,7 +201,20 @@ export default function DrivePage() {
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (file) upload.mutate(file);
+    if (file) upload.mutate({ file, folder: writable ? prefix : INBOX });
+  }
+
+  function onNewFolder() {
+    const name = window.prompt("New folder name");
+    if (!name?.trim()) return;
+    setActionError(null);
+    newFolder.mutate(
+      { parent: prefix, name },
+      {
+        onError: (e) =>
+          setActionError(e instanceof Error ? e.message : "Couldn't create folder."),
+      },
+    );
   }
 
   async function onDownload(f: DriveFile) {
@@ -234,7 +271,29 @@ export default function DrivePage() {
             </span>
           ))}
         </div>
-        <div className="ml-auto shrink-0">
+        <div className="ml-auto shrink-0 flex items-center gap-2">
+          {staff && (
+            <label className="hidden sm:flex items-center gap-1.5 text-[12px] text-muted-foreground">
+              <Switch
+                checked={showSystem}
+                onCheckedChange={(on) => setShowSystem(!!on)}
+              />
+              System files
+            </label>
+          )}
+          {writable && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8"
+              disabled={newFolder.isPending}
+              onClick={onNewFolder}
+            >
+              <FolderPlus className="size-3.5" />
+              <span className="max-sm:hidden">New folder</span>
+            </Button>
+          )}
           <input ref={fileRef} type="file" className="hidden" onChange={onPick} />
           <Button
             type="button"
@@ -242,9 +301,14 @@ export default function DrivePage() {
             className="h-8"
             disabled={upload.isPending}
             onClick={() => fileRef.current?.click()}
+            title={writable ? undefined : "Not inside a category — it goes to To be organized"}
           >
             <Upload className="size-3.5" />
-            {upload.isPending ? "Uploading…" : "Upload"}
+            {upload.isPending
+              ? "Uploading…"
+              : writable
+                ? "Upload"
+                : "Upload to To be organized"}
           </Button>
         </div>
       </header>
@@ -262,21 +326,44 @@ export default function DrivePage() {
               <div className="p-4 text-[13px] text-muted-foreground">Loading…</div>
             ) : list.isError ? (
               <div className="p-4 text-[13px] text-destructive">
-                {(list.error as Error)?.message ?? "Failed to load."} — is Drive
-                storage configured?
+                {staff
+                  ? `${(list.error as Error)?.message ?? "Failed to load."} — is Drive storage configured?`
+                  : "You don't have access to this folder."}
               </div>
             ) : (
               <ul className="divide-y divide-border/60">
                 {list.data!.folders.map((f) => (
-                  <li key={`folder:${f}`}>
+                  <li key={`folder:${f}`} className="group flex items-center hover:bg-accent/50">
                     <button
                       type="button"
                       onClick={() => openFolder(f)}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] hover:bg-accent/50 text-left"
+                      className="flex-1 min-w-0 flex items-center gap-3 px-4 py-2.5 text-[13px] text-left"
                     >
                       <Folder className="size-4 text-muted-foreground shrink-0" />
                       <span className="truncate flex-1">{folderLabel(f)}</span>
                     </button>
+                    <div className="flex items-center gap-0.5 pr-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 hover-none:opacity-100">
+                      {staff && (
+                        <button
+                          type="button"
+                          onClick={() => setSharing({ key: f, label: folderLabel(f) })}
+                          className="tap-target size-6 grid place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                          aria-label={`Share ${folderLabel(f)}`}
+                        >
+                          <Share2 className="size-3.5" />
+                        </button>
+                      )}
+                      {isMovableFolder(f) && (
+                        <button
+                          type="button"
+                          onClick={() => setMoving({ key: f, label: folderLabel(f) })}
+                          className="tap-target size-6 grid place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                          aria-label={`Move ${folderLabel(f)}`}
+                        >
+                          <FolderInput className="size-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </li>
                 ))}
                 {list.data!.files.map((f) => (
@@ -309,6 +396,9 @@ export default function DrivePage() {
                 {(upload.error as Error)?.message}
               </div>
             )}
+            {actionError && !selected && (
+              <div className="p-3 text-[12px] text-destructive">{actionError}</div>
+            )}
           </div>
         }
         detail={
@@ -331,6 +421,27 @@ export default function DrivePage() {
                     onClick={() => onDownload(selected)}
                   >
                     <Download className="size-3.5" /> Download
+                  </Button>
+                  {staff && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      onClick={() => setSharing({ key: selected.key, label: selected.name })}
+                    >
+                      <Share2 className="size-3.5" /> Share
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    onClick={() => setMoving({ key: selected.key, label: selected.name })}
+                    aria-label="Move file"
+                  >
+                    <FolderInput className="size-3.5" />
                   </Button>
                   <Button
                     type="button"
@@ -361,6 +472,15 @@ export default function DrivePage() {
           )
         }
       />
+      <MoveDialog
+        item={moving}
+        onClose={(moved) => {
+          // A moved file is no longer in this folder.
+          if (moved && selected?.key === moving?.key) setSelected(null);
+          setMoving(null);
+        }}
+      />
+      <ShareDialog item={sharing} onClose={() => setSharing(null)} />
     </div>
   );
 }

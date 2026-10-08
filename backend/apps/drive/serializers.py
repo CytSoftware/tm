@@ -12,3 +12,18 @@ class UploadUrlRequestSerializer(serializers.Serializer):
 
 class DeleteRequestSerializer(serializers.Serializer):
     key = serializers.CharField(max_length=1024)
+
+
+class FolderRequestSerializer(serializers.Serializer):
+    parent = serializers.CharField(max_length=1024, help_text="Folder to create it in, e.g. 'mowafeq/sales/'")
+    name = serializers.CharField(max_length=128)
+
+
+class MoveRequestSerializer(serializers.Serializer):
+    key = serializers.CharField(max_length=1024, help_text="File, or folder ending in '/'")
+    to = serializers.CharField(max_length=1024, help_text="Destination folder")
+
+
+class ShareRequestSerializer(serializers.Serializer):
+    key = serializers.CharField(max_length=1024, help_text="File, or folder ending in '/'")
+    user_ids = serializers.ListField(child=serializers.IntegerField(), allow_empty=True)

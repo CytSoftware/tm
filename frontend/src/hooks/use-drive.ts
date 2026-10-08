@@ -35,19 +35,32 @@ type PresignPut = {
   headers: Record<string, string>;
 };
 
-export function useDriveList(prefix: string) {
+/** Where "not sure" uploads land; mirrors ``INBOX`` in apps/drive/layout.py. */
+export const INBOX = "to-be-organized/";
+
+/** The top two levels (project, category) are locked; files and folders go
+ *  inside a category or the inbox. Mirrors ``check_folder`` on the server. */
+export function isWritable(prefix: string): boolean {
+  return (
+    prefix.startsWith(INBOX) || prefix.split("/").filter(Boolean).length >= 2
+  );
+}
+
+export function useDriveList(prefix: string, system = false) {
   return useQuery({
-    queryKey: driveListKey(prefix),
+    queryKey: [...driveListKey(prefix), system],
     queryFn: () =>
-      apiFetch<DriveListResponse>("/api/drive/objects/", { query: { prefix } }),
+      apiFetch<DriveListResponse>("/api/drive/objects/", {
+        query: { prefix, ...(system ? { system: "1" } : {}) },
+      }),
   });
 }
 
-export function useUploadFile(prefix: string) {
+export function useUploadFile() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (file: File) => {
-      const dest = (prefix ? prefix.replace(/\/$/, "") + "/" : "") + file.name;
+    mutationFn: async ({ file, folder }: { file: File; folder: string }) => {
+      const dest = folder + file.name;
       const contentType = file.type || "application/octet-stream";
       // 1. ask our API for a presigned PUT URL
       const signed = await apiFetch<PresignPut>("/api/drive/upload-url/", {
@@ -67,6 +80,48 @@ export function useUploadFile(prefix: string) {
       return signed.key;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["drive"] }),
+  });
+}
+
+export function useCreateFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { parent: string; name: string }) =>
+      apiFetch<{ folder: string }>("/api/drive/folders/", { method: "POST", body: v }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["drive"] }),
+  });
+}
+
+/** Move a file, or a folder (key ending "/"), into another folder. */
+export function useMoveObject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { key: string; to: string }) =>
+      apiFetch<{ key: string }>("/api/drive/move/", { method: "POST", body: v }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["drive"] }),
+  });
+}
+
+export type DriveShares = {
+  key: string;
+  shared_with: number[];
+  users: { id: number; username: string; name: string }[];
+};
+
+export function useShares(key: string | null) {
+  return useQuery({
+    queryKey: ["drive", "shares", key],
+    queryFn: () => apiFetch<DriveShares>("/api/drive/shares/", { query: { key: key! } }),
+    enabled: !!key,
+  });
+}
+
+export function useSetShares() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { key: string; user_ids: number[] }) =>
+      apiFetch<DriveShares>("/api/drive/shares/", { method: "PUT", body: v }),
+    onSuccess: (data) => qc.setQueryData(["drive", "shares", data.key], data),
   });
 }
 

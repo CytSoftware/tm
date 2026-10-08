@@ -102,9 +102,24 @@ class Project(TimestampedModel):
             "wiki pages. Staff see every project regardless."
         ),
     )
+    drive_folder = models.SlugField(
+        max_length=64,
+        blank=True,
+        help_text=(
+            "This project's top-level Drive folder. Set once from the name and "
+            "kept on rename, so the folder never orphans."
+        ),
+    )
 
     class Meta:
         ordering = ["name"]
+
+    def save(self, *args, **kwargs):
+        if not self.drive_folder:
+            from django.utils.text import slugify
+
+            self.drive_folder = slugify(self.name)[:64]
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:  # pragma: no cover - admin helper
         return f"{self.name} ({self.prefix})"

@@ -282,6 +282,48 @@ def delete(rel: str) -> dict[str, Any]:
     return {"ok": True, "deleted": _rel(key)}
 
 
+def create_folder(rel: str) -> dict[str, Any]:
+    """B2 has no folders — an empty ``<folder>/`` object makes one show up."""
+    key = full_key(rel.rstrip("/") + "/")
+    try:
+        client().put_object(Bucket=_bucket(), Key=key, Body=b"")
+    except Exception as exc:
+        raise _upstream(exc) from exc
+    return {"ok": True, "folder": _rel(key)}
+
+
+def list_keys(rel_prefix: str) -> list[tuple[str, int]]:
+    """Every (drive-relative key, size) under a prefix, folder markers included."""
+    prefix = full_key(rel_prefix)
+    out = []
+    try:
+        for page in client().get_paginator("list_objects_v2").paginate(
+            Bucket=_bucket(), Prefix=prefix
+        ):
+            out += [(_rel(o["Key"]), o["Size"]) for o in page.get("Contents", [])]
+    except Exception as exc:
+        raise _upstream(exc) from exc
+    return out
+
+
+def move(src: str, dst: str, size: int) -> None:
+    """Server-side copy → confirm the size → delete the original.
+
+    The original is only deleted once the copy is confirmed (the bucket has
+    hard-delete, so there is no undo).
+    """
+    s, d = full_key(src), full_key(dst)
+    try:
+        client().copy({"Bucket": _bucket(), "Key": s}, _bucket(), d)
+        if client().head_object(Bucket=_bucket(), Key=d)["ContentLength"] != size:
+            raise B2Upstream(f"Copy of {src!r} came out the wrong size; original kept.")
+        client().delete_object(Bucket=_bucket(), Key=s)
+    except B2Error:
+        raise
+    except Exception as exc:
+        raise _upstream(exc) from exc
+
+
 # ---------------------------------------------------------------------------
 # LLM-wiki access (the ``llm-wiki/`` prefix)
 # ---------------------------------------------------------------------------
