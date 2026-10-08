@@ -126,14 +126,63 @@ def claim_upload_key(user, filename: str, prefix: str) -> str:
     raise b2.B2Error("Too many files with that name.")
 
 
-def _writable(user, folder: str) -> str:
+def _writable(user, folder: str, full: bool | None = None) -> str:
     """``check_folder`` plus, for non-staff, a folder they can reach."""
     folder = check_folder(folder)
-    if not has_full_access(user) and not (
-        folder.startswith(INBOX) or can_reach_drive(user, folder)
-    ):
+    full = has_full_access(user) if full is None else full
+    if not full and not (folder.startswith(INBOX) or can_reach_drive(user, folder)):
         raise b2.B2NotFound("No such folder.")
     return folder
+
+
+def move_object(user, key: str, to: str, *, full: bool | None = None) -> str:
+    """Move a file, or a folder (``key`` ending ``/``), into folder ``to``.
+
+    Used by the Drive page and the MCP ``drive_move`` tool. Project and
+    category folders are fixed. Shares follow the file. Non-staff move only
+    what they can reach, into a folder they can reach. Returns the new key.
+    """
+    full = has_full_access(user) if full is None else full
+    key = b2._clean(key)
+    if is_hidden(key) or (not full and not can_reach_drive(user, key)):
+        raise b2.B2NotFound("Not found.")
+    to = _writable(user, to, full)
+    return _move_folder(key, to) if key.endswith("/") else _move_file(key, to)
+
+
+def _move_file(key: str, to: str) -> str:
+    meta = b2.head(key)
+    if meta is None:
+        raise b2.B2NotFound("No such file.")
+    stem, ext = os.path.splitext(meta["name"])
+    for n in range(1, 1000):
+        dst = f"{to}{stem}{f' ({n})' if n > 1 else ''}{ext}"
+        if dst == key or b2.head(dst) is None:
+            break
+    if dst != key:
+        b2.move(key, dst, meta["size"])
+        DriveFile.objects.filter(key=key).update(key=dst)
+    return dst
+
+
+def _move_folder(key: str, to: str) -> str:
+    segments = [s for s in key.split("/") if s]
+    if key == INBOX or (len(segments) < 3 and not key.startswith(INBOX)):
+        raise ValueError("Project and category folders are fixed and can't move.")
+    if to.startswith(key):
+        raise ValueError("A folder can't move into itself.")
+    new = f"{to}{segments[-1]}/"
+    if b2.list_keys(new):
+        raise ValueError(f"{new} already exists.")
+    items = b2.list_keys(key)
+    if len(items) > MAX_FOLDER_MOVE:
+        raise ValueError(f"Folder has over {MAX_FOLDER_MOVE} files; move it in parts.")
+    for k, size in items:
+        b2.move(k, new + k[len(key):], size)
+    for row in DriveFile.objects.filter(key__startswith=key):
+        row.key = new + row.key[len(key):]
+        row.save(update_fields=["key"])
+    return new
 
 
 class DriveListView(APIView):
@@ -216,12 +265,7 @@ class DriveFolderView(APIView):
 
 
 class DriveMoveView(APIView):
-    """POST /api/drive/move/ {key, to} — move a file or folder (anyone).
-
-    ``key`` ending in ``/`` is a folder. Project and category folders are
-    fixed and can't move. Shares follow the file. Non-staff move only what
-    they can reach, into a folder they can reach.
-    """
+    """POST /api/drive/move/ {key, to} — move a file or folder (anyone)."""
 
     serializer_class = MoveRequestSerializer
 
@@ -230,55 +274,13 @@ class DriveMoveView(APIView):
             return _not_configured()
         s = MoveRequestSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        key = b2._clean(s.validated_data["key"])
-        if is_hidden(key) or not can_reach(request.user, key):
-            return _not_found()
         try:
-            to = _writable(request.user, s.validated_data["to"])
-            if key.endswith("/"):
-                new = self._move_folder(key, to)
-            else:
-                new = self._move_file(key, to)
+            new = move_object(request.user, s.validated_data["key"], s.validated_data["to"])
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
         except b2.B2Error as exc:
             return _error(exc)
         return Response({"ok": True, "key": new})
-
-    @staticmethod
-    def _move_file(key: str, to: str) -> str:
-        meta = b2.head(key)
-        if meta is None:
-            raise b2.B2NotFound("No such file.")
-        stem, ext = os.path.splitext(meta["name"])
-        for n in range(1, 1000):
-            dst = f"{to}{stem}{f' ({n})' if n > 1 else ''}{ext}"
-            if dst == key or b2.head(dst) is None:
-                break
-        if dst != key:
-            b2.move(key, dst, meta["size"])
-            DriveFile.objects.filter(key=key).update(key=dst)
-        return dst
-
-    @staticmethod
-    def _move_folder(key: str, to: str) -> str:
-        segments = [s for s in key.split("/") if s]
-        if key == INBOX or (len(segments) < 3 and not key.startswith(INBOX)):
-            raise ValueError("Project and category folders are fixed and can't move.")
-        if to.startswith(key):
-            raise ValueError("A folder can't move into itself.")
-        new = f"{to}{segments[-1]}/"
-        if b2.list_keys(new):
-            raise ValueError(f"{new} already exists.")
-        items = b2.list_keys(key)
-        if len(items) > MAX_FOLDER_MOVE:
-            raise ValueError(f"Folder has over {MAX_FOLDER_MOVE} files; move it in parts.")
-        for k, size in items:
-            b2.move(k, new + k[len(key):], size)
-        for row in DriveFile.objects.filter(key__startswith=key):
-            row.key = new + row.key[len(key):]
-            row.save(update_fields=["key"])
-        return new
 
 
 class DriveShareView(APIView):

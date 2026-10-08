@@ -1902,6 +1902,13 @@ def drive_upload(filename: str, project: str | int | None = None,
     return result
 
 
+def drive_move(key: str, to: str, mcp_user=None) -> dict[str, Any]:
+    from apps.drive.views import move_object
+
+    new = move_object(mcp_user, key, to, full=not _drive_restricted(mcp_user))
+    return {"ok": True, "key": new}
+
+
 # ---------------------------------------------------------------------------
 # Knowledge (LLM wiki — markdown pages in B2 under the llm-wiki/ prefix)
 # ---------------------------------------------------------------------------

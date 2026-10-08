@@ -60,6 +60,17 @@ class DriveLayoutTests(TestCase):
             self.assertEqual(put.call_count, 2)
 
 
+    def test_mcp_move_files_out_of_the_inbox(self):
+        heads = {"to-be-organized/deck.pdf": {"name": "deck.pdf", "size": 5}}
+        with mock.patch("apps.drive.b2.head", side_effect=lambda k: heads.get(k)), \
+                mock.patch("apps.drive.b2.move") as mv:
+            out = tools.drive_move("to-be-organized/deck.pdf", "mowafeq/sales/decks/")
+            self.assertEqual(out["key"], "mowafeq/sales/decks/deck.pdf")
+            mv.assert_called_once_with("to-be-organized/deck.pdf", "mowafeq/sales/decks/deck.pdf", 5)
+            with self.assertRaises(ValueError):
+                tools.drive_move("to-be-organized/deck.pdf", "mowafeq/")
+
+
 @mock.patch("apps.drive.b2.is_configured", return_value=True)
 class DriveEndpointTests(TestCase):
     def setUp(self):

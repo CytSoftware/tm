@@ -194,7 +194,7 @@ NON_STAFF_TOOLS = frozenset({
     "delete_wiki_doc", "set_wiki_content", "append_wiki_content",
     "insert_wiki_content",
     # drive
-    "drive_list", "drive_read", "drive_upload",
+    "drive_list", "drive_read", "drive_upload", "drive_move",
     # LLM wiki
     "knowledge_list", "knowledge_read", "knowledge_schema", "knowledge_write",
     "knowledge_delete",
@@ -1207,6 +1207,18 @@ async def drive_upload(
         content_base64=content_base64, content_type=content_type,
         mcp_user=_get_mcp_user(),
     )
+
+
+@mcp.tool()
+async def drive_move(key: str, to: str) -> dict[str, Any]:
+    """Move a Drive file — or a folder, ``key`` ending in ``/`` — into folder ``to``.
+
+    ``to`` must be inside a project's category (``mowafeq/sales/decks/``) or
+    ``to-be-organized/``; see ``drive_upload`` for what each category holds.
+    Project and category folders themselves can't move. A taken name gets a
+    `` (2)`` suffix, never an overwrite. Returns the new ``key``.
+    """
+    return await _async(tools.drive_move)(key=key, to=to, mcp_user=_get_mcp_user())
 
 
 # ---------------------------------------------------------------------------
