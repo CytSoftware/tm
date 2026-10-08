@@ -337,9 +337,13 @@ export default function DrivePage() {
                     <button
                       type="button"
                       onClick={() => openFolder(f)}
-                      className="flex-1 min-w-0 flex items-center gap-3 px-4 py-2.5 text-[13px] text-left"
+                      className={cn(
+                        "flex-1 min-w-0 flex items-center gap-3 px-4 py-2.5 text-[13px] text-left",
+                        list.data!.empty?.includes(f) && "text-muted-foreground/50",
+                      )}
+                      title={list.data!.empty?.includes(f) ? "Empty" : undefined}
                     >
-                      <Folder className="size-4 text-muted-foreground shrink-0" />
+                      <Folder className="size-4 shrink-0 opacity-60" />
                       <span className="truncate flex-1">{folderLabel(f)}</span>
                     </button>
                     <div className="flex items-center gap-0.5 pr-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 hover-none:opacity-100">

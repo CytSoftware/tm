@@ -78,8 +78,9 @@ class DriveEndpointTests(TestCase):
             with_system = self.client.get("/api/drive/objects/?system=1").json()["folders"]
             self.assertIn("meetings/", with_system)
         with mock.patch("apps.drive.b2.list_objects", return_value={**EMPTY, "prefix": "mowafeq/"}):
-            cats = self.client.get("/api/drive/objects/?prefix=mowafeq/").json()["folders"]
-            self.assertIn("mowafeq/sales/", cats)
+            data = self.client.get("/api/drive/objects/?prefix=mowafeq/").json()
+            self.assertIn("mowafeq/sales/", data["folders"])
+            self.assertIn("mowafeq/sales/", data["empty"])
 
     def test_folder_create_is_locked_above_categories(self, _):
         self.client.force_login(self.staff)

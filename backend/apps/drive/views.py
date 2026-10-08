@@ -78,7 +78,8 @@ def listing(user, prefix: str, token: str | None = None, *, full: bool | None = 
     """The one Drive listing, used by REST and MCP.
 
     Staff also see every active project and its seven categories before any
-    file exists in them, so there is always somewhere to upload.
+    file exists in them, so there is always somewhere to upload; those come
+    back in ``empty`` too, so the UI can grey them out.
     """
     full = has_full_access(user) if full is None else full
     prefix = b2._clean(prefix)
@@ -92,14 +93,17 @@ def listing(user, prefix: str, token: str | None = None, *, full: bool | None = 
         if not can_reach_drive(user, prefix):
             raise b2.B2NotFound("No such folder.")
     data = b2.list_objects(prefix, token=token)
+    data["empty"] = []
     if full:
         folders = set(data["folders"])
+        real = set(folders)
         segments = [s for s in prefix.split("/") if s]
         if not segments:
             folders |= {f"{f}/" for f in project_folders(include_archived=False)} | {INBOX}
         elif len(segments) == 1 and segments[0] in project_folders():
             folders |= {f"{prefix}{c}/" for c in CATEGORIES}
         data["folders"] = sorted(folders)
+        data["empty"] = sorted(folders - real)
     if not show_system:
         data["folders"] = [f for f in data["folders"] if not is_hidden(f)]
         data["files"] = [f for f in data["files"] if not is_hidden(f["key"])]

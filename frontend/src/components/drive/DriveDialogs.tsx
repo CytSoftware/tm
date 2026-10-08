@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 import {
   isWritable,
   useDriveList,
@@ -88,9 +89,12 @@ export function MoveDialog({
                 <button
                   type="button"
                   onClick={() => setPrefix(f)}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-[13px] hover:bg-accent/50 text-left"
+                  className={cn(
+                    "w-full flex items-center gap-2 px-3 py-2 text-[13px] hover:bg-accent/50 text-left",
+                    list.data?.empty?.includes(f) && "text-muted-foreground/50",
+                  )}
                 >
-                  <Folder className="size-4 text-muted-foreground shrink-0" />
+                  <Folder className="size-4 shrink-0 opacity-60" />
                   <span className="truncate">{f.slice(prefix.length).replace(/\/$/, "")}</span>
                 </button>
               </li>

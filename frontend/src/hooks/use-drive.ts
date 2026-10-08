@@ -24,6 +24,8 @@ export type DriveFile = {
 export type DriveListResponse = {
   prefix: string;
   folders: string[];
+  /** Folders shown before anything is in them (a project's categories). */
+  empty?: string[];
   files: DriveFile[];
   next_token: string | null;
 };
