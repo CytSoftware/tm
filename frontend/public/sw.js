@@ -1,9 +1,10 @@
 /* Cyt Task Tracker service worker.
  *
  * Intentionally minimal: its job is (1) make the app installable as a PWA and
- * (2) give a friendly offline fallback for navigations. It must NEVER cache
- * API responses, auth endpoints, or WebSocket upgrades — those have to stay
- * live because the frontend relies on TanStack Query + Channels for freshness.
+ * (2) give a friendly offline fallback for navigations, plus (3) show Web Push
+ * notifications. It must NEVER cache API responses, auth endpoints, or
+ * WebSocket upgrades — those have to stay live because the frontend relies
+ * on TanStack Query + Channels for freshness.
  */
 
 const VERSION = "cyt-sw-v1";
@@ -96,4 +97,34 @@ self.addEventListener("fetch", (event) => {
       })(),
     );
   }
+});
+
+// Web Push: the backend sends {title, body, url} (apps/tasks/push.py).
+self.addEventListener("push", (event) => {
+  const data = event.data ? event.data.json() : {};
+  event.waitUntil(
+    self.registration.showNotification(data.title || "Cyt", {
+      body: data.body,
+      icon: "/favicon-192x192.png",
+      badge: "/favicon-192x192.png",
+      data: { url: data.url || "/" },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = new URL(event.notification.data?.url || "/", self.location.origin).href;
+  event.waitUntil(
+    (async () => {
+      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const client = windows.find((c) => new URL(c.url).origin === self.location.origin);
+      if (client) {
+        await client.focus();
+        // Full navigation so TaskDialogProvider picks up ?task= on mount.
+        return client.navigate(url);
+      }
+      return self.clients.openWindow(url);
+    })(),
+  );
 });

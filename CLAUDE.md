@@ -212,6 +212,8 @@ Backend (see `core/settings.py`):
 - `USESEND_API_KEY` — Bearer token for the [useSend](https://usesend.com) transactional email API. Empty = assignment emails disabled (skipped silently); everything else (in-app + WS notifications) still works.
 - `USESEND_BASE_URL` — useSend API base (default `https://app.usesend.com`; requests POST to `${USESEND_BASE_URL}/api/v1/emails`).
 - `USESEND_FROM_EMAIL` — the `from` address on assignment emails.
+- `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` — base64url Web Push keys (65-byte public, raw 32-byte private). Empty private key = push disabled. Push fires only for `assigned` on a task in a Todo column (`notifications.py` → `push.py`); on by default — the app asks for permission on the first tap, and the Inbox popover turns it off (`hooks/use-push.ts`).
+- `VAPID_SUBJECT` — `mailto:` or `https://` contact for push services (default `FRONTEND_URL`).
 - `DB_DIR` — override the SQLite directory (so the Docker volume at `/app/db.sqlite3` persists).
 - `MEDIA_DIR` — override `MEDIA_ROOT` (the on-disk upload directory). Defaults to `/app/media` inside the container — point a Dokploy volume at the chosen path to keep avatars across redeploys.
 - `DJANGO_SUPERUSER_USERNAME` / `DJANGO_SUPERUSER_EMAIL` — consumed by `entrypoint.sh` for idempotent superuser creation.

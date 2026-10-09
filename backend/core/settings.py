@@ -426,3 +426,13 @@ WIKI_ENCODE_SECRET = _os.environ.get("WIKI_ENCODE_SECRET", CYT_BROADCAST_SECRET)
 USESEND_API_KEY = _os.environ.get("USESEND_API_KEY", "")
 USESEND_BASE_URL = _os.environ.get("USESEND_BASE_URL", "https://app.usesend.com")
 USESEND_FROM_EMAIL = _os.environ.get("USESEND_FROM_EMAIL", "")
+
+# ---------------------------------------------------------------------------
+# Web Push (PWA notifications)
+# ---------------------------------------------------------------------------
+# Base64url keys (raw 32-byte private, 65-byte uncompressed public). Empty
+# private key disables push (apps.tasks.push no-ops). Push services (Apple in
+# particular) reject a VAPID subject that isn't mailto: or https://.
+VAPID_PUBLIC_KEY = _os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = _os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = _os.environ.get("VAPID_SUBJECT", FRONTEND_URL)

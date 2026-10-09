@@ -9,7 +9,8 @@ recurring generator) calls after a mutation. It:
 2. Bulk-creates ``Notification`` rows.
 3. Pushes each notification to the recipient's personal Channels group
    (``user_<id>``) so an open browser tab updates live.
-4. For ``verb == "assigned"``, fires an email via useSend (best-effort).
+4. For ``verb == "assigned"``, fires an email via useSend (best-effort),
+   plus a Web Push if the task sits in a Todo column.
 5. Dispatches any matching outbound webhook endpoints for the interested
    users (:func:`apps.webhooks.dispatch.dispatch_task_webhooks`). This runs
    even when the recipient set ends up empty — an ``include_self`` endpoint
@@ -38,7 +39,7 @@ from typing import Any, Iterable
 from django.utils import timezone
 
 from .broadcast import broadcast_to_group
-from .models import Notification, NotificationVerb, Task
+from .models import ColumnKind, Notification, NotificationVerb, Task
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,14 @@ def _notify_task_event(
         {"id": actor.id, "username": actor.username} if actor is not None else None
     )
 
+    # Push is deliberately narrow: a phone buzz only for work that is ready to
+    # start, not backlog grooming or a reassignment mid-flight.
+    push_it = (
+        verb == NotificationVerb.ASSIGNED
+        and task.column_id is not None
+        and task.column.kind == ColumnKind.TODO
+    )
+
     for n, recipient in zip(created, unique_recipients):
         ws_payload = {
             "type": "notification",
@@ -177,4 +186,14 @@ def _notify_task_event(
                 task_key=n.task_key,
                 task_title=n.task_title,
                 project_name=task.project.name if task.project_id else None,
+            )
+
+        if push_it:
+            from .push import send_push
+
+            send_push(
+                user_id=recipient.id,
+                title=f"Assigned: {n.task_key}",
+                body=n.task_title,
+                url=f"/board?task={n.task_key}",
             )

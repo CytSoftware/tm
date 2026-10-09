@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.db import models, transaction
 from django.db.models import Max, Min
@@ -32,6 +33,7 @@ from .models import (
     Metric,
     Notification,
     Project,
+    PushSubscription,
     RecurringTaskTemplate,
     StaleThresholdConfig,
     Task,
@@ -1879,3 +1881,25 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     def unread_count(self, request):
         count = request.user.notifications.filter(read_at__isnull=True).count()
         return Response({"unread_count": count})
+
+    @action(detail=False, methods=["get", "post", "delete"], url_path="push")
+    def push(self, request):
+        """GET: the VAPID public key. POST: save this browser's
+        ``PushSubscription.toJSON()``. DELETE ``{endpoint}``: forget it."""
+        if request.method == "GET":
+            return Response({"public_key": settings.VAPID_PUBLIC_KEY})
+        endpoint = request.data.get("endpoint")
+        if not isinstance(endpoint, str) or not endpoint.startswith("https://"):
+            return Response({"detail": "endpoint must be an https URL."}, status=400)
+        if request.method == "DELETE":
+            request.user.push_subscriptions.filter(endpoint=endpoint).delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        keys = request.data.get("keys") or {}
+        if not keys.get("p256dh") or not keys.get("auth"):
+            return Response({"detail": "keys.p256dh and keys.auth are required."}, status=400)
+        # Keyed on endpoint: a shared device that switches account moves over.
+        PushSubscription.objects.update_or_create(
+            endpoint=endpoint,
+            defaults={"user": request.user, "p256dh": keys["p256dh"], "auth": keys["auth"]},
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)

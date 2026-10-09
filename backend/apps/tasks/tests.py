@@ -1508,3 +1508,44 @@ class ReviewRequestedNotificationTests(ReviewerTestBase):
         self.assertEqual(
             Notification.objects.filter(verb="review_requested").count(), 0
         )
+
+
+class AssignedPushTests(TestCase):
+    """Push fires only for an assignment to a task sitting in Todo."""
+
+    def setUp(self):
+        self.actor = User.objects.create_user("ali", "ali@example.com", "x", is_staff=True)
+        self.dev = User.objects.create_user("sam", "sam@example.com", "x", is_staff=True)
+        self.project = Project.objects.create(name="Cyt", prefix="CYT")
+
+    def _assign_in(self, kind):
+        from unittest import mock
+
+        from .notifications import notify_task_event
+
+        column = self.project.columns.get(kind=kind)
+        task = Task.objects.create(
+            project=self.project, column=column, title="Ship it", reporter=self.actor
+        )
+        with mock.patch("apps.tasks.push.send_push") as send:
+            notify_task_event(task, self.actor, "assigned", recipients=[self.dev])
+        return task, send
+
+    def test_todo_pushes_with_deep_link(self):
+        task, send = self._assign_in(ColumnKind.TODO)
+        send.assert_called_once()
+        self.assertEqual(send.call_args.kwargs["user_id"], self.dev.id)
+        self.assertEqual(send.call_args.kwargs["url"], f"/board?task={task.key}")
+
+    def test_backlog_does_not_push(self):
+        _, send = self._assign_in(ColumnKind.BACKLOG)
+        send.assert_not_called()
+
+    def test_subscribe_round_trip(self):
+        client = APIClient()
+        client.force_authenticate(self.dev)
+        sub = {"endpoint": "https://push.example/abc", "keys": {"p256dh": "p", "auth": "a"}}
+        self.assertEqual(client.post("/api/notifications/push/", sub, format="json").status_code, 204)
+        self.assertEqual(self.dev.push_subscriptions.count(), 1)
+        client.delete("/api/notifications/push/", {"endpoint": sub["endpoint"]}, format="json")
+        self.assertEqual(self.dev.push_subscriptions.count(), 0)

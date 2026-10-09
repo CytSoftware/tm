@@ -8,8 +8,8 @@
  * dashboard activity feed).
  */
 
-import { useMemo, useState } from "react";
-import { Bell, CheckCheck } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Bell, BellOff, BellRing, CheckCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +24,7 @@ import {
   useMarkAllNotificationsRead,
   useNotificationsInfinite,
 } from "@/hooks/use-notifications";
+import { autoEnablePush, usePush } from "@/hooks/use-push";
 
 type Props = {
   variant: "sidebar" | "sidebar-collapsed" | "topbar";
@@ -35,6 +36,10 @@ export function NotificationInbox({ variant, onNavigate }: Props) {
   const [open, setOpen] = useState(false);
   const query = useNotificationsInfinite();
   const markAllRead = useMarkAllNotificationsRead();
+
+  useEffect(() => {
+    autoEnablePush();
+  }, []);
 
   const notifications = useMemo(
     () => (query.data?.pages ?? []).flatMap((p) => p.results),
@@ -124,6 +129,7 @@ export function NotificationInbox({ variant, onNavigate }: Props) {
             <CheckCheck className="size-3" />
             Mark all read
           </Button>
+          <PushToggle />
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto">
@@ -171,5 +177,32 @@ export function NotificationInbox({ variant, onNavigate }: Props) {
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/** Lives inside the popover so it mounts on open and shows current state. */
+function PushToggle() {
+  const push = usePush();
+  if (push.state === "unsupported") return null;
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-6 px-2 text-[11px]"
+      onClick={() => void push.toggle()}
+      disabled={push.busy || push.state === "denied"}
+      title={
+        push.state === "denied"
+          ? "Notifications are blocked in this browser's settings"
+          : "Phone/desktop alert when you're assigned a Todo task"
+      }
+    >
+      {push.state === "on" ? (
+        <BellOff className="size-3" />
+      ) : (
+        <BellRing className="size-3" />
+      )}
+      {push.state === "on" ? "Turn off push" : "Enable push"}
+    </Button>
   );
 }

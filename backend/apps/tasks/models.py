@@ -1053,3 +1053,20 @@ class Checkin(TimestampedModel):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.metric_id} @ {self.created_at:%Y-%m-%d}: {self.value}"
+
+
+class PushSubscription(models.Model):
+    """A browser's Web Push endpoint for one user (one row per device)."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="push_subscriptions",
+    )
+    endpoint = models.URLField(max_length=1000, unique=True)
+    p256dh = models.CharField(max_length=200)
+    auth = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.user_id} push {self.endpoint[:40]}"
