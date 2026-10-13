@@ -194,7 +194,8 @@ NON_STAFF_TOOLS = frozenset({
     "delete_wiki_doc", "set_wiki_content", "append_wiki_content",
     "insert_wiki_content",
     # drive
-    "drive_list", "drive_read", "drive_upload", "drive_move",
+    "drive_list", "drive_read", "drive_upload", "drive_request_upload",
+    "drive_finalize_upload", "drive_move",
     # LLM wiki
     "knowledge_list", "knowledge_read", "knowledge_schema", "knowledge_write",
     "knowledge_delete",
@@ -1199,6 +1200,8 @@ async def drive_upload(
     in ``to-be-organized/`` for a person to file.
 
     Provide text via ``content`` or binary via ``content_base64`` (exactly one).
+    Inline content is capped at ~10 MB; for anything bigger use
+    ``drive_request_upload`` + ``drive_finalize_upload`` instead.
     Returns the final ``key``. Deleting Drive files is not available over MCP.
     """
     return await _async(tools.drive_upload)(
@@ -1207,6 +1210,44 @@ async def drive_upload(
         content_base64=content_base64, content_type=content_type,
         mcp_user=_get_mcp_user(),
     )
+
+
+@mcp.tool()
+async def drive_request_upload(
+    filename: str,
+    project: str | int | None = None,
+    category: str | None = None,
+    client: str | None = None,
+    subfolder: str | None = None,
+    content_type: str = "application/octet-stream",
+) -> dict[str, Any]:
+    """Get a presigned URL to upload a large Drive file (over ~10 MB) directly.
+
+    Destination rules are exactly those of ``drive_upload`` (``project`` +
+    ``category`` [+ ``client``/``subfolder``], or neither → ``to-be-organized/``).
+    Returns ``{key, upload_url, method, headers, expires_in}``. Then PUT the raw
+    bytes, sending every returned header verbatim (the URL pins Content-Type):
+
+        curl -X PUT -H "Content-Type: <headers.Content-Type>" \\
+             --upload-file brochure.pdf "<upload_url>"
+
+    and finish with ``drive_finalize_upload(key)``. The URL expires after
+    ``expires_in`` seconds.
+    """
+    return await _async(tools.drive_request_upload)(
+        filename=filename, project=project, category=category, client=client,
+        subfolder=subfolder, content_type=content_type,
+        mcp_user=_get_mcp_user(),
+    )
+
+
+@mcp.tool()
+async def drive_finalize_upload(key: str) -> dict[str, Any]:
+    """Confirm a ``drive_request_upload`` PUT landed. Returns ``{key, size, content_type}``.
+
+    Errors if nothing has been uploaded at ``key`` yet.
+    """
+    return await _async(tools.drive_finalize_upload)(key=key, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()

@@ -1845,21 +1845,19 @@ def drive_read(key: str, max_bytes: int = 65536, mcp_user=None) -> dict[str, Any
     return out
 
 
-def drive_upload(filename: str, project: str | int | None = None,
-                 category: str | None = None, client: str | None = None,
-                 subfolder: str | None = None,
-                 content: str = "", content_base64: str | None = None,
-                 content_type: str = "text/plain; charset=utf-8",
-                 mcp_user=None) -> dict[str, Any]:
-    import base64 as _b64
-    import binascii
-    import logging
+def _drive_destination(filename: str, project: str | int | None,
+                       category: str | None, client: str | None,
+                       subfolder: str | None, mcp_user) -> str:
+    """Resolve where an agent's upload lands — the one path both upload tools use.
 
-    from apps.drive import b2
+    The path always comes from the Drive layout (apps/drive/layout.py):
+    project + category, or to-be-organized/ when the caller isn't sure. For a
+    non-staff caller it then applies the UI's rules: only into a folder they can
+    reach (or the inbox), and never over an existing file — a taken name gets
+    " (2)" (and is reserved, so two concurrent uploads can't collide).
+    """
     from apps.drive.layout import INBOX, drive_path
 
-    # The path always comes from the Drive layout (apps/drive/layout.py):
-    # project + category, or to-be-organized/ when the caller isn't sure.
     if project is None and category is None:
         name = (filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
         if not name:
@@ -1873,11 +1871,45 @@ def drive_upload(filename: str, project: str | int | None = None,
             client=client, subfolder=subfolder,
         )
 
+    if _drive_restricted(mcp_user):
+        from apps.drive.views import _writable, claim_upload_key
+
+        folder, _, name = key.rpartition("/")
+        key = claim_upload_key(mcp_user, name, _writable(mcp_user, folder))
+    return key
+
+
+def _log_drive_write(tool: str, mcp_user, key: str | None, size: Any) -> None:
+    """Attribute a Drive write for audit (B2 has no per-user field)."""
+    if mcp_user is None:
+        return
+    import logging
+
+    logging.getLogger("apps.mcp_server").info(
+        "%s by %s -> %s (%s bytes)", tool,
+        getattr(mcp_user, "username", mcp_user), key, size,
+    )
+
+
+def drive_upload(filename: str, project: str | int | None = None,
+                 category: str | None = None, client: str | None = None,
+                 subfolder: str | None = None,
+                 content: str = "", content_base64: str | None = None,
+                 content_type: str = "text/plain; charset=utf-8",
+                 mcp_user=None) -> dict[str, Any]:
+    import base64 as _b64
+    import binascii
+
+    from apps.drive import b2
+
     if content and content_base64:
         raise ValueError("Provide either `content` or `content_base64`, not both.")
     if content_base64 is not None:
         if len(content_base64) > 14_000_000:  # ~10 MB decoded — guard the stdio transport
-            raise ValueError("content_base64 too large (max ~10 MB).")
+            raise ValueError(
+                "content_base64 too large (max ~10 MB). Use drive_request_upload "
+                "+ drive_finalize_upload to PUT the bytes straight to storage."
+            )
         try:
             data = _b64.b64decode(content_base64, validate=True)
         except (ValueError, binascii.Error) as exc:
@@ -1885,21 +1917,58 @@ def drive_upload(filename: str, project: str | int | None = None,
     else:
         data = content.encode("utf-8")
 
-    if _drive_restricted(mcp_user):
-        from apps.drive.views import _writable, claim_upload_key
-
-        # Same rules as the UI: only into a folder they can reach (or the
-        # inbox), and never over an existing file — a taken name gets " (2)".
-        folder, _, name = key.rpartition("/")
-        key = claim_upload_key(mcp_user, name, _writable(mcp_user, folder))
+    key = _drive_destination(filename, project, category, client, subfolder, mcp_user)
     result = b2.put_bytes(key, data, content_type)
-    if mcp_user is not None:  # attribute the write for audit (B2 has no per-user field)
-        logging.getLogger("apps.mcp_server").info(
-            "drive_upload by %s -> %s (%d bytes)",
-            getattr(mcp_user, "username", mcp_user), result.get("key"),
-            result.get("size", 0),
-        )
+    _log_drive_write("drive_upload", mcp_user, result.get("key"), result.get("size", 0))
     return result
+
+
+def drive_request_upload(filename: str, project: str | int | None = None,
+                         category: str | None = None, client: str | None = None,
+                         subfolder: str | None = None,
+                         content_type: str = "application/octet-stream",
+                         mcp_user=None) -> dict[str, Any]:
+    """Step 1 of the large-file flow: a presigned PUT straight to B2.
+
+    Same destination rules as ``drive_upload`` — the bytes just don't travel
+    through the tool call. The caller PUTs them to ``upload_url`` with the
+    returned headers, then calls ``drive_finalize_upload(key)``.
+    """
+    from django.conf import settings
+
+    from apps.drive import b2
+
+    key = _drive_destination(filename, project, category, client, subfolder, mcp_user)
+    # presign_put runs full_key() -> _clean + _reject_excluded on the key.
+    data = b2.presign_put(key, content_type or "application/octet-stream")
+    _log_drive_write("drive_request_upload", mcp_user, data.get("key"), "pending")
+    return {
+        "key": data["key"],
+        "upload_url": data["url"],
+        "method": data["method"],
+        "headers": data["headers"],
+        "expires_in": settings.B2_PRESIGN_EXPIRY,
+    }
+
+
+def drive_finalize_upload(key: str, mcp_user=None) -> dict[str, Any]:
+    """Step 2 of the large-file flow: confirm the bytes landed in B2."""
+    from apps.drive import b2
+    from apps.drive.layout import is_hidden
+    from apps.drive.views import can_reach
+
+    rel = b2._clean(key)
+    if is_hidden(rel) or (_drive_restricted(mcp_user) and not can_reach(mcp_user, rel)):
+        raise ValueError(f"No such Drive object: {key!r}")
+    meta = b2.head(rel)  # full_key() rejects excluded prefixes
+    if meta is None:
+        raise ValueError(
+            f"Nothing uploaded at {rel!r} yet — PUT the bytes to the "
+            "`upload_url` from drive_request_upload first (the URL expires)."
+        )
+    _log_drive_write("drive_finalize_upload", mcp_user, meta["key"], meta.get("size", 0))
+    return {"key": meta["key"], "size": meta.get("size", 0),
+            "content_type": meta.get("content_type")}
 
 
 def drive_move(key: str, to: str, mcp_user=None) -> dict[str, Any]:
