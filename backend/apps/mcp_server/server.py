@@ -1283,12 +1283,15 @@ async def knowledge_list() -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def knowledge_read(slug: str) -> dict[str, Any]:
+async def knowledge_read(slug: str, raw: bool = False) -> dict[str, Any]:
     """Return one LLM-wiki page: ``{slug, title, markdown, meta, updated_at}``.
 
-    ``slug`` may be nested, e.g. ``entities/people/ali-soukarieh``.
+    ``slug`` may be nested, e.g. ``entities/people/ali-soukarieh``. ``markdown``
+    is the body without frontmatter. Pass ``raw=true`` to also get ``raw``, the
+    exact stored file with its frontmatter — edit that when rewriting a page
+    with ``knowledge_write``, so no frontmatter field is lost.
     """
-    return await _async(tools.knowledge_read)(slug=slug, mcp_user=_get_mcp_user())
+    return await _async(tools.knowledge_read)(slug=slug, raw=raw, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()

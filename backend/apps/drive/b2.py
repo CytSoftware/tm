@@ -439,11 +439,11 @@ def wiki_list() -> list[dict[str, Any]]:
     return sorted(pages, key=lambda p: p["slug"])
 
 
-def wiki_read(slug: str) -> dict[str, Any]:
+def wiki_read(slug: str, *, raw: bool = False) -> dict[str, Any]:
     key = wiki_key(slug)
     try:
         r = client().get_object(Bucket=_bucket(), Key=key)
-        raw = r["Body"].read().decode("utf-8")
+        text = r["Body"].read().decode("utf-8")
     except Exception as exc:
         resp = getattr(exc, "response", None) or {}
         if (resp.get("ResponseMetadata") or {}).get("HTTPStatusCode") == 404:
@@ -451,15 +451,20 @@ def wiki_read(slug: str) -> dict[str, Any]:
         raise _upstream(exc) from exc
     lm = r.get("LastModified")
     norm = _wiki_norm(slug)
-    meta, body = _split_frontmatter(raw)
+    meta, body = _split_frontmatter(text)
     title = str(meta.get("title") or _h1(body) or norm.split("/")[-1])
-    return {
+    page = {
         "slug": norm,
         "title": title,
         "markdown": body,
         "meta": meta,
         "updated_at": lm.isoformat() if lm else None,
     }
+    if raw:
+        # The exact stored file, frontmatter included — what an agent must edit
+        # and write back, since ``meta`` is a lossy shallow parse.
+        page["raw"] = text
+    return page
 
 
 def wiki_write(slug: str, markdown: str) -> dict[str, Any]:

@@ -995,6 +995,25 @@ class NonStaffMcpScopeTests(TestCase):
         with self.assertRaises(Exception):  # not one of theirs
             tools.knowledge_write("concepts/x", "# x", projects=["SHE"], mcp_user=self.emp)
 
+    def test_knowledge_read_raw_keeps_frontmatter(self):
+        import io
+        from unittest import mock
+
+        from apps.drive import b2
+
+        from . import tools
+
+        text = "---\ntitle: X\nsource: sources/a.pdf\n---\n# X\nbody"
+        fake = mock.Mock()
+        fake.get_object.side_effect = lambda **_: {"Body": io.BytesIO(text.encode())}
+        with mock.patch.object(b2, "client", return_value=fake), \
+                mock.patch.object(b2, "_bucket", return_value="b"):
+            plain = tools.knowledge_read("concepts/x")
+            full = tools.knowledge_read("concepts/x", raw=True)
+        self.assertNotIn("raw", plain)
+        self.assertEqual(plain["markdown"], "# X\nbody")
+        self.assertEqual(full["raw"], text)
+
     def test_every_employee_tool_exists(self):
         from .server import NON_STAFF_TOOLS, mcp
 

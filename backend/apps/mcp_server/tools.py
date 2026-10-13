@@ -1999,13 +1999,13 @@ def knowledge_list(mcp_user=None) -> list[dict[str, Any]]:
     return pages
 
 
-def knowledge_read(slug: str, mcp_user=None) -> dict[str, Any]:
+def knowledge_read(slug: str, raw: bool = False, mcp_user=None) -> dict[str, Any]:
     from apps.drive import b2
 
     visible = _visible_slugs(mcp_user)
     if visible is not None and b2.slugify(slug) not in visible:
         raise b2.B2NotFound(f"No such wiki page: {slug!r}")
-    return b2.wiki_read(slug)
+    return b2.wiki_read(slug, raw=raw)
 
 
 def knowledge_sources() -> list[dict[str, Any]]:
