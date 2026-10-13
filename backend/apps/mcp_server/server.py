@@ -180,6 +180,9 @@ READ_ONLY_TOOLS = frozenset({
     "list_pipelines",
     "search_contacts",
     "search_deals",
+    # Reports
+    "get_report",
+    "list_reports",
 })
 
 #: Tools a non-staff account may call — the MCP mirror of ``NON_STAFF_API``
@@ -203,6 +206,8 @@ NON_STAFF_TOOLS = frozenset({
     "list_meetings", "search_meetings", "get_meeting", "get_related_meetings",
     "list_meeting_entities", "update_meeting", "set_meeting_action_item",
     "link_meetings",
+    # reports (read-only; publishing is staff)
+    "list_reports", "get_report",
 })
 
 
@@ -1765,6 +1770,86 @@ async def merge_meeting_entities(
     from apps.meetings import mcp_tools
 
     return await _async(mcp_tools.merge_meeting_entities)(source, into, kind=kind)
+
+
+# ---------------------------------------------------------------------------
+# Reports (bot-written HTML pages shown at /reports)
+# ---------------------------------------------------------------------------
+
+
+def _report_dict(report, *, html: bool = False) -> dict[str, Any]:
+    from apps.reports.serializers import ReportDetailSerializer, ReportSerializer
+
+    return dict((ReportDetailSerializer if html else ReportSerializer)(report).data)
+
+
+@mcp.tool()
+async def publish_report(
+    title: str, summary: str, html: str, project: str | int | None = None
+) -> dict[str, Any]:
+    """Publish an HTML report to /reports. Returns its ``key`` and ``url``.
+
+    ``title`` names the series and period, e.g. "Mowafeq insights – W42" — it is
+    what people search. ``summary`` is one line for the list. ``project`` is a
+    prefix or id; leave it out and only staff can read the report.
+
+    ``html`` is the page BODY (no <html>/<head>): Task Manager wraps it in a
+    sandboxed page with a shared stylesheet, so every report looks alike and
+    follows light/dark mode. Rules:
+    - Self-contained: inline <svg>, <style> and <script> only. External URLs
+      (CDNs, fonts, images, fetch) are blocked. Max 2 MB.
+    - Don't set fonts, page colors, backgrounds or page width. Color with the
+      CSS variables: --fg, --muted, --border, --card, --up, --down, and
+      --c1..--c4 for chart series (in that order).
+    - Single column, readable at 360px. Charts are inline SVG with a viewBox
+      about 800 wide (they scale to the page width, text included); wrap them
+      in <div class="chart">.
+    - Classes: <h1>/<h2>/<h3>, <p class="muted">; KPI row
+      <div class="kpis"><div class="kpi"><div class="label">Users</div>
+      <div class="value">1,204</div><div class="delta up">+8%</div></div></div>;
+      <div class="card"> to group a section; tables go inside
+      <div class="table-wrap"><table>, numeric cells get class="num";
+      <span class="tag"> for small labels; .up / .down color a change.
+    - Links open in a new tab.
+    """
+    from apps.reports import services
+
+    user = _get_mcp_user()
+
+    def run():
+        report = services.publish_report(
+            title=title, summary=summary, html=html, project=project, user=user
+        )
+        return _report_dict(report)
+
+    return await _async(run)()
+
+
+@mcp.tool()
+async def list_reports(
+    search: str | None = None, project: str | int | None = None, limit: int = 50
+) -> list[dict[str, Any]]:
+    """Reports, newest first, without their HTML. ``search`` matches the title
+    and summary — e.g. "Mowafeq insights" to find earlier editions of a series.
+    """
+    from apps.reports import services
+
+    user = _get_mcp_user()
+
+    def run():
+        qs = services.visible_reports(user, search=(search or "").strip(), project=project)
+        return [_report_dict(r) for r in qs[: max(1, min(limit, 200))]]
+
+    return await _async(run)()
+
+
+@mcp.tool()
+async def get_report(report: str) -> dict[str, Any]:
+    """One report including its ``html`` body. ``report`` is a key (``RPT-042``)."""
+    from apps.reports import services
+
+    user = _get_mcp_user()
+    return await _async(lambda: _report_dict(services.get_report(user, report), html=True))()
 
 
 # ---------------------------------------------------------------------------

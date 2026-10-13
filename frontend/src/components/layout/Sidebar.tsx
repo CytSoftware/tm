@@ -20,6 +20,7 @@ import {
   BarChart3,
   BookText,
   Boxes,
+  ChartColumn,
   ChevronRight,
   ChevronsLeft,
   CircleHelp,
@@ -453,6 +454,24 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
             collapsed={isCollapsed}
             onNavigate={() => {
               router.push("/meetings");
+              onClose?.();
+            }}
+          />
+          <NavLink
+            icon={
+              <ChartColumn
+                className={
+                  isCollapsed
+                    ? "size-4"
+                    : "size-3.5 shrink-0 text-muted-foreground"
+                }
+              />
+            }
+            label="Reports"
+            active={pathname.startsWith("/reports")}
+            collapsed={isCollapsed}
+            onNavigate={() => {
+              router.push("/reports");
               onClose?.();
             }}
           />

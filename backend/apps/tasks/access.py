@@ -35,6 +35,7 @@ NON_STAFF_API: tuple[tuple[str, frozenset[str] | None], ...] = (
     ("/api/knowledge/", SAFE),
     ("/api/meetings/", None),  # writes: MeetingViewSet.staff_only_actions
     ("/api/meeting-entities/", SAFE),
+    ("/api/reports/", SAFE),
 )
 
 

@@ -75,6 +75,7 @@ INSTALLED_APPS = [
     "apps.webhooks",
     "apps.meetings",
     "apps.crm",
+    "apps.reports",
 ]
 
 MIDDLEWARE = [

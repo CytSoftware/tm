@@ -37,6 +37,7 @@ const NON_STAFF_ROUTES = [
   "/drive",
   "/llm-wiki",
   "/meetings",
+  "/reports",
   "/settings/quick-actions",
 ];
 

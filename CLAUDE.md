@@ -148,6 +148,15 @@ Leads, deals and follow-ups, filled mostly by agents. Plan + rationale: `docs/pl
 - The inbox buckets by calendar day in the **browser's** timezone (`?tz=`); TM stores no per-user zone.
 - **Scope = TM projects** (Mowafeq, Cyt…), not a second "business" concept. `Entity.projects` (M2M) tags contacts; `Deal.project` tags deals and, on save, their company + contacts (`services.tag_projects`, additive). A person's projects also land on their company. Every list filter (`query.py`, REST, MCP) takes `project` (id/prefix/name); an unknown one matches nothing (MCP raises). The page keeps it in `?p=<prefix>`, the sidebar carries it across sections, and `/api/crm/projects/` lists the projects in use (the switcher's options).
 
+### Reports (`apps/reports/`, `/reports`)
+
+Bot-written HTML pages (weekly insights, prospect searches…). A routine publishes with the MCP tool `publish_report`; people only read. A new recurring report is a new routine — no TM change.
+
+- `Report` is title / summary / project / html / created_by / created_at. No series or kind: the title carries it ("Mowafeq insights – W42") and is what you search. `key` (`RPT-042`) is **derived from the id**, not stored. The HTML lives in the DB (`MAX_HTML_BYTES` = 2 MB); list reads `defer("html")`.
+- `services.py` is the one read path (`visible_reports` / `get_report`, scoped like meetings: no project = staff-only) and the one write path. REST is read-only + staff delete; there is no REST create.
+- **Rendering** (`frontend/src/lib/report-document.ts`): the body goes into a `srcdoc` iframe with `sandbox="allow-scripts"` and **never** `allow-same-origin`, plus a CSP `<meta>` that blocks all network. Never serve report HTML from its own URL on the API origin — opened directly it would run with the session cookie.
+- **Style contract**: TM injects one stylesheet (CSS variables `--fg/--muted/--border/--card/--up/--down/--c1..--c4`, classes `.kpis/.kpi/.card/.table-wrap/.num/.tag/.chart`). `publish_report`'s docstring tells bots to use exactly these — change both together. Injection means a stylesheet edit restyles every past report.
+
 ### Access control (`apps/tasks/access.py`)
 
 Staff (`is_staff`/`is_superuser`) see everything. Non-staff users are employees: they see only the wiki, Drive, LLM wiki and meetings — **never tasks** (no board, palette, quick-add, or linked tasks on meetings) — and inside those only what is granted. All grants are edited in the Django admin.
