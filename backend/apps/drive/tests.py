@@ -58,7 +58,47 @@ class DriveLayoutTests(TestCase):
             with self.assertRaisesMessage(ValueError, "both `project` and `category`"):
                 tools.drive_upload("x.md", project="MOW", content="x")
             self.assertEqual(put.call_count, 2)
+            with self.assertRaisesMessage(ValueError, "drive_request_upload"):
+                tools.drive_upload("big.pdf", content_base64="A" * 14_000_004)
 
+    def test_mcp_large_upload_presigns_then_finalizes(self):
+        def presign(k, ct):
+            return {"url": "https://b2/x", "key": k, "method": "PUT", "headers": {"Content-Type": ct}}
+
+        with mock.patch("apps.drive.b2.presign_put", side_effect=presign):
+            out = tools.drive_request_upload("Brochure.pdf", project="MOW", category="sales",
+                                             subfolder="decks", content_type="application/pdf")
+            self.assertEqual(out["key"], "mowafeq/sales/decks/Brochure.pdf")
+            self.assertEqual((out["method"], out["upload_url"]), ("PUT", "https://b2/x"))
+            self.assertEqual(out["headers"], {"Content-Type": "application/pdf"})
+            self.assertEqual(tools.drive_request_upload("x.bin")["key"], "to-be-organized/x.bin")
+            with self.assertRaisesMessage(ValueError, "both `project` and `category`"):
+                tools.drive_request_upload("x.pdf", category="sales")
+
+        meta = {"key": "mowafeq/sales/decks/Brochure.pdf", "size": 80_000_000, "content_type": "application/pdf"}
+        with mock.patch("apps.drive.b2.head", side_effect=lambda k: meta if k == meta["key"] else None):
+            self.assertEqual(tools.drive_finalize_upload("/" + meta["key"]), meta)
+            with self.assertRaisesMessage(ValueError, "Nothing uploaded"):
+                tools.drive_finalize_upload("mowafeq/sales/other.pdf")
+            with self.assertRaises(ValueError):
+                tools.drive_finalize_upload("sources/x.pdf")
+
+    def test_mcp_large_upload_employee_reserves_a_reachable_key(self):
+        emp = User.objects.create_user("emp", password="x")
+        self.mow.members.add(emp)
+        DriveFile.objects.create(key="mowafeq/sales/shared/").shared_with.add(emp)
+        taken = {"mowafeq/sales/shared/a.pdf": {"key": "mowafeq/sales/shared/a.pdf"}}
+        with mock.patch("apps.drive.b2.head", side_effect=lambda k: taken.get(k)), \
+                mock.patch("apps.drive.b2.presign_put",
+                           side_effect=lambda k, ct: {"url": "u", "key": k, "method": "PUT", "headers": {}}):
+            out = tools.drive_request_upload("a.pdf", project="MOW", category="sales",
+                                             subfolder="shared", mcp_user=emp)
+            self.assertEqual(out["key"], "mowafeq/sales/shared/a (2).pdf")
+            self.assertTrue(DriveFile.objects.filter(key=out["key"], uploaded_by=emp).exists())
+            with self.assertRaises(Exception):
+                tools.drive_request_upload("b.pdf", project="MOW", category="sales", mcp_user=emp)
+            with self.assertRaisesMessage(ValueError, "No such Drive object"):
+                tools.drive_finalize_upload("mowafeq/sales/elsewhere.pdf", mcp_user=emp)
 
     def test_mcp_move_files_out_of_the_inbox(self):
         heads = {"to-be-organized/deck.pdf": {"name": "deck.pdf", "size": 5}}
