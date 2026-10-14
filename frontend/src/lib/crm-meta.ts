@@ -1,8 +1,6 @@
 /**
- * Shared presentation metadata for the CRM: relationship labels + pill
- * styles, touchpoint kinds, and the date phrasing every view uses.
- *
- * Relationship is never carried by color alone — every pill names it.
+ * Shared presentation metadata for the CRM: sections, board stages, update
+ * kinds, and the date phrasing every view uses.
  */
 
 import {
@@ -11,34 +9,28 @@ import {
   isThisYear,
 } from "date-fns";
 import {
+  AudioLines,
   Building2,
-  CalendarDays,
   History,
-  Inbox,
   Kanban,
   Mail,
   MessageCircle,
   NotebookPen,
   Phone,
-  Sparkle,
   Users,
   type LucideIcon,
 } from "lucide-react";
 
-import type { Relationship, StageKind, TouchpointKind } from "@/hooks/use-crm";
+import type { LeadStage, UpdateKind } from "@/hooks/use-crm";
 import { ApiError } from "@/lib/api";
 
-/** Prefix of the project follow-up tasks live in (not a business scope). */
-export const CRM_PROJECT_PREFIX = "FUP";
-
 /** The CRM's sections, in order — rendered as sub-items under CRM in the
- *  sidebar and selected by `/crm?tab=<id>` (`inbox` is the bare `/crm`). */
+ *  sidebar and selected by `/crm?tab=<id>` (`leads` is the bare `/crm`). */
 export const CRM_SECTIONS = [
-  { id: "inbox", label: "Inbox", icon: Inbox },
+  { id: "leads", label: "Leads", icon: Kanban },
+  { id: "activity", label: "Activity", icon: History },
   { id: "people", label: "People", icon: Users },
   { id: "companies", label: "Companies", icon: Building2 },
-  { id: "deals", label: "Deals", icon: Kanban },
-  { id: "activity", label: "Activity", icon: History },
 ] as const satisfies readonly { id: string; label: string; icon: LucideIcon }[];
 
 export type CrmSection = (typeof CRM_SECTIONS)[number]["id"];
@@ -48,83 +40,35 @@ export function crmSectionHref(
   keep: Record<string, string | null | undefined> = {},
 ): string {
   const qs = new URLSearchParams();
-  if (id !== "inbox") qs.set("tab", id);
+  if (id !== "leads") qs.set("tab", id);
   for (const [k, v] of Object.entries(keep)) if (v) qs.set(k, v);
   const query = qs.toString();
   return query ? `/crm?${query}` : "/crm";
 }
 
-export const RELATIONSHIP_META: Record<
-  Relationship,
-  { label: string; pill: string }
-> = {
-  client: {
-    label: "Client",
-    pill: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300 border-emerald-500/25",
-  },
-  lead: {
-    label: "Lead",
-    pill: "bg-sky-500/12 text-sky-700 dark:text-sky-300 border-sky-500/25",
-  },
-  partner: {
-    label: "Partner",
-    pill: "bg-violet-500/12 text-violet-700 dark:text-violet-300 border-violet-500/25",
-  },
-  investor: {
-    label: "Investor",
-    pill: "bg-amber-500/12 text-amber-700 dark:text-amber-300 border-amber-500/25",
-  },
-  advisor: {
-    label: "Advisor",
-    pill: "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/25",
-  },
-  other: {
-    label: "Other",
-    pill: "bg-muted text-muted-foreground border-border",
-  },
-  internal: {
-    label: "Internal",
-    pill: "bg-muted text-muted-foreground border-border",
-  },
-};
-
-/** Order in pickers and filter chips; `internal` last (hidden by default). */
-export const RELATIONSHIP_ORDER: Relationship[] = [
-  "lead",
-  "client",
-  "partner",
-  "investor",
-  "advisor",
-  "other",
-  "internal",
+/** Board columns, in order (mirrors ``LeadStage`` in apps/crm/models.py). */
+export const STAGES: { id: LeadStage; label: string; dot: string }[] = [
+  { id: "new", label: "New", dot: "bg-muted-foreground/50" },
+  { id: "discovery", label: "Discovery", dot: "bg-sky-500" },
+  { id: "demo", label: "Demo", dot: "bg-sky-500" },
+  { id: "pilot", label: "Pilot", dot: "bg-sky-500" },
+  { id: "proposal", label: "Proposal", dot: "bg-sky-500" },
+  { id: "won", label: "Won", dot: "bg-emerald-500" },
+  { id: "lost", label: "Lost", dot: "bg-muted-foreground/40" },
 ];
 
-export const TOUCHPOINT_META: Record<
-  TouchpointKind,
-  { label: string; icon: LucideIcon }
-> = {
-  call: { label: "Call", icon: Phone },
-  whatsapp: { label: "WhatsApp", icon: MessageCircle },
-  email: { label: "Email", icon: Mail },
-  calendar: { label: "Calendar", icon: CalendarDays },
-  note: { label: "Note", icon: NotebookPen },
-  other: { label: "Other", icon: Sparkle },
-};
+export const stageLabel = (id: LeadStage) => STAGES.find((s) => s.id === id)?.label ?? id;
 
-export const TOUCHPOINT_ORDER: TouchpointKind[] = [
-  "note",
-  "call",
-  "whatsapp",
-  "email",
-  "calendar",
-  "other",
+export const UPDATE_KINDS: { id: UpdateKind; label: string; icon: LucideIcon }[] = [
+  { id: "note", label: "Note", icon: NotebookPen },
+  { id: "message", label: "Message", icon: MessageCircle },
+  { id: "call", label: "Call", icon: Phone },
+  { id: "email", label: "Email", icon: Mail },
+  { id: "meeting", label: "Meeting", icon: AudioLines },
 ];
 
-export const STAGE_KIND_LABEL: Record<StageKind, string> = {
-  open: "Open",
-  won: "Won",
-  lost: "Lost",
-};
+export const updateKindMeta = (id: UpdateKind) =>
+  UPDATE_KINDS.find((k) => k.id === id) ?? UPDATE_KINDS[0];
 
 /** "3d ago" / "in 2d" / "today" — for last contact and due dates. */
 export function relativeDay(iso: string | null): string {
@@ -138,8 +82,8 @@ export function relativeDay(iso: string | null): string {
   return shortDate(iso);
 }
 
-/** Due before today — by calendar day, matching the inbox buckets (a 09:00
- *  follow-up isn't "overdue" at 10:00 the same day). */
+/** Due before today — by calendar day (a 09:00 next step isn't "overdue" at
+ *  10:00 the same day). */
 export function isOverdue(iso: string | null): boolean {
   return !!iso && differenceInCalendarDays(new Date(iso), new Date()) < 0;
 }
@@ -163,13 +107,6 @@ export function dayOf(iso: string | null): string {
   return iso ? format(new Date(iso), "yyyy-MM-dd") : "";
 }
 
-export function formatMoney(value: string | null, currency = "QAR"): string {
-  if (value == null || value === "") return "";
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "";
-  return `${currency} ${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
-
 export function userLabel(u: { first_name: string; last_name: string; username: string } | null) {
   if (!u) return "Unassigned";
   return [u.first_name, u.last_name].filter(Boolean).join(" ") || u.username;
@@ -186,11 +123,6 @@ export function errorMessage(err: unknown): string {
     }
   }
   return err instanceof Error ? err.message : "Something went wrong.";
-}
-
-/** wa.me wants digits only, with country code. */
-export function whatsappUrl(number: string): string {
-  return `https://wa.me/${number.replace(/[^\d]/g, "")}`;
 }
 
 /** Personal-mail hosts: an address there says nothing about the company. */

@@ -1,66 +1,52 @@
 """REST API for the CRM (mounted at ``/api/crm/``).
 
-Auth is the project default (session + ``IsAuthenticated``). All filtering
-goes through ``query.py`` and all writes through ``services.py`` — the MCP
-tools use the same two modules.
+Auth is the project default (session + ``IsAuthenticated``; staff-only via
+``NonStaffAccessMiddleware``). All filtering goes through ``query.py`` and all
+writes through ``services.py`` — the MCP tools use the same two modules.
 """
 
 from __future__ import annotations
 
-from django.db.models import Count, Q
-from django.shortcuts import get_object_or_404
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.meetings.models import Entity, EntityKind, EntityRole
-from apps.tasks.models import Project
+from apps.meetings.models import EntityKind, EntityRole
+from django.shortcuts import get_object_or_404
+
+from apps.tasks.models import Project, Task
 
 from . import services
-from .models import Deal, FollowUp, Pipeline, Stage, Touchpoint
+from .models import Lead, Update
 from .query import (
     base_contact_queryset,
-    bucket_follow_ups,
-    base_deal_queryset,
+    base_lead_queryset,
     filter_contacts,
-    filter_deals,
-    open_follow_ups,
-    without_listed_companies_people,
+    filter_leads,
+    filter_updates,
+    lead_people,
+    open_steps,
 )
 from .serializers import (
     ContactSerializer,
     ContactWriteSerializer,
-    DealSerializer,
-    DealWriteSerializer,
-    FollowUpInputSerializer,
-    PipelineSerializer,
-    StageSpecSerializer,
-    TouchpointInputSerializer,
-    TouchpointSerializer,
-    follow_up_dict,
+    LeadSerializer,
+    LeadWriteSerializer,
+    UpdateInputSerializer,
+    entity_ref,
+    step_dict,
+    update_dict,
 )
-from .timeline import crm_activity, entity_timeline
 
-CONTACT_FILTER_KEYS = (
-    "relationship",
-    "kind",
-    "owner",
-    "company",
-    "search",
-    "no_next_step",
-    "overdue",
-    "project",
-)
-DEAL_FILTER_KEYS = ("pipeline", "stage", "status", "entity", "owner", "search", "project")
+CONTACT_FILTER_KEYS = ("kind", "company", "search", "project", "all")
+LEAD_FILTER_KEYS = ("stage", "status", "entity", "project", "search")
+THREAD_LIMIT = 200
 
 
 def _filters(request, keys) -> dict[str, str]:
-    out = {k: request.query_params[k] for k in keys if k in request.query_params}
-    if out.get("owner") == "me":
-        out["owner"] = str(request.user.pk)
-    return out
+    return {k: request.query_params[k] for k in keys if k in request.query_params}
 
 
 def _guard(fn, *args, **kwargs):
@@ -71,52 +57,47 @@ def _guard(fn, *args, **kwargs):
         raise ValidationError({"detail": str(exc)})
 
 
+def _updates(filters, request) -> list[dict]:
+    ctx = {"request": request}
+    return [update_dict(u, context=ctx) for u in filter_updates(filters)[:THREAD_LIMIT]]
+
+
 # ---------------------------------------------------------------------------
-# Contacts
+# People & companies
 # ---------------------------------------------------------------------------
 
 
-def contact_detail(entity: Entity, request) -> dict:
+def contact_detail(entity, request) -> dict:
     ctx = {"request": request}
     fresh = base_contact_queryset().get(pk=entity.pk)
     data = dict(ContactSerializer(fresh, context=ctx).data)
-    if fresh.kind == EntityKind.COMPANY:
-        people = filter_contacts({"relationship": "any", "company": fresh.pk}, sort="name")
-        data["people"] = ContactSerializer(people, many=True, context=ctx).data
-    else:
-        data["people"] = []
-    data["deals"] = DealSerializer(
-        filter_deals({"entity": fresh.pk}), many=True, context=ctx
-    ).data
-    data["follow_ups"] = [
-        follow_up_dict(f, context=ctx) for f in open_follow_ups({"entity": fresh.pk})
-    ]
+    data["people"] = (
+        ContactSerializer(
+            base_contact_queryset().filter(company=fresh).order_by("name"), many=True, context=ctx
+        ).data
+        if fresh.kind == EntityKind.COMPANY
+        else []
+    )
+    data["leads"] = LeadSerializer(filter_leads({"entity": fresh.pk}), many=True, context=ctx).data
+    data["updates"] = _updates({"entity": fresh.pk}, request)
     data["meeting_count"] = (
         fresh.meetings.filter(entity_links__role=EntityRole.ATTENDEE).distinct().count()
     )
-    data["timeline"] = entity_timeline(fresh)
     return data
 
 
-class ContactViewSet(
-    mixins.ListModelMixin,
-    mixins.RetrieveModelMixin,
-    viewsets.GenericViewSet,
-):
-    """People and companies in the CRM — the ``meetings.Entity`` rows with a
-    relationship. ``POST`` finds-or-creates by name (so it lands on the entity
-    meetings already know); ``PATCH`` edits CRM fields, and setting
-    ``relationship`` to ``""`` takes an entity back out of the CRM."""
+class ContactViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """People and companies. The list defaults to the ones in the CRM (on a
+    lead or an update); ``?search=`` or ``?all=1`` covers everyone meetings
+    know. ``POST`` finds-or-creates by name, so it lands on the entity a
+    recording already created."""
 
     serializer_class = ContactSerializer
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
         if self.action == "list":
-            return filter_contacts(
-                _filters(self.request, CONTACT_FILTER_KEYS),
-                sort=self.request.query_params.get("sort"),
-            )
+            return filter_contacts(_filters(self.request, CONTACT_FILTER_KEYS))
         return base_contact_queryset()
 
     def retrieve(self, request, *args, **kwargs):
@@ -142,280 +123,141 @@ class ContactViewSet(
 
 
 # ---------------------------------------------------------------------------
-# Follow-ups
+# Leads
 # ---------------------------------------------------------------------------
 
 
-class FollowUpInboxView(APIView):
-    """``GET /api/crm/inbox/?tz=Asia/Qatar&owner=me`` — open follow-ups in
-    Overdue / Today / This week / Later, plus in-CRM contacts with no next
-    step. TM stores no per-user timezone, so the browser sends its own."""
-
-    def get(self, request):
-        tz = services.resolve_tz(request.query_params.get("tz"))
-        filters = _filters(request, ("owner", "project"))
-        ctx = {"request": request}
-        today, grouped = bucket_follow_ups(open_follow_ups(filters), tz)
-        buckets = {
-            name: [follow_up_dict(f, context=ctx) for f in rows]
-            for name, rows in grouped.items()
-        }
-
-        stale = without_listed_companies_people(
-            filter_contacts({"no_next_step": "1", **filters}, sort="last_contact")
-        )
-        return Response(
-            {
-                "today": today.isoformat(),
-                "buckets": buckets,
-                "no_next_step": ContactSerializer(stale, many=True, context=ctx).data,
-            }
-        )
-
-
-class FollowUpViewSet(viewsets.GenericViewSet):
-    queryset = FollowUp.objects.select_related("task__column", "task__project", "entity")
-
-    def create(self, request):
-        payload = FollowUpInputSerializer(data=request.data)
-        payload.is_valid(raise_exception=True)
-        data = payload.validated_data
-        task = _guard(
-            services.create_follow_up,
-            data["entity"],
-            data["title"],
-            user=request.user,
-            due=data.get("due"),
-            tz=data.get("tz"),
-            deal=data.get("deal"),
-            assignee=data.get("assignee"),
-            description=data.get("description") or "",
-        )
-        return Response(
-            follow_up_dict(task.crm_follow_up, context={"request": request}),
-            status=status.HTTP_201_CREATED,
-        )
-
-    def _respond(self, follow_up):
-        follow_up = self.get_queryset().get(pk=follow_up.pk)
-        return Response(follow_up_dict(follow_up, context={"request": self.request}))
-
-    @action(detail=True, methods=["post"])
-    def complete(self, request, pk=None):
-        follow_up = self.get_object()
-        _guard(services.complete_follow_up, follow_up, user=request.user)
-        return self._respond(follow_up)
-
-    @action(detail=True, methods=["post"])
-    def reopen(self, request, pk=None):
-        follow_up = self.get_object()
-        _guard(services.reopen_follow_up, follow_up, user=request.user)
-        return self._respond(follow_up)
-
-    @action(detail=True, methods=["post"])
-    def reschedule(self, request, pk=None):
-        follow_up = self.get_object()
-        _guard(
-            services.reschedule_follow_up,
-            follow_up,
-            request.data.get("due"),
-            user=request.user,
-            tz=request.data.get("tz"),
-        )
-        return self._respond(follow_up)
-
-
-# ---------------------------------------------------------------------------
-# Touchpoints
-# ---------------------------------------------------------------------------
-
-
-class TouchpointViewSet(
-    mixins.DestroyModelMixin,
-    viewsets.GenericViewSet,
-):
-    """Log (``POST``), correct (``PATCH``) or delete a touchpoint / note."""
-
-    queryset = Touchpoint.objects.prefetch_related("entities").select_related("deal")
-    serializer_class = TouchpointSerializer
-
-    def create(self, request):
-        payload = TouchpointInputSerializer(data=request.data)
-        payload.is_valid(raise_exception=True)
-        data = dict(payload.validated_data)
-        entities = data.pop("entities")
-        deal = data.pop("deal", None)
-        if data.get("follow_up"):
-            data["follow_up"] = dict(data["follow_up"])
-        touchpoint, created, _task = _guard(
-            services.log_touchpoint, data, entities, user=request.user, deal=deal
-        )
-        return Response(
-            TouchpointSerializer(touchpoint).data,
-            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
-        )
-
-    def partial_update(self, request, *args, **kwargs):
-        touchpoint = self.get_object()
-        payload = TouchpointInputSerializer(data=request.data, partial=True)
-        payload.is_valid(raise_exception=True)
-        data = dict(payload.validated_data)
-        kwargs = {}
-        if "entities" in data:
-            kwargs["entities"] = data.pop("entities")
-        if "deal" in data:
-            kwargs["deal"] = data.pop("deal")
-        _guard(services.update_touchpoint, touchpoint, data, **kwargs)
-        fresh = self.get_queryset().get(pk=touchpoint.pk)
-        return Response(TouchpointSerializer(fresh).data)
-
-    def perform_destroy(self, instance):
-        services.delete_touchpoint(instance)
-
-
-class ActivityView(APIView):
-    """``GET /api/crm/activity/?days=14`` — everything that happened with CRM
-    contacts lately: meetings, touchpoints, closed follow-ups."""
-
-    def get(self, request):
-        try:
-            days = int(request.query_params.get("days", 14))
-        except ValueError:
-            raise ValidationError({"days": "Must be a number."})
-        return Response(
-            crm_activity(days=min(days, 365), project=request.query_params.get("project"))
-        )
-
-
-class CrmProjectsView(APIView):
-    """``GET /api/crm/projects/`` — the projects the CRM is split by (any
-    project a contact or deal is tagged with): the scope switcher's options."""
-
-    def get(self, request):
-        projects = (
-            Project.objects.filter(Q(crm_entities__isnull=False) | Q(crm_deals__isnull=False))
-            .distinct()
-            .order_by("name")
-        )
-        return Response(
-            [{"id": p.id, "prefix": p.prefix, "name": p.name, "color": p.color} for p in projects]
-        )
-
-
-# ---------------------------------------------------------------------------
-# Deals
-# ---------------------------------------------------------------------------
-
-
-class DealViewSet(viewsets.ModelViewSet):
+class LeadViewSet(viewsets.ModelViewSet):
     lookup_field = "key"
     lookup_value_regex = r"[A-Za-z0-9\-]+"
-    serializer_class = DealSerializer
+    serializer_class = LeadSerializer
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
         if self.action == "list":
-            return filter_deals(_filters(self.request, DEAL_FILTER_KEYS))
-        return base_deal_queryset()
+            return filter_leads(_filters(self.request, LEAD_FILTER_KEYS))
+        return base_lead_queryset()
 
-    def _detail(self, deal, status_code=status.HTTP_200_OK):
-        fresh = base_deal_queryset().get(pk=deal.pk)
-        data = dict(DealSerializer(fresh, context={"request": self.request}).data)
-        data["follow_ups"] = [
-            follow_up_dict(f, context={"request": self.request})
-            for f in fresh.follow_ups.select_related(
-                "task__column", "entity__company", "deal"
-            )
-        ]
-        data["touchpoints"] = TouchpointSerializer(
-            fresh.touchpoints.prefetch_related("entities"), many=True
-        ).data
+    def _detail(self, lead, status_code=status.HTTP_200_OK):
+        ctx = {"request": self.request}
+        fresh = base_lead_queryset().get(pk=lead.pk)
+        data = dict(LeadSerializer(fresh, context=ctx).data)
+        data["people"] = [entity_ref(p) for p in lead_people(fresh)]
+        steps = open_steps().filter(crm_update__lead=fresh).select_related("column")
+        data["steps"] = [step_dict(t, context=ctx) for t in steps.prefetch_related("assignees")]
+        data["updates"] = _updates({"lead": fresh.key}, self.request)
         return Response(data, status=status_code)
 
     def retrieve(self, request, *args, **kwargs):
         return self._detail(self.get_object())
 
     def create(self, request, *args, **kwargs):
-        payload = DealWriteSerializer(data=request.data)
+        payload = LeadWriteSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        deal = _guard(services.create_deal, payload.validated_data, user=request.user)
-        return self._detail(deal, status.HTTP_201_CREATED)
+        lead = _guard(services.create_lead, payload.validated_data, user=request.user)
+        return self._detail(lead, status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):
-        deal = self.get_object()
-        payload = DealWriteSerializer(data=request.data, partial=True)
+        lead = self.get_object()
+        payload = LeadWriteSerializer(data=request.data, partial=True)
         payload.is_valid(raise_exception=True)
-        _guard(services.update_deal, deal, payload.validated_data)
-        return self._detail(deal)
+        _guard(services.update_lead, lead, payload.validated_data)
+        return self._detail(lead)
 
     def perform_destroy(self, instance):
-        services.delete_deal(instance)
+        services.delete_lead(instance)
 
     @action(detail=True, methods=["post"])
     def move(self, request, key=None):
-        deal = self.get_object()
-        stage = get_object_or_404(Stage, pk=request.data.get("stage"))
+        lead = self.get_object()
         index = request.data.get("index")
         _guard(
-            services.move_deal,
-            deal,
-            stage,
+            services.move_lead,
+            lead,
+            str(request.data.get("stage") or ""),
             index=int(index) if index not in (None, "") else None,
         )
-        return self._detail(deal)
+        return self._detail(lead)
+
+
+class StepView(APIView):
+    """``POST /api/crm/steps/<task key>/ {"done": true}`` — tick a next step
+    off or reopen it."""
+
+    def post(self, request, key):
+        task = get_object_or_404(
+            Task.objects.select_related("column", "project"), key__iexact=key, crm_update__isnull=False
+        )
+        _guard(services.set_step_done, task, bool(request.data.get("done")), user=request.user)
+        task.refresh_from_db()
+        return Response(step_dict(task, context={"request": request}))
 
 
 # ---------------------------------------------------------------------------
-# Pipelines
+# Updates
 # ---------------------------------------------------------------------------
 
 
-class PipelineViewSet(viewsets.ModelViewSet):
-    serializer_class = PipelineSerializer
-    http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+class UpdateViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
+    """Post (``POST``), correct (``PATCH``) or delete an update."""
 
-    def get_queryset(self):
-        return Pipeline.objects.prefetch_related("stages")
+    queryset = Update.objects.all()
 
-    def get_serializer_context(self):
-        ctx = super().get_serializer_context()
-        ctx["stage_counts"] = dict(
-            Deal.objects.values_list("stage_id").annotate(n=Count("id"))
+    def _respond(self, update, status_code=status.HTTP_200_OK):
+        fresh = filter_updates().get(pk=update.pk)
+        return Response(update_dict(fresh, context={"request": self.request}), status=status_code)
+
+    def create(self, request):
+        payload = UpdateInputSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        update = _guard(
+            services.post_update,
+            data,
+            user=request.user,
+            lead=data.pop("lead", None),
+            people=data.pop("people", []),
+            # Default "with" is the author — they were on it.
+            users=data.pop("users", [request.user]),
+            meeting=data.pop("meeting", None),
         )
-        return ctx
-
-    def _respond(self, pipeline, status_code=status.HTTP_200_OK):
-        fresh = self.get_queryset().get(pk=pipeline.pk)
-        return Response(
-            PipelineSerializer(fresh, context=self.get_serializer_context()).data,
-            status=status_code,
-        )
-
-    def create(self, request, *args, **kwargs):
-        stages = StageSpecSerializer(data=request.data.get("stages") or [], many=True)
-        stages.is_valid(raise_exception=True)
-        pipeline = _guard(
-            services.create_pipeline,
-            request.data.get("name", ""),
-            [dict(s) for s in stages.validated_data] or None,
-        )
-        return self._respond(pipeline, status.HTTP_201_CREATED)
-
-    def update(self, request, *args, **kwargs):
-        raise ValidationError({"detail": "Use PATCH for the name and PUT …/stages/."})
+        return self._respond(update, status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):
-        pipeline = self.get_object()
-        _guard(services.rename_pipeline, pipeline, request.data.get("name", ""))
-        return self._respond(pipeline)
+        update = self.get_object()
+        payload = UpdateInputSerializer(data=request.data, partial=True)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        for k in ("next_step", "next_due", "next_assignee", "tz"):
+            data.pop(k, None)
+        kwargs = {k: data.pop(k) for k in ("lead", "people", "users", "meeting") if k in data}
+        _guard(services.edit_update, update, data, **kwargs)
+        return self._respond(update)
 
     def perform_destroy(self, instance):
-        _guard(services.delete_pipeline, instance)
+        services.delete_update(instance)
 
-    @action(detail=True, methods=["put"])
-    def stages(self, request, pk=None):
-        pipeline = self.get_object()
-        stages = StageSpecSerializer(data=request.data.get("stages"), many=True)
-        stages.is_valid(raise_exception=True)
-        _guard(services.set_stages, pipeline, [dict(s) for s in stages.validated_data])
-        return self._respond(pipeline)
+
+class ActivityView(APIView):
+    """``GET /api/crm/activity/?days=30&project=MOW`` — every update, newest
+    first."""
+
+    def get(self, request):
+        try:
+            days = min(int(request.query_params.get("days", 30)), 365)
+        except ValueError:
+            raise ValidationError({"days": "Must be a number."})
+        return Response(
+            _updates({"days": days, "project": request.query_params.get("project")}, request)
+        )
+
+
+class CrmProjectsView(APIView):
+    """``GET /api/crm/projects/`` — projects that have leads: the scope
+    switcher's options."""
+
+    def get(self, request):
+        projects = Project.objects.filter(crm_leads__isnull=False).distinct().order_by("name")
+        return Response(
+            [{"id": p.id, "prefix": p.prefix, "name": p.name, "color": p.color} for p in projects]
+        )

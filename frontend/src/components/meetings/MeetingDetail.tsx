@@ -36,7 +36,7 @@ import {
   useToggleActionItem,
   useUpdateMeeting,
 } from "@/hooks/use-meetings";
-import { useUpdateContact } from "@/hooks/use-crm";
+import { useLeads, usePostUpdate } from "@/hooks/use-crm";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import { ApiError } from "@/lib/api";
 import { fetchMe } from "@/lib/auth";
@@ -263,57 +263,66 @@ function MetaBar({
   );
 }
 
-// ── CRM: who from this meeting is tracked, and one click to add the rest ────
+// ── CRM: which leads this recording is posted to, and one pick to post it ──
 
 function CrmRow({ meeting }: { meeting: Meeting }) {
-  const promote = useUpdateContact();
   // The CRM is staff-only; employees can't open or write to it.
   const { data: me } = useQuery({ queryKey: meKey(), queryFn: fetchMe });
-  const attendees = meeting.entities.filter((e) => e.role === "attendee");
-  if (!me?.is_staff || attendees.length === 0) return null;
-  const tracked = attendees.filter((e) => e.relationship && e.relationship !== "internal");
-  const untracked = attendees.filter((e) => !e.relationship);
-  if (tracked.length === 0 && untracked.length === 0) return null;
+  const staff = !!me?.is_staff;
+  const leads = useLeads("", staff);
+  const post = usePostUpdate();
+  if (!staff) return null;
+  const posted = new Set(meeting.crm_leads.map((l) => l.key));
+  const open = (leads.data ?? []).filter(
+    (l) => l.stage !== "won" && l.stage !== "lost" && !posted.has(l.key),
+  );
+
+  const postTo = (key: string) =>
+    post.mutate(
+      {
+        lead: key,
+        kind: "meeting",
+        meeting: meeting.key,
+        body: meeting.summary || meeting.title,
+        people: meeting.entities
+          .filter((e) => e.role === "attendee" && e.kind === "person")
+          .map((e) => e.id),
+      },
+      {
+        onSuccess: () => toast.success("Posted to the lead"),
+        onError: (err) => toast.error(errorMessage(err)),
+      },
+    );
 
   return (
     <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
       <Handshake className="size-3 shrink-0" />
-      {tracked.map((e) => (
+      {meeting.crm_leads.map((l) => (
         <a
-          key={e.id}
-          href={`/crm?tab=${e.kind === "company" ? "companies" : "people"}&c=${e.id}`}
+          key={l.key}
+          href={`/crm?l=${l.key}`}
           className="rounded-full px-1.5 py-0.5 hover:bg-accent hover:text-foreground"
-          title={`Open ${e.name} in the CRM`}
+          title={`Open ${l.title} in the CRM`}
         >
-          {e.name}
+          {l.title}
         </a>
       ))}
-      {untracked.map((e) => (
-        <button
-          key={e.id}
-          type="button"
-          disabled={promote.isPending}
-          onClick={() =>
-            promote.mutate(
-              {
-                id: e.id,
-                relationship: "lead",
-                // A lead met in a Mowafeq meeting is a Mowafeq contact.
-                ...(meeting.project ? { add_projects: [meeting.project.id] } : {}),
-              },
-              {
-                onSuccess: () => toast.success(`${e.name} added to the CRM as a lead`),
-                onError: (err) => toast.error(errorMessage(err)),
-              },
-            )
-          }
-          className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-border px-1.5 py-0.5 hover:border-foreground/40 hover:text-foreground"
-          title={`Add ${e.name} to the CRM`}
+      {open.length > 0 && (
+        <select
+          value=""
+          disabled={post.isPending}
+          onChange={(e) => e.target.value && postTo(e.target.value)}
+          className="h-5 rounded-full border border-dashed border-border bg-transparent px-1.5 text-[11px] text-muted-foreground outline-none hover:text-foreground"
         >
-          <Plus className="size-2.5" />
-          {e.name}
-        </button>
-      ))}
+          <option value="">+ Post to lead…</option>
+          {open.map((l) => (
+            <option key={l.key} value={l.key}>
+              {l.title}
+              {l.company ? ` · ${l.company.name}` : ""}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   );
 }

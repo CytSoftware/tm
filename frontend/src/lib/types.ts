@@ -325,7 +325,13 @@ export type Task = {
   staleness: "yellow" | "red" | null;
   /** GitHub PRs linked to this task (empty array when none). */
   linked_prs: LinkedPR[];
+  /** Where it came from: a CRM lead (via the update that filed it) or meetings. */
+  sources: TaskSource[];
 };
+
+export type TaskSource =
+  | { kind: "lead"; key: string; title: string; company: string }
+  | { kind: "meeting"; key: string; title: string };
 
 export type StateTransition = {
   id: number;

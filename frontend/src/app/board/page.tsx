@@ -29,6 +29,7 @@ import {
 import {
   Check,
   ChevronDown,
+  FolderKanban,
   GitBranch,
   Layers,
   MoreHorizontal,
@@ -1734,12 +1735,16 @@ function BoardHeader({
           </DropdownMenuItem>
           {project && (
             <DropdownMenuItem
-              onClick={() => router.push(`/projects/${project.id}`)}
+              onClick={() => router.push(`/settings/projects/${project.id}`)}
             >
               <Settings className="size-3.5" />
               Settings for {project.name}
             </DropdownMenuItem>
           )}
+          <DropdownMenuItem onClick={() => router.push("/settings/projects")}>
+            <FolderKanban className="size-3.5" />
+            Manage projects…
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 

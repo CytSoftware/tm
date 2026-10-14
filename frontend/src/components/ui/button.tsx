@@ -1,3 +1,4 @@
+import { isValidElement } from "react"
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 
@@ -44,12 +45,20 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  render,
+  nativeButton,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  // Rendered as something other than a <button> (usually a link)? Then it has
+  // no native button semantics — tell Base UI here rather than at every call
+  // site, which is what kept producing the "expected a native <button>" error.
+  const native = nativeButton ?? (!isValidElement(render) || render.type === "button")
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      render={render}
+      nativeButton={native}
       {...props}
     />
   )

@@ -1,8 +1,8 @@
 """Fire-and-forget WebSocket broadcasts for CRM writes.
 
-One global ``crm`` group, so every open ``/crm`` page refetches. Follow-ups
-are tasks and also broadcast into the CRM project's group; this covers
-contacts, deals, touchpoints, pipelines and follow-up changes made here.
+One global ``crm`` group, so every open ``/crm`` page refetches: contacts,
+leads, updates. Next steps are tasks and also broadcast into their project's
+group.
 
 Rides :func:`apps.tasks.broadcast.broadcast_to_group`, so it reaches Daphne
 from the MCP stdio process too. The consumer dispatch method is
@@ -22,9 +22,8 @@ CRM_GROUP_NAME = "crm"
 
 
 def broadcast_crm_event(event_type: str, payload: dict[str, Any] | None = None) -> None:
-    """``event_type`` is e.g. ``contact.updated``, ``deal.moved``,
-    ``touchpoint.created``, ``pipeline.updated``, ``follow_up.changed``.
-    Must not throw."""
+    """``event_type`` is e.g. ``contact.updated``, ``lead.moved``,
+    ``update.created``. Must not throw."""
     try:
         broadcast_to_group(CRM_GROUP_NAME, "crm.event", {"type": event_type, **(payload or {})})
     except Exception:  # pragma: no cover - defensive

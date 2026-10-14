@@ -1,19 +1,15 @@
 "use client";
 
 /**
- * People and companies in the CRM — a dense, scannable table. Each row
- * answers the three questions you open a CRM for: who is this, what happened
- * last, and what do we owe them next. Filters live in the page's URL.
+ * People in the CRM — a dense, scannable table: who they are, and the last
+ * update that concerned them. Filters live in the page's URL.
  */
 
-import { AudioLines } from "lucide-react";
-
-import { UserAvatar } from "@/components/UserAvatar";
 import type { Contact } from "@/hooks/use-crm";
-import { TOUCHPOINT_META, isOverdue, relativeDay, shortDate } from "@/lib/crm-meta";
+import { relativeDay, shortDate, updateKindMeta } from "@/lib/crm-meta";
 import { cn } from "@/lib/utils";
 
-import { ContactAvatar, RelationshipPill, Td, Th } from "./shared";
+import { ContactAvatar, Td, Th } from "./shared";
 
 export function ContactsView({
   contacts,
@@ -26,26 +22,16 @@ export function ContactsView({
 }) {
   return (
     <div className="h-full min-h-0 overflow-auto">
-      <table className="w-full min-w-[34rem] border-separate border-spacing-0 text-[13px]">
+      <table className="w-full min-w-[28rem] border-separate border-spacing-0 text-[13px]">
         <thead className="sticky top-0 z-[1] bg-background/95 backdrop-blur">
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
             <Th className="pl-4">Name</Th>
-            <Th>Type</Th>
-            <Th>Last activity</Th>
-            <Th>Next step</Th>
-            <Th className="pr-4 text-right">Owner</Th>
+            <Th className="pr-4">Last update</Th>
           </tr>
         </thead>
         <tbody>
           {contacts.map((c) => {
-            const overdue = isOverdue(c.next_follow_up_at);
-            const sub = [c.headline, c.company?.name]
-              .filter(Boolean)
-              .filter((v, i, a) => a.indexOf(v) === i)
-              .join(" · ");
-            const act = c.last_activity;
-            const ActIcon =
-              act?.type === "touchpoint" ? TOUCHPOINT_META[act.kind]?.icon : AudioLines;
+            const sub = [c.position, c.company?.name].filter(Boolean).join(" · ");
             return (
               <tr
                 key={c.id}
@@ -63,79 +49,38 @@ export function ContactsView({
                     <ContactAvatar name={c.name} kind={c.kind} />
                     <div className="min-w-0">
                       <div className="truncate font-medium">{c.name}</div>
-                      <div className="truncate text-[12px] text-muted-foreground">
-                        {sub || (c.kind === "company" ? "Company" : "Person")}
-                      </div>
+                      <div className="truncate text-[12px] text-muted-foreground">{sub || "—"}</div>
                     </div>
                   </div>
-                </Td>
-                <Td>
-                  <RelationshipPill relationship={c.relationship} />
-                </Td>
-                <Td>
-                  {act ? (
-                    <div className="w-44 min-w-0 max-lg:w-32">
-                      <div
-                        className="flex items-center gap-1 text-[12px] tabular-nums text-foreground/80"
-                        title={shortDate(act.at)}
-                      >
-                        {ActIcon && <ActIcon className="size-3 shrink-0 text-muted-foreground" />}
-                        {relativeDay(act.at)}
-                      </div>
-                      <div className="truncate text-[12px] text-muted-foreground" title={act.text}>
-                        {act.text}
-                      </div>
-                    </div>
-                  ) : (
-                    <span className="text-[12px] text-muted-foreground/70">never</span>
-                  )}
-                </Td>
-                <Td>
-                  {c.next_follow_up_at ? (
-                    <div className="w-48 min-w-0 max-lg:w-36">
-                      <div
-                        className={cn(
-                          "text-[12px] tabular-nums",
-                          overdue ? "text-destructive" : "text-foreground/80",
-                        )}
-                      >
-                        {relativeDay(c.next_follow_up_at)}
-                      </div>
-                      <div className="truncate text-[12px] text-muted-foreground">
-                        {c.next_follow_up_title}
-                      </div>
-                    </div>
-                  ) : (
-                    <span
-                      className={cn(
-                        "text-[12px]",
-                        c.has_open_follow_up
-                          ? "text-muted-foreground"
-                          : "text-amber-700 dark:text-amber-400",
-                      )}
-                    >
-                      {c.has_open_follow_up ? "undated" : "no next step"}
-                    </span>
-                  )}
                 </Td>
                 <Td className="pr-4">
-                  <div className="flex justify-end">
-                    {c.owner ? (
-                      <UserAvatar
-                        username={c.owner.username}
-                        avatarUrl={c.owner.avatar_url}
-                        size="size-5"
-                      />
-                    ) : (
-                      <span className="text-[12px] text-muted-foreground/60">—</span>
-                    )}
-                  </div>
+                  <LastUpdate contact={c} />
                 </Td>
               </tr>
             );
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+export function LastUpdate({ contact: c }: { contact: Contact }) {
+  const last = c.last_update;
+  if (!last) return <span className="text-[12px] text-muted-foreground/70">never</span>;
+  const Icon = updateKindMeta(last.kind).icon;
+  return (
+    <div className="w-52 min-w-0 max-lg:w-36">
+      <div
+        className="flex items-center gap-1 text-[12px] tabular-nums text-foreground/80"
+        title={shortDate(last.at)}
+      >
+        <Icon className="size-3 shrink-0 text-muted-foreground" />
+        {relativeDay(last.at)}
+      </div>
+      <div className="truncate text-[12px] text-muted-foreground" title={last.body}>
+        {last.body}
+      </div>
     </div>
   );
 }

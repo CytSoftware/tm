@@ -1,7 +1,9 @@
 "use client";
 
 /**
- * Deals kanban for one pipeline: a column per stage, value total per column.
+ * Leads kanban: a column per fixed stage. Each card
+ * answers "what's next" (the soonest open task its updates filed) and "when
+ * did we last hear" (its newest update).
  *
  * Drag uses `@atlaskit/pragmatic-drag-and-drop`, registered only under
  * `(pointer: fine)` — its element adapter is the native HTML5 drag API, which
@@ -20,10 +22,9 @@ import {
   attachClosestEdge,
   extractClosestEdge,
 } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
-import { Check, Plus } from "lucide-react";
+import { Check, CircleDashed, Plus } from "lucide-react";
 import { toast } from "sonner";
 
-import { UserAvatar } from "@/components/UserAvatar";
 import {
   Sheet,
   SheetBody,
@@ -32,50 +33,53 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useLongPress } from "@/hooks/use-long-press";
-import { type Deal, type Pipeline, type Stage, useMoveDeal } from "@/hooks/use-crm";
-import { companyDomain, errorMessage, formatMoney, shortDate } from "@/lib/crm-meta";
+import { type Lead, type LeadStage, useMoveLead } from "@/hooks/use-crm";
+import {
+  STAGES,
+  companyDomain,
+  errorMessage,
+  isOverdue,
+  relativeDay,
+} from "@/lib/crm-meta";
 import { cn } from "@/lib/utils";
 
 import { CompanyMark } from "./shared";
 
-type DragData = { type: "crm-deal"; key: string; stageId: number };
-type ColumnData = { type: "crm-stage"; stageId: number };
+type DragData = { type: "crm-lead"; key: string; stage: LeadStage };
+type ColumnData = { type: "crm-stage"; stage: LeadStage };
 
-const isDeal = (d: Record<string, unknown>): d is DragData & Record<string, unknown> =>
-  d.type === "crm-deal";
+const isLead = (d: Record<string, unknown>): d is DragData & Record<string, unknown> =>
+  d.type === "crm-lead";
 const isStage = (d: Record<string, unknown>): d is ColumnData & Record<string, unknown> =>
   d.type === "crm-stage";
 
-export function DealsBoard({
-  pipeline,
-  deals,
+export function LeadsBoard({
+  leads,
   selectedKey,
   project = "",
   onOpen,
-  onNewDeal,
+  onNewLead,
 }: {
-  pipeline: Pipeline;
-  deals: Deal[];
+  leads: Lead[];
   selectedKey: string | null;
   /** Project prefix scope — part of the cache key the optimistic move edits. */
   project?: string;
   onOpen: (key: string) => void;
-  onNewDeal: (stageId: number) => void;
+  onNewLead: (stage: LeadStage) => void;
 }) {
-  const move = useMoveDeal(pipeline.id, project);
-  const [touchMove, setTouchMove] = useState<Deal | null>(null);
+  const move = useMoveLead(project);
+  const [touchMove, setTouchMove] = useState<Lead | null>(null);
 
   const byStage = useMemo(() => {
-    const map = new Map<number, Deal[]>();
-    for (const s of pipeline.stages) map.set(s.id, []);
-    for (const d of deals) map.get(d.stage.id)?.push(d);
+    const map = new Map<LeadStage, Lead[]>(STAGES.map((s) => [s.id, []]));
+    for (const l of leads) map.get(l.stage)?.push(l);
     for (const list of map.values()) list.sort((a, b) => a.position - b.position);
     return map;
-  }, [pipeline.stages, deals]);
+  }, [leads]);
 
-  const doMove = (deal: Deal, stageId: number, index?: number) =>
+  const doMove = (lead: Lead, stage: LeadStage, index?: number) =>
     move.mutate(
-      { dealKey: deal.key, stage: stageId, index },
+      { leadKey: lead.key, stage, index },
       { onError: (e) => toast.error(errorMessage(e)) },
     );
 
@@ -83,39 +87,39 @@ export function DealsBoard({
   // a column's empty space (to the bottom).
   useEffect(() => {
     return monitorForElements({
-      canMonitor: ({ source }) => isDeal(source.data),
+      canMonitor: ({ source }) => isLead(source.data),
       onDrop: ({ source, location }) => {
         const target = location.current.dropTargets[0];
-        if (!target || !isDeal(source.data)) return;
-        const deal = deals.find((d) => d.key === source.data.key);
-        if (!deal) return;
+        if (!target || !isLead(source.data)) return;
+        const lead = leads.find((l) => l.key === source.data.key);
+        if (!lead) return;
         const td = target.data;
-        if (isDeal(td)) {
-          if (td.key === deal.key) return;
-          const siblings = (byStage.get(td.stageId) ?? []).filter((d) => d.key !== deal.key);
-          const at = siblings.findIndex((d) => d.key === td.key);
+        if (isLead(td)) {
+          if (td.key === lead.key) return;
+          const siblings = (byStage.get(td.stage) ?? []).filter((l) => l.key !== lead.key);
+          const at = siblings.findIndex((l) => l.key === td.key);
           const edge = extractClosestEdge(td);
-          doMove(deal, td.stageId, edge === "bottom" ? at + 1 : at);
+          doMove(lead, td.stage, edge === "bottom" ? at + 1 : at);
         } else if (isStage(td)) {
-          if (td.stageId === deal.stage.id) return;
-          doMove(deal, td.stageId);
+          if (td.stage === lead.stage) return;
+          doMove(lead, td.stage);
         }
       },
     });
-    // doMove is stable enough per render; deals/byStage are the real inputs.
+    // doMove is stable enough per render; leads/byStage are the real inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deals, byStage]);
+  }, [leads, byStage]);
 
   return (
     <div className="flex h-full min-h-0 gap-3 overflow-x-auto px-4 pb-4 pt-3">
-      {pipeline.stages.map((stage) => (
+      {STAGES.map((stage) => (
         <StageColumn
           key={stage.id}
           stage={stage}
-          deals={byStage.get(stage.id) ?? []}
+          leads={byStage.get(stage.id) ?? []}
           selectedKey={selectedKey}
           onOpen={onOpen}
-          onNewDeal={() => onNewDeal(stage.id)}
+          onNewLead={() => onNewLead(stage.id)}
           onLongPress={setTouchMove}
         />
       ))}
@@ -127,18 +131,18 @@ export function DealsBoard({
             <p className="truncate text-[12px] text-muted-foreground">{touchMove?.title}</p>
           </SheetHeader>
           <SheetBody className="px-2 pb-2">
-            {pipeline.stages.map((s) => (
+            {STAGES.map((s) => (
               <button
                 key={s.id}
                 type="button"
                 onClick={() => {
-                  if (touchMove && s.id !== touchMove.stage.id) doMove(touchMove, s.id);
+                  if (touchMove && s.id !== touchMove.stage) doMove(touchMove, s.id);
                   setTouchMove(null);
                 }}
                 className="flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-left text-[14px] active:bg-accent"
               >
-                <span className="flex-1">{s.name}</span>
-                {touchMove?.stage.id === s.id && <Check className="size-4 text-muted-foreground" />}
+                <span className="flex-1">{s.label}</span>
+                {touchMove?.stage === s.id && <Check className="size-4 text-muted-foreground" />}
               </button>
             ))}
           </SheetBody>
@@ -150,18 +154,18 @@ export function DealsBoard({
 
 function StageColumn({
   stage,
-  deals,
+  leads,
   selectedKey,
   onOpen,
-  onNewDeal,
+  onNewLead,
   onLongPress,
 }: {
-  stage: Stage;
-  deals: Deal[];
+  stage: (typeof STAGES)[number];
+  leads: Lead[];
   selectedKey: string | null;
   onOpen: (key: string) => void;
-  onNewDeal: () => void;
-  onLongPress: (deal: Deal) => void;
+  onNewLead: () => void;
+  onLongPress: (lead: Lead) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [over, setOver] = useState(false);
@@ -171,16 +175,13 @@ function StageColumn({
     if (!el) return;
     return dropTargetForElements({
       element: el,
-      canDrop: ({ source }) => isDeal(source.data),
-      getData: (): ColumnData => ({ type: "crm-stage", stageId: stage.id }),
+      canDrop: ({ source }) => isLead(source.data),
+      getData: (): ColumnData => ({ type: "crm-stage", stage: stage.id }),
       onDragEnter: () => setOver(true),
       onDragLeave: () => setOver(false),
       onDrop: () => setOver(false),
     });
   }, [stage.id]);
-
-  const total = deals.reduce((n, d) => n + (d.value ? Number(d.value) : 0), 0);
-  const currency = deals.find((d) => d.value)?.currency ?? "QAR";
 
   return (
     <div
@@ -191,67 +192,55 @@ function StageColumn({
       )}
     >
       <div className="flex shrink-0 items-center gap-2 px-3 pb-1.5 pt-2.5">
-        <span
-          className={cn(
-            "size-2 shrink-0 rounded-full",
-            stage.kind === "won"
-              ? "bg-emerald-500"
-              : stage.kind === "lost"
-                ? "bg-muted-foreground/40"
-                : "bg-sky-500",
-          )}
-        />
-        <h3 className="truncate text-[12px] font-medium">{stage.name}</h3>
-        <span className="text-[11px] tabular-nums text-muted-foreground/70">{deals.length}</span>
-        {total > 0 && (
-          <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
-            {formatMoney(String(total), currency)}
-          </span>
-        )}
+        <span className={cn("size-2 shrink-0 rounded-full", stage.dot)} />
+        <h3 className="truncate text-[12px] font-medium">{stage.label}</h3>
+        <span className="text-[11px] tabular-nums text-muted-foreground/70">{leads.length}</span>
       </div>
       <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-2 pb-2">
-        {deals.map((d) => (
-          <DealCard
-            key={d.key}
-            deal={d}
-            selected={selectedKey === d.key}
+        {leads.map((l) => (
+          <LeadCard
+            key={l.key}
+            lead={l}
+            selected={selectedKey === l.key}
             onOpen={onOpen}
             onLongPress={onLongPress}
           />
         ))}
         <button
           type="button"
-          onClick={onNewDeal}
+          onClick={onNewLead}
           className="tap-target flex h-7 w-full items-center gap-1 rounded-md px-2 text-[12px] text-muted-foreground opacity-60 hover:bg-background/70 hover:opacity-100 hover-none:opacity-100"
         >
-          <Plus className="size-3.5" /> New deal
+          <Plus className="size-3.5" /> New lead
         </button>
       </div>
     </div>
   );
 }
 
-function DealCard({
-  deal,
+function LeadCard({
+  lead,
   selected,
   onOpen,
   onLongPress,
 }: {
-  deal: Deal;
+  lead: Lead;
   selected: boolean;
   onOpen: (key: string) => void;
-  onLongPress: (deal: Deal) => void;
+  onLongPress: (lead: Lead) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [edge, setEdge] = useState<"top" | "bottom" | null>(null);
-  const longPress = useLongPress(() => onLongPress(deal));
+  const longPress = useLongPress(() => onLongPress(lead));
+  const closed = lead.stage === "won" || lead.stage === "lost";
+  const step = lead.next_step;
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     if (!window.matchMedia("(pointer: fine)").matches) return;
-    const data: DragData = { type: "crm-deal", key: deal.key, stageId: deal.stage.id };
+    const data: DragData = { type: "crm-lead", key: lead.key, stage: lead.stage };
     return combine(
       draggable({
         element: el,
@@ -261,7 +250,7 @@ function DealCard({
       }),
       dropTargetForElements({
         element: el,
-        canDrop: ({ source }) => isDeal(source.data) && source.data.key !== deal.key,
+        canDrop: ({ source }) => isLead(source.data) && source.data.key !== lead.key,
         getData: ({ input, element }) =>
           attachClosestEdge(data, { input, element, allowedEdges: ["top", "bottom"] }),
         onDrag: ({ self }) => setEdge(extractClosestEdge(self.data) as "top" | "bottom" | null),
@@ -270,7 +259,7 @@ function DealCard({
         getIsSticky: () => true,
       }),
     );
-  }, [deal.key, deal.stage.id]);
+  }, [lead.key, lead.stage]);
 
   return (
     <div
@@ -278,8 +267,8 @@ function DealCard({
       {...longPress}
       role="button"
       tabIndex={0}
-      onClick={() => onOpen(deal.key)}
-      onKeyDown={(e) => e.key === "Enter" && onOpen(deal.key)}
+      onClick={() => onOpen(lead.key)}
+      onKeyDown={(e) => e.key === "Enter" && onOpen(lead.key)}
       className={cn(
         "relative cursor-pointer rounded-md border border-border bg-background px-2.5 py-2 shadow-xs hover:border-foreground/25",
         selected && "border-foreground/40 ring-1 ring-foreground/15",
@@ -294,36 +283,48 @@ function DealCard({
           )}
         />
       )}
-      <div className="flex items-start gap-2">
-        <span className="min-w-0 flex-1 text-[13px] leading-snug">{deal.title}</span>
-        {deal.owner && (
-          <UserAvatar username={deal.owner.username} avatarUrl={deal.owner.avatar_url} size="size-4" />
-        )}
-      </div>
+      <div className="text-[13px] leading-snug">{lead.title}</div>
       <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-        {deal.company && (
+        {lead.company && (
           <span className="inline-flex min-w-0 items-center gap-1 truncate">
-            <CompanyMark domain={companyDomain(deal.company.website)} />
-            <span className="truncate">{deal.company.name}</span>
+            <CompanyMark domain={companyDomain(lead.company.website)} />
+            <span className="truncate">{lead.company.name}</span>
           </span>
         )}
-        {deal.value && (
-          <span className="ml-auto shrink-0 tabular-nums">{formatMoney(deal.value, deal.currency)}</span>
-        )}
       </div>
-      {(deal.project || deal.expected_close) && (
-        <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground/80">
-          {deal.project && (
-            <span className="inline-flex items-center gap-1">
-              <span className="size-1.5 rounded-full" style={{ background: deal.project.color }} />
-              {deal.project.name}
-            </span>
-          )}
-          {deal.expected_close && (
-            <span className="ml-auto">close {shortDate(deal.expected_close)}</span>
+      {!closed && (
+        <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/60 pt-1.5 text-[11px]">
+          <CircleDashed className="size-3 shrink-0 text-muted-foreground" />
+          {step ? (
+            <>
+              <span className="min-w-0 flex-1 truncate">{step.title}</span>
+              {step.due_at && (
+                <span
+                  className={cn(
+                    "shrink-0 tabular-nums",
+                    isOverdue(step.due_at) ? "text-destructive" : "text-muted-foreground",
+                  )}
+                >
+                  {relativeDay(step.due_at)}
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="text-amber-700 dark:text-amber-400">No next step</span>
           )}
         </div>
       )}
+      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground/80">
+        {lead.project && (
+          <span className="inline-flex items-center gap-1">
+            <span className="size-1.5 rounded-full" style={{ background: lead.project.color }} />
+            {lead.project.name}
+          </span>
+        )}
+        <span className="ml-auto">
+          {lead.last_update_at ? `updated ${relativeDay(lead.last_update_at)}` : "no updates"}
+        </span>
+      </div>
     </div>
   );
 }

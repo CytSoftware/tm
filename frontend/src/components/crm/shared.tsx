@@ -6,8 +6,8 @@
 import { useState } from "react";
 import { Building2, User as UserIcon } from "lucide-react";
 
-import type { EntityKind, Relationship } from "@/hooks/use-crm";
-import { RELATIONSHIP_META, logoUrl } from "@/lib/crm-meta";
+import type { EntityKind } from "@/hooks/use-crm";
+import { logoUrl } from "@/lib/crm-meta";
 import { cn } from "@/lib/utils";
 
 export const controlCls =
@@ -21,39 +21,6 @@ export const ghostBtnCls =
 
 export const primaryBtnCls =
   "tap-target inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-2.5 text-[12px] font-medium text-background hover:bg-foreground/90 disabled:opacity-50";
-
-export function RelationshipPill({
-  relationship,
-  className,
-}: {
-  relationship: Relationship | "";
-  className?: string;
-}) {
-  if (!relationship) {
-    return (
-      <span
-        className={cn(
-          "inline-flex h-5 shrink-0 items-center rounded-full border border-dashed border-border px-1.5 text-[11px] text-muted-foreground",
-          className,
-        )}
-      >
-        Not in CRM
-      </span>
-    );
-  }
-  const meta = RELATIONSHIP_META[relationship];
-  return (
-    <span
-      className={cn(
-        "inline-flex h-5 shrink-0 items-center rounded-full border px-1.5 text-[11px] font-medium",
-        meta.pill,
-        className,
-      )}
-    >
-      {meta.label}
-    </span>
-  );
-}
 
 export function KindIcon({ kind, className }: { kind: EntityKind; className?: string }) {
   const Icon = kind === "company" ? Building2 : UserIcon;
@@ -203,7 +170,7 @@ function LogoImg({
   );
 }
 
-/** A toggle filter chip (relationship, pipeline, activity window…). `dashed`
+/** A toggle filter chip (activity window, kind…). `dashed`
  *  is the outline for an opt-in filter that isn't one of a set. */
 export function Chip({
   active,

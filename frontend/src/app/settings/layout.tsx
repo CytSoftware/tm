@@ -3,6 +3,7 @@
 import {
   Activity,
   Columns3,
+  FolderKanban,
   Grid2X2,
   GitPullRequest,
   Plug,
@@ -21,6 +22,12 @@ import { meKey } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
 const SETTINGS_NAV = [
+  {
+    href: "/settings/projects",
+    label: "Projects",
+    description: "Members, colours, archive",
+    icon: FolderKanban,
+  },
   { href: "/settings/github", label: "GitHub", description: "Your review username", icon: GitPullRequest },
   {
     href: "/settings/quick-actions",
@@ -91,7 +98,7 @@ export default function SettingsLayout({
         <nav className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
           {nav.map((item) => {
             const Icon = item.icon;
-            const active = pathname === item.href;
+            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
               <button
                 key={item.href}

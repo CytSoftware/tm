@@ -8,6 +8,7 @@ frontend doesn't need N+1 calls), writes use plain PK fields
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
 from .models import (
@@ -368,6 +369,7 @@ class TaskReadSerializer(serializers.ModelSerializer):
     current_column_since = serializers.DateTimeField(read_only=True, allow_null=True)
     staleness = serializers.SerializerMethodField()
     linked_prs = serializers.SerializerMethodField()
+    sources = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
@@ -397,6 +399,7 @@ class TaskReadSerializer(serializers.ModelSerializer):
             "current_column_since",
             "staleness",
             "linked_prs",
+            "sources",
         )
         read_only_fields = fields  # the write serializer is separate
 
@@ -413,6 +416,21 @@ class TaskReadSerializer(serializers.ModelSerializer):
         from apps.integrations.serializers import LinkedPRSerializer
 
         return LinkedPRSerializer(obj.pull_requests.all(), many=True).data
+
+    def get_sources(self, obj: Task) -> list[dict]:
+        """Where the task came from: the CRM lead whose update filed it, and
+        meetings whose action items it tracks."""
+        out = []
+        try:
+            lead = obj.crm_update.lead
+        except ObjectDoesNotExist:
+            lead = None
+        if lead is not None:
+            company = lead.company.name if lead.company_id else ""
+            out.append({"kind": "lead", "key": lead.key, "title": lead.title, "company": company})
+        for link in obj.meeting_links.all():
+            out.append({"kind": "meeting", "key": link.meeting.key, "title": link.meeting.title})
+        return out
 
 
 class StateTransitionSerializer(serializers.ModelSerializer):

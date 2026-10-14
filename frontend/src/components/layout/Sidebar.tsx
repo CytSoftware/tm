@@ -24,7 +24,6 @@ import {
   ChevronRight,
   ChevronsLeft,
   CircleHelp,
-  FolderKanban,
   GitPullRequest,
   HardDrive,
   Home,
@@ -34,6 +33,7 @@ import {
   Repeat,
   Sparkles,
   Target,
+  type LucideIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -60,7 +60,6 @@ import { useActiveProject } from "@/lib/active-project";
 import { usePullRequestsQuery } from "@/hooks/use-pull-requests";
 import { pullRequestQueues } from "@/lib/pull-request-queues";
 import { useEventSourcesQuery } from "@/hooks/use-events";
-import { useCrmInbox } from "@/hooks/use-crm";
 import { CRM_SECTIONS, crmSectionHref } from "@/lib/crm-meta";
 import { MonitoringIcon } from "@/lib/monitoring";
 import { QuickActionIcon } from "@/lib/quick-actions";
@@ -115,6 +114,31 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
       router.push(action.url);
     }
     onClose?.();
+  }
+
+  const iconCls = isCollapsed ? "size-4" : "size-3.5 shrink-0 text-muted-foreground";
+  function go(href: string) {
+    router.push(href);
+    onClose?.();
+  }
+  /** One primary nav entry, hidden when the user can't open it. */
+  function link(
+    href: string,
+    label: string,
+    Icon: LucideIcon,
+    opts: { active?: boolean; badge?: number } = {},
+  ) {
+    if (!canOpen(user, href)) return null;
+    return (
+      <NavLink
+        icon={<Icon className={iconCls} />}
+        label={label}
+        active={opts.active ?? pathname.startsWith(href)}
+        collapsed={isCollapsed}
+        badge={opts.badge}
+        onNavigate={() => go(href)}
+      />
+    );
   }
 
   function quickActionActive(action: QuickAction) {
@@ -237,258 +261,56 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
             ))}
           </SidebarGroup>
         )}
-        <SidebarGroup title="Workspace" collapsed={isCollapsed}>
+        {/* Grouped by job, most-opened first. Every link is hidden per user
+            (`canOpen`), so an employee sees e.g. Business as just Meetings
+            and Reports; the all-staff groups are gated as a whole so no empty
+            header is left behind. */}
+        <SidebarGroup collapsed={isCollapsed}>
           {isCollapsed && <NotificationInbox variant="sidebar-collapsed" />}
-          {canOpen(user, "/") && (
-            <NavLink
-              icon={
-                <Home
-                  className={
-                    isCollapsed
-                      ? "size-4"
-                      : "size-3.5 shrink-0 text-muted-foreground"
-                  }
-                />
-              }
-              label="Home"
-              active={pathname === "/"}
-              collapsed={isCollapsed}
-              onNavigate={() => {
-                router.push("/");
-                onClose?.();
-              }}
-            />
-          )}
-          {canOpen(user, "/board") && (
-            <NavLink
-              icon={
-                <LayoutDashboard
-                  className={
-                    isCollapsed
-                      ? "size-4"
-                      : "size-3.5 shrink-0 text-muted-foreground"
-                  }
-                />
-              }
-              label="Tasks"
-              active={pathname.startsWith("/board")}
-              collapsed={isCollapsed}
-              onNavigate={() => {
-                router.push("/board");
-                onClose?.();
-              }}
-            />
-          )}
-          {/* Sits under Tasks: it's the "which board am I on" surface, and
-              the only route that can reach an archived project. */}
-          {canOpen(user, "/projects") && (
-            <NavLink
-              icon={
-                <FolderKanban
-                  className={
-                    isCollapsed
-                      ? "size-4"
-                      : "size-3.5 shrink-0 text-muted-foreground"
-                  }
-                />
-              }
-              label="Projects"
-              active={pathname.startsWith("/projects")}
-              collapsed={isCollapsed}
-              onNavigate={() => {
-                router.push("/projects");
-                onClose?.();
-              }}
-            />
-          )}
-          {canOpen(user, "/reviews") && (
-            <NavLink
-              icon={
-                <GitPullRequest
-                  className={
-                    isCollapsed
-                      ? "size-4"
-                      : "size-3.5 shrink-0 text-muted-foreground"
-                  }
-                />
-              }
-              label="To Review"
-              active={pathname.startsWith("/reviews")}
-              collapsed={isCollapsed}
-              badge={toReviewCount > 0 ? toReviewCount : undefined}
-              onNavigate={() => {
-                router.push("/reviews");
-                onClose?.();
-              }}
-            />
-          )}
+          {link("/", "Home", Home, { active: pathname === "/" })}
+          {link("/board", "Tasks", LayoutDashboard)}
+          {link("/reviews", "To Review", GitPullRequest, {
+            badge: toReviewCount > 0 ? toReviewCount : undefined,
+          })}
+        </SidebarGroup>
+
+        <SidebarGroup title="Business" collapsed={isCollapsed}>
           {/* useSearchParams (the active section) needs a Suspense boundary
               for the static build; the fallback is the plain link. */}
           {canOpen(user, "/crm") && (
             <Suspense
-              fallback={
-                <CrmNavLink collapsed={isCollapsed} pathname={pathname} onClose={onClose} />
-              }
+              fallback={<CrmNavLink collapsed={isCollapsed} pathname={pathname} onClose={onClose} />}
             >
               <CrmNav collapsed={isCollapsed} pathname={pathname} onClose={onClose} />
             </Suspense>
           )}
-          {canOpen(user, "/routines") && (
-            <NavLink
-              icon={<Repeat className={isCollapsed ? "size-4" : "size-3.5 shrink-0 text-muted-foreground"} />}
-              label="Routines"
-              active={pathname.startsWith("/routines")}
-              collapsed={isCollapsed}
-              onNavigate={() => { router.push("/routines"); onClose?.(); }}
-            />
-          )}
-          {canOpen(user, "/bets") && (
-            <NavLink
-              icon={
-                <Target
-                  className={
-                    isCollapsed
-                      ? "size-4"
-                      : "size-3.5 shrink-0 text-muted-foreground"
-                  }
-                />
-              }
-              label="Bets"
-              active={pathname.startsWith("/bets")}
-              collapsed={isCollapsed}
-              onNavigate={() => {
-                router.push("/bets");
-                onClose?.();
-              }}
-            />
-          )}
-          {canOpen(user, "/services") && (
-            <NavLink
-              icon={
-                <Boxes
-                  className={
-                    isCollapsed
-                      ? "size-4"
-                      : "size-3.5 shrink-0 text-muted-foreground"
-                  }
-                />
-              }
-              label="Services"
-              active={pathname.startsWith("/services")}
-              collapsed={isCollapsed}
-              onNavigate={() => {
-                router.push("/services");
-                onClose?.();
-              }}
-            />
-          )}
+          {link("/meetings", "Meetings", AudioLines)}
+          {link("/reports", "Reports", ChartColumn)}
         </SidebarGroup>
 
         <SidebarGroup title="Knowledge" collapsed={isCollapsed}>
-          <NavLink
-            icon={
-              <BookText
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="Wiki"
-            active={pathname.startsWith("/wiki")}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/wiki");
-              onClose?.();
-            }}
-          />
-          <NavLink
-            icon={
-              <HardDrive
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="Drive"
-            active={pathname.startsWith("/drive")}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/drive");
-              onClose?.();
-            }}
-          />
-          <NavLink
-            icon={
-              <Sparkles
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="LLM Wiki"
-            active={pathname.startsWith("/llm-wiki")}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/llm-wiki");
-              onClose?.();
-            }}
-          />
-          <NavLink
-            icon={
-              <AudioLines
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="Meetings"
-            active={pathname.startsWith("/meetings")}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/meetings");
-              onClose?.();
-            }}
-          />
-          <NavLink
-            icon={
-              <ChartColumn
-                className={
-                  isCollapsed
-                    ? "size-4"
-                    : "size-3.5 shrink-0 text-muted-foreground"
-                }
-              />
-            }
-            label="Reports"
-            active={pathname.startsWith("/reports")}
-            collapsed={isCollapsed}
-            onNavigate={() => {
-              router.push("/reports");
-              onClose?.();
-            }}
-          />
+          {link("/wiki", "Wiki", BookText)}
+          {link("/llm-wiki", "LLM Wiki", Sparkles)}
+          {link("/drive", "Drive", HardDrive)}
         </SidebarGroup>
 
-        {user.is_staff && monitoringSources.length > 0 && (
+        {user.is_staff && (
+          <SidebarGroup title="Strategy" collapsed={isCollapsed}>
+            {link("/bets", "Bets", Target)}
+            {link("/analytics", "Analytics", BarChart3)}
+          </SidebarGroup>
+        )}
+
+        {user.is_staff && (
           <SidebarGroup
-            title="Monitoring"
+            title="Operations"
             collapsed={isCollapsed}
             action={
-              !isCollapsed && (
+              !isCollapsed &&
+              monitoringSources.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => {
-                    router.push("/settings/incoming-webhooks");
-                    onClose?.();
-                  }}
+                  onClick={() => go("/settings/incoming-webhooks")}
                   className="size-5 grid place-items-center rounded text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground transition-colors"
                   aria-label="Monitoring settings"
                 >
@@ -497,54 +319,18 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
               )
             }
           >
+            {link("/routines", "Routines", Repeat)}
+            {link("/services", "Services", Boxes)}
             {monitoringSources.map((source) => (
               <NavLink
                 key={source.id}
-                icon={
-                  <MonitoringIcon
-                    name={source.icon}
-                    className={
-                      isCollapsed
-                        ? "size-4"
-                        : "size-3.5 shrink-0 text-muted-foreground"
-                    }
-                  />
-                }
+                icon={<MonitoringIcon name={source.icon} className={iconCls} />}
                 label={source.name}
                 active={pathname === `/monitoring/${source.id}`}
                 collapsed={isCollapsed}
-                onNavigate={() => {
-                  router.push(`/monitoring/${source.id}`);
-                  onClose?.();
-                }}
+                onNavigate={() => go(`/monitoring/${source.id}`)}
               />
             ))}
-          </SidebarGroup>
-        )}
-
-        {/* Analytics is intentionally separated from the everyday workspace
-            links. It stays easy to find without competing with Tasks or Bets
-            for primary-navigation attention. */}
-        {user.is_staff && (
-          <SidebarGroup title="Insights" collapsed={isCollapsed}>
-            <NavLink
-              icon={
-                <BarChart3
-                  className={
-                    isCollapsed
-                      ? "size-4"
-                      : "size-3.5 shrink-0 text-muted-foreground"
-                  }
-                />
-              }
-              label="Analytics"
-              active={pathname.startsWith("/analytics")}
-              collapsed={isCollapsed}
-              onNavigate={() => {
-                router.push("/analytics");
-                onClose?.();
-              }}
-            />
           </SidebarGroup>
         )}
       </nav>
@@ -567,14 +353,15 @@ function SidebarGroup({
   action,
   children,
 }: {
-  title: string;
+  /** Omitted for the top group, which needs no label. */
+  title?: string;
   collapsed: boolean;
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="pt-3">
-      {collapsed ? (
+      {!title ? null : collapsed ? (
         <div className="h-px bg-sidebar-border/60 mx-2 mb-1" aria-hidden />
       ) : (
         <div className="flex items-center gap-1 px-2 py-1">
@@ -656,7 +443,7 @@ function NavLink({
 }
 
 /**
- * CRM with its sections (Inbox, People, Companies, …) as an expandable
+ * CRM with its sections (Leads, Activity, People, Companies) as an expandable
  * sub-list. Open by default while you're in the CRM; the chevron overrides
  * that either way for the rest of the session.
  */
@@ -674,12 +461,11 @@ function CrmNav({
   const inCrm = pathname.startsWith("/crm");
   const [override, setOverride] = useState<boolean | null>(null);
   const open = !collapsed && (override ?? inCrm);
-  const rawTab = params.get("tab") === "contacts" ? "people" : params.get("tab");
   const current = inCrm
-    ? (CRM_SECTIONS.find((s) => s.id === rawTab)?.id ?? "inbox")
+    ? (CRM_SECTIONS.find((s) => s.id === params.get("tab"))?.id ?? "leads")
     : null;
-  // The project scope and Mine toggle survive switching sections.
-  const keep = inCrm ? { p: params.get("p"), mine: params.get("mine") } : {};
+  // The project scope survives switching sections.
+  const keep = inCrm ? { p: params.get("p") } : {};
 
   return (
     <>
@@ -710,7 +496,6 @@ function CrmNav({
             >
               <s.icon className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="truncate">{s.label}</span>
-              {s.id === "inbox" && <CrmDueBadge project={keep.p ?? ""} />}
             </button>
           ))}
         </div>
@@ -788,27 +573,6 @@ function CrmNavLink({
         />
       </button>
     </div>
-  );
-}
-
-/** Overdue + due-today follow-ups (shared cache with the CRM page). */
-function CrmDueBadge({ project }: { project: string }) {
-  const inbox = useCrmInbox("", project);
-  const overdue = inbox.data?.buckets.overdue.length ?? 0;
-  const today = inbox.data?.buckets.today.length ?? 0;
-  if (overdue + today === 0) return null;
-  return (
-    <span
-      title={`${overdue} overdue · ${today} due today`}
-      className={cn(
-        "ml-auto shrink-0 rounded-full px-1.5 text-[10.5px] tabular-nums",
-        overdue > 0
-          ? "bg-destructive/15 text-destructive"
-          : "bg-sidebar-accent text-sidebar-foreground/70",
-      )}
-    >
-      {overdue + today}
-    </span>
   );
 }
 

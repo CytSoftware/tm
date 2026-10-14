@@ -116,9 +116,12 @@ def base_task_queryset() -> QuerySet[Task]:
             "reviewer__profile",
             "recurrence_template",
             "bet",
+            # Where the task came from — a CRM update's next step.
+            "crm_update__lead__company",
         )
         .prefetch_related(
             "labels",
+            _meeting_sources(),
             Prefetch(
                 "assignees",
                 queryset=User.objects.select_related("profile"),
@@ -127,6 +130,18 @@ def base_task_queryset() -> QuerySet[Task]:
         )
         .annotate(current_column_since=Subquery(latest_entry))
         .order_by("project_id", "column__order", "position", "id")
+    )
+
+
+def _meeting_sources() -> Prefetch:
+    """Meetings a task was created from, without their (huge) body columns."""
+    from apps.meetings.models import MeetingTask
+
+    return Prefetch(
+        "meeting_links",
+        queryset=MeetingTask.objects.select_related("meeting").only(
+            "id", "task_id", "meeting_id", "meeting__id", "meeting__key", "meeting__title"
+        ),
     )
 
 

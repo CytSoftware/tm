@@ -5,25 +5,21 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     ActivityView,
-    CrmProjectsView,
     ContactViewSet,
-    DealViewSet,
-    FollowUpInboxView,
-    FollowUpViewSet,
-    PipelineViewSet,
-    TouchpointViewSet,
+    CrmProjectsView,
+    LeadViewSet,
+    StepView,
+    UpdateViewSet,
 )
 
 router = DefaultRouter()
 router.register(r"contacts", ContactViewSet, basename="crm-contact")
-router.register(r"deals", DealViewSet, basename="crm-deal")
-router.register(r"pipelines", PipelineViewSet, basename="crm-pipeline")
-router.register(r"touchpoints", TouchpointViewSet, basename="crm-touchpoint")
-router.register(r"follow-ups", FollowUpViewSet, basename="crm-follow-up")
+router.register(r"leads", LeadViewSet, basename="crm-lead")
+router.register(r"updates", UpdateViewSet, basename="crm-update")
 
 urlpatterns = [
-    path("inbox/", FollowUpInboxView.as_view(), name="crm-inbox"),
     path("activity/", ActivityView.as_view(), name="crm-activity"),
     path("projects/", CrmProjectsView.as_view(), name="crm-projects"),
+    path("steps/<str:key>/", StepView.as_view(), name="crm-step"),
     path("", include(router.urls)),
 ]

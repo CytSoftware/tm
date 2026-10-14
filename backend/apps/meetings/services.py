@@ -175,14 +175,11 @@ def merge_entities(source: Entity, target: Entity) -> Entity:
     if not target.wiki_slug:
         target.wiki_slug = source.wiki_slug
 
-    # CRM state: the target's values win, the source only fills gaps.
-    for field in ("relationship", "headline", "phone", "whatsapp", "linkedin_url", "website"):
+    # Contact details: the target's values win, the source only fills gaps.
+    for field in ("position", "phone", "linkedin_url", "website"):
         if not getattr(target, field):
             setattr(target, field, getattr(source, field))
-    if target.owner_id is None:
-        target.owner_id = source.owner_id
     source.emails.update(entity=target)
-    target.projects.add(*source.projects.all())
     _repoint_crm_links(source, target)
 
     aliases = list(target.aliases)
@@ -196,19 +193,15 @@ def merge_entities(source: Entity, target: Entity) -> Entity:
 
 
 def _repoint_crm_links(source: Entity, target: Entity) -> None:
-    """Move the CRM rows that point at ``source`` (deals, touchpoints,
-    follow-ups) onto ``target`` before ``source`` is deleted — otherwise the
-    CASCADE/SET_NULL on those FKs would silently drop a contact's history."""
-    from apps.crm.models import Deal, FollowUp, Touchpoint
+    """Move the CRM rows that point at ``source`` (leads, updates) onto
+    ``target`` before ``source`` is deleted — otherwise the SET_NULL / M2M
+    cascade would silently drop a contact's history."""
+    from apps.crm.models import Lead, Update
 
-    FollowUp.objects.filter(entity=source).update(entity=target)
-    Deal.objects.filter(company=source).update(company=target)
-    for deal in Deal.objects.filter(contacts=source):
-        deal.contacts.remove(source)
-        deal.contacts.add(target)
-    for touchpoint in Touchpoint.objects.filter(entities=source):
-        touchpoint.entities.remove(source)
-        touchpoint.entities.add(target)
+    Lead.objects.filter(company=source).update(company=target)
+    for update in Update.objects.filter(people=source):
+        update.people.remove(source)
+        update.people.add(target)
 
 
 # ---------------------------------------------------------------------------

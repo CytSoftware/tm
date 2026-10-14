@@ -41,8 +41,6 @@ export type MeetingEntityRef = {
   slug: string;
   role: "attendee" | "mentioned";
   company_id: number | null;
-  /** CRM relationship; "" = not in the CRM. */
-  relationship: string;
 };
 
 export type MeetingProjectRef = {
@@ -90,6 +88,8 @@ export type MeetingDetail = MeetingSummary & {
     is_done: boolean;
     project: string | null;
   }[];
+  /** CRM leads this recording was posted to (staff only). */
+  crm_leads: { key: string; title: string }[];
 };
 
 export type RelatedMeeting = {

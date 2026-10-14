@@ -1,40 +1,37 @@
 """Sync implementations behind the CRM MCP tools.
 
 Same rule as :mod:`apps.meetings.mcp_tools`: **no logic of its own**. Reads go
-through ``query.py`` / ``timeline.py``, writes through ``services.py``. What
-lives here is the translation from an agent-friendly flat argument list —
-people by name, id or email; stages by name; users by username — into those
-modules.
+through ``query.py``, writes through ``services.py``. What lives here is the
+translation from an agent-friendly flat argument list — people by name, id or
+email; leads by key; users by username — into those modules.
 """
 
 from __future__ import annotations
 
 import json
 from datetime import datetime, time
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
-from django.utils.dateparse import parse_date, parse_datetime
 from django.utils import timezone
+from django.utils.dateparse import parse_date, parse_datetime
 
-from apps.meetings.models import Entity, EntityEmail, EntityKind
 from apps.meetings.mcp_tools import _get_entity
-from apps.tasks.models import Project, TransitionSource
+from apps.meetings.models import Entity, EntityEmail, EntityKind, Meeting
+from apps.tasks.models import Task, TransitionSource
 
 from . import services
-from .models import Deal, FollowUp, Pipeline, Stage, TouchpointKind, TouchpointSource
+from .models import Lead, LeadStage, Update, UpdateKind
 from .query import (
     base_contact_queryset,
-    bucket_follow_ups,
     filter_contacts,
-    filter_deals,
-    open_follow_ups,
-    without_listed_companies_people,
+    filter_leads,
+    filter_updates,
+    lead_people,
+    open_steps,
 )
-from .serializers import ContactSerializer, DealSerializer, PipelineSerializer, follow_up_dict
-from .timeline import entity_timeline
+from .serializers import ContactSerializer, LeadSerializer, step_dict, update_dict
 
 MAX_LIST_LIMIT = 200
 
@@ -49,9 +46,11 @@ def _json(data: Any) -> Any:
     return json.loads(json.dumps(data, cls=DjangoJSONEncoder))
 
 
-def contact_url(entity: Entity) -> str:
-    tab = "companies" if entity.kind == EntityKind.COMPANY else "people"
-    return f"{settings.FRONTEND_URL}/crm?tab={tab}&c={entity.id}"
+def _guard(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except services.CrmError as exc:
+        raise ValueError(str(exc))
 
 
 def _entity(ref: str | int, kind: str | None = None) -> Entity:
@@ -63,6 +62,10 @@ def _entity(ref: str | int, kind: str | None = None) -> Entity:
             raise ValueError(f"No contact has the address {text!r}.")
         return row.entity
     return _get_entity(text, kind)
+
+
+def _person(ref: str | int) -> Entity:
+    return _entity(ref, None if "@" in str(ref) else EntityKind.PERSON)
 
 
 def _user(ref: str | int | None):
@@ -82,77 +85,48 @@ def _reporter(mcp_user):
     return _resolve_reporter_for_mcp(mcp_user)
 
 
-def _pipeline(ref: str | int) -> Pipeline:
-    text = str(ref).strip()
-    qs = Pipeline.objects.all()
-    found = (
-        qs.filter(pk=int(text)).first()
-        if text.isdigit()
-        else (qs.filter(slug__iexact=text).first() or qs.filter(name__iexact=text).first())
-    )
-    if found is None:
-        names = ", ".join(qs.values_list("name", flat=True))
-        raise ValueError(f"No pipeline {ref!r}. Pipelines: {names}.")
-    return found
+def _lead(ref: str) -> Lead:
+    lead = Lead.objects.filter(key__iexact=str(ref).strip()).first()
+    if lead is None:
+        raise ValueError(f"Lead {ref!r} not found (pass a key like LEAD-003).")
+    return lead
 
 
-def _stage(pipeline: Pipeline, ref: str | int) -> Stage:
-    text = str(ref).strip()
-    qs = pipeline.stages.all()
-    found = (
-        qs.filter(pk=int(text)).first()
-        if text.isdigit()
-        else qs.filter(name__iexact=text).first()
-    )
-    if found is None:
-        names = ", ".join(qs.values_list("name", flat=True))
-        raise ValueError(f"{pipeline.name} has no stage {ref!r}. Stages: {names}.")
-    return found
-
-
-def _deal(ref: str) -> Deal:
-    deal = Deal.objects.filter(key__iexact=str(ref).strip()).first()
-    if deal is None:
-        raise ValueError(f"Deal {ref!r} not found (pass a key like DEAL-003).")
-    return deal
+def _meeting(ref: str) -> Meeting:
+    meeting = Meeting.objects.filter(key__iexact=str(ref).strip()).first()
+    if meeting is None:
+        raise ValueError(f"Meeting {ref!r} not found (pass a key like MTG-064).")
+    return meeting
 
 
 def _scope(ref: str | int | None) -> int | None:
     """A project filter for the read tools — unknown names raise, so an agent
     learns about a typo instead of getting an empty list."""
-    project = _project(ref)
-    return project.pk if project else None
-
-
-def _project(ref: str | int | None) -> Project | None:
     if ref in (None, ""):
         return None
-    return _guard(services.resolve_project, ref)
+    return _guard(services.resolve_project, ref).pk
 
 
-def _money(value: Any) -> Decimal | None:
-    if value in (None, ""):
+def _stage(value: str) -> str:
+    stage = str(value).strip().lower()
+    if stage not in LeadStage.values:
+        raise ValueError(f"stage must be one of {', '.join(LeadStage.values)}.")
+    return stage
+
+
+def _kind(value: str | None) -> str | None:
+    if value is None:
         return None
-    try:
-        return Decimal(str(value))
-    except InvalidOperation:
-        raise ValueError(f"value must be a number, got {value!r}.")
-
-
-def _date(value: Any):
-    if value in (None, ""):
-        return None
-    parsed = parse_date(str(value))
-    if parsed is None:
-        raise ValueError(f"Expected a date like 2026-11-30, got {value!r}.")
-    return parsed
+    if value not in UpdateKind.values:
+        raise ValueError(f"kind must be one of {', '.join(UpdateKind.values)}.")
+    return value
 
 
 def _aware(value: str | None):
     if not value:
         return None
     if len(value) == 10:
-        # A bare date (an old reminder, a remembered call) → midday, local.
+        # A bare date (a remembered call) → midday, local.
         day = parse_date(value)
         if day is None:
             raise ValueError(f"Can't read {value!r} as a date.")
@@ -161,151 +135,97 @@ def _aware(value: str | None):
     if parsed is None:
         raise ValueError(f"Can't read {value!r} as a timestamp.")
     if timezone.is_naive(parsed):
-        raise ValueError(
-            "occurred_at must include a UTC offset, e.g. 2026-10-05T14:00:00+03:00."
-        )
+        raise ValueError("occurred_at must include a UTC offset, e.g. 2026-10-05T14:00:00+03:00.")
     return parsed
 
 
-def _guard(fn, *args, **kwargs):
-    try:
-        return fn(*args, **kwargs)
-    except services.CrmError as exc:
-        raise ValueError(str(exc))
+def _lead_summary(lead: Lead) -> dict:
+    data = dict(LeadSerializer(lead).data)
+    data.pop("position", None)
+    data["url"] = f"{settings.FRONTEND_URL}/crm?l={lead.key}"
+    return _json(data)
 
 
-def _contact(entity: Entity, *, detail: bool = False, timeline_limit: int = 30) -> dict:
+def _step(task: Task) -> dict:
+    return _json({**step_dict(task), "assignees": [u.username for u in task.assignees.all()]})
+
+
+def _update(u: Update) -> dict:
+    data = update_dict(u)
+    if u.task_id:
+        data["task"] = _step(u.task)
+    data["users"] = [x["username"] for x in data["users"]]
+    data["created_by"] = data["created_by"]["username"] if data["created_by"] else None
+    data["people"] = [p["name"] for p in data["people"]]
+    return _json(data)
+
+
+def _contact(entity: Entity, *, detail: bool = False, limit: int = 30) -> dict:
     fresh = base_contact_queryset().get(pk=entity.pk)
     data = dict(ContactSerializer(fresh).data)
     data.pop("slug", None)
-    data["owner"] = fresh.owner.username if fresh.owner_id else None
-    data["url"] = contact_url(fresh)
+    tab = "companies" if fresh.kind == EntityKind.COMPANY else "people"
+    data["url"] = f"{settings.FRONTEND_URL}/crm?tab={tab}&c={fresh.id}"
     if detail:
         if fresh.kind == EntityKind.COMPANY:
             data["people"] = [
-                {"id": p.id, "name": p.name, "headline": p.headline, "relationship": p.relationship}
-                for p in fresh.people.all()
+                {"id": p.id, "name": p.name, "position": p.position} for p in fresh.people.all()
             ]
-        data["deals"] = [_deal_summary(d) for d in filter_deals({"entity": fresh.pk})]
-        data["open_follow_ups"] = [
-            _follow_up(f) for f in open_follow_ups({"entity": fresh.pk})
-        ]
-        data["timeline"] = entity_timeline(fresh, limit=timeline_limit)
-    return _json(data)
-
-
-def _deal_summary(deal: Deal) -> dict:
-    data = dict(DealSerializer(deal).data)
-    data["owner"] = deal.owner.username if deal.owner_id else None
-    data["stage"] = deal.stage.name
-    data["stage_kind"] = deal.stage.kind
-    data["pipeline"] = deal.pipeline.name
-    data.pop("position", None)
-    return _json(data)
-
-
-def _follow_up(f: FollowUp) -> dict:
-    data = follow_up_dict(f)
-    data["assignees"] = [u["username"] for u in data["assignees"]]
+        data["leads"] = [_lead_summary(lead) for lead in filter_leads({"entity": fresh.pk})]
+        data["updates"] = [_update(u) for u in filter_updates({"entity": fresh.pk})[:limit]]
     return _json(data)
 
 
 # ---------------------------------------------------------------------------
-# Contacts
+# People & companies
 # ---------------------------------------------------------------------------
 
 
 def search_contacts(
     query: str | None = None,
-    relationship: str | None = None,
     kind: str | None = None,
-    owner: str | None = None,
     company: str | int | None = None,
-    no_next_step: bool = False,
-    overdue: bool = False,
     project: str | None = None,
-    sort: str = "last_contact",
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    filters: dict[str, Any] = {
-        "search": query,
-        "relationship": relationship,
-        "kind": kind,
-        "owner": owner,
-        "no_next_step": no_next_step,
-        "overdue": overdue,
-        "project": _scope(project),
-    }
+    filters: dict[str, Any] = {"search": query, "kind": kind, "project": _scope(project)}
     if company not in (None, ""):
         filters["company"] = _entity(company, EntityKind.COMPANY).pk
-    limit = max(1, min(limit, MAX_LIST_LIMIT))
-    rows = filter_contacts(filters, sort=sort)[:limit]
+    rows = filter_contacts(filters)[: max(1, min(limit, MAX_LIST_LIMIT))]
     return [_contact(e) for e in rows]
 
 
-def get_contact(contact: str | int, kind: str | None = None, timeline_limit: int = 30) -> dict:
-    return _contact(_entity(contact, kind), detail=True, timeline_limit=timeline_limit)
-
-
-def find_contacts_by_email(emails: list[str]) -> dict[str, Any]:
-    found = services.find_by_emails(emails)
-    return {
-        "matches": {
-            email: {
-                "id": e.id,
-                "name": e.name,
-                "kind": e.kind,
-                "relationship": e.relationship,
-                "company": e.company.name if e.company_id else None,
-            }
-            for email, e in found.items()
-        },
-        "unknown": [e for e in emails if e.strip().lower() not in found],
-    }
+def get_contact(contact: str | int, kind: str | None = None, limit: int = 30) -> dict:
+    return _contact(_entity(contact, kind), detail=True, limit=limit)
 
 
 def upsert_contact(
     name: str,
     kind: str = "person",
-    relationship: str | None = None,
-    owner: str | None = None,
-    headline: str | None = None,
     company: str | int | None = None,
+    position: str | None = None,
     emails: list[str] | None = None,
     phone: str | None = None,
-    whatsapp: str | None = None,
     linkedin_url: str | None = None,
     website: str | None = None,
     wiki_slug: str | None = None,
     rename_to: str | None = None,
-    projects: list[str] | None = None,
-    remove_projects: list[str] | None = None,
 ) -> dict[str, Any]:
     if kind not in EntityKind.values:
         raise ValueError("kind must be 'person' or 'company'.")
     data: dict[str, Any] = {
-        "kind": kind,
-        "relationship": relationship,
-        "headline": headline,
+        "position": position,
         "phone": phone,
-        "whatsapp": whatsapp,
         "linkedin_url": linkedin_url,
         "website": website,
         "wiki_slug": wiki_slug,
     }
     data = {k: v for k, v in data.items() if v is not None}
-    if owner is not None:
-        data["owner"] = _user(owner)
     if company is not None:
         data["company"] = company
     if emails is not None:
         # Additive: an agent rarely knows every address a person has.
         data["add_emails"] = emails
-    # Additive, like emails: tagging "MOW" never drops "CYT".
-    if projects:
-        data["add_projects"] = [_project(p) for p in projects]
-    if remove_projects:
-        data["remove_projects"] = [_project(p) for p in remove_projects]
 
     text = str(name).strip()
     if text.isdigit() or "@" in text:
@@ -314,7 +234,7 @@ def upsert_contact(
         entity, created = _entity(text), False
         _guard(services.update_contact, entity, data)
     else:
-        entity, created = _guard(services.create_contact, {"name": text, **data})
+        entity, created = _guard(services.create_contact, {"name": text, "kind": kind, **data})
     # Rename after resolving: passing the new name to create_contact would
     # look *it* up and create a second entity.
     if rename_to:
@@ -323,426 +243,183 @@ def upsert_contact(
 
 
 # ---------------------------------------------------------------------------
-# Touchpoints & follow-ups
+# Leads
 # ---------------------------------------------------------------------------
 
 
-def log_touchpoint(
-    kind: str,
-    summary: str,
-    people: list[str | int] | None = None,
-    companies: list[str | int] | None = None,
-    occurred_at: str | None = None,
-    direction: str | None = None,
-    deal: str | None = None,
-    source: str = "agent",
-    external_id: str | None = None,
-    follow_up_title: str | None = None,
-    follow_up_due: str | None = None,
-    follow_up_assignee: str | None = None,
-    tz: str | None = None,
-    mcp_user=None,
-) -> dict[str, Any]:
-    if kind not in TouchpointKind.values:
-        raise ValueError(f"kind must be one of {', '.join(TouchpointKind.values)}.")
-    if source not in TouchpointSource.values:
-        raise ValueError(f"source must be one of {', '.join(TouchpointSource.values)}.")
-    entities = [_entity(p, EntityKind.PERSON if "@" not in str(p) else None) for p in people or []]
-    entities += [_entity(c, EntityKind.COMPANY) for c in companies or []]
-    data: dict[str, Any] = {
-        "kind": kind,
-        "summary": summary,
-        "occurred_at": _aware(occurred_at),
-        "direction": direction or "",
-        "source": source,
-        "external_id": external_id or "",
-        "tz": tz,
-        "transition_source": TransitionSource.MCP,
-    }
-    if follow_up_title:
-        data["follow_up"] = {
-            "title": follow_up_title,
-            "due": follow_up_due,
-            "assignee": _user(follow_up_assignee),
-        }
-    touchpoint, created, task = _guard(
-        services.log_touchpoint,
-        data,
-        entities,
-        user=_reporter(mcp_user),
-        deal=_deal(deal) if deal else None,
-    )
-    return _json(
-        {
-            "id": touchpoint.id,
-            "created": created,
-            "people": [e.name for e in touchpoint.entities.all()],
-            "follow_up": task.key if task else None,
-        }
-    )
-
-
-def create_follow_up(
-    contact: str | int,
-    title: str,
-    due: str | None = None,
-    deal: str | None = None,
-    assignee: str | None = None,
-    description: str = "",
-    kind: str | None = None,
-    tz: str | None = None,
-    mcp_user=None,
-) -> dict[str, Any]:
-    task = _guard(
-        services.create_follow_up,
-        _entity(contact, kind),
-        title,
-        user=_reporter(mcp_user),
-        due=due,
-        tz=tz,
-        deal=_deal(deal) if deal else None,
-        assignee=_user(assignee),
-        description=description,
-        source=TransitionSource.MCP,
-    )
-    return _follow_up(task.crm_follow_up)
-
-
-def update_follow_up(
-    task: str,
-    done: bool | None = None,
-    due: str | None = None,
-    tz: str | None = None,
-    mcp_user=None,
-) -> dict[str, Any]:
-    follow_up = (
-        FollowUp.objects.select_related("task__column", "task__project", "entity")
-        .filter(task__key__iexact=task.strip())
-        .first()
-    )
-    if follow_up is None:
-        raise ValueError(f"{task!r} is not a CRM follow-up.")
-    user = _reporter(mcp_user)
-    if due is not None:
-        _guard(services.reschedule_follow_up, follow_up, due, user=user, tz=tz)
-    if done is True:
-        _guard(services.complete_follow_up, follow_up, user=user, source=TransitionSource.MCP)
-    elif done is False:
-        _guard(services.reopen_follow_up, follow_up, user=user, source=TransitionSource.MCP)
-    follow_up.refresh_from_db()
-    follow_up.task.refresh_from_db()
-    return _follow_up(follow_up)
-
-
-def list_follow_ups(
-    owner: str | None = None, tz: str | None = None, project: str | None = None
-) -> dict[str, Any]:
-    scope = {"owner": owner, "project": _scope(project)}
-    today, grouped = bucket_follow_ups(open_follow_ups(scope), services.resolve_tz(tz))
-    buckets = {name: [_follow_up(f) for f in rows] for name, rows in grouped.items()}
-    no_next = without_listed_companies_people(
-        filter_contacts({"no_next_step": True, **scope})
-    )
-    return {
-        "date": today.isoformat(),  # not "today": that's a bucket
-        **buckets,
-        "no_next_step": [{"id": e.id, "name": e.name, "relationship": e.relationship} for e in no_next],
-    }
-
-
-# ---------------------------------------------------------------------------
-# Deals & pipelines
-# ---------------------------------------------------------------------------
-
-
-def list_pipelines() -> list[dict[str, Any]]:
-    return _json(
-        [PipelineSerializer(p).data for p in Pipeline.objects.prefetch_related("stages")]
-    )
-
-
-def search_deals(
+def search_leads(
     query: str | None = None,
-    pipeline: str | None = None,
+    stage: str | None = None,
     status: str | None = None,
     contact: str | int | None = None,
-    owner: str | None = None,
     project: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     filters: dict[str, Any] = {
         "search": query,
+        "stage": _stage(stage) if stage else None,
         "status": status,
-        "owner": owner,
         "project": _scope(project),
     }
-    if pipeline:
-        filters["pipeline"] = _pipeline(pipeline).pk
     if contact not in (None, ""):
         filters["entity"] = _entity(contact).pk
-    limit = max(1, min(limit, MAX_LIST_LIMIT))
-    return [_deal_summary(d) for d in filter_deals(filters)[:limit]]
+    rows = filter_leads(filters)[: max(1, min(limit, MAX_LIST_LIMIT))]
+    return [_lead_summary(lead) for lead in rows]
 
 
-def get_deal(deal: str) -> dict[str, Any]:
-    target = _deal(deal)
-    data = _deal_summary(target)
-    data["follow_ups"] = [_follow_up(f) for f in target.follow_ups.select_related("task__column", "entity__company", "deal")]
-    data["touchpoints"] = _json(
-        [
-            {"at": t.occurred_at, "kind": t.kind, "summary": t.summary}
-            for t in target.touchpoints.all()
-        ]
-    )
+def get_lead(lead: str, limit: int = 50) -> dict[str, Any]:
+    target = filter_leads().get(pk=_lead(lead).pk)
+    data = _lead_summary(target)
+    data["people"] = [
+        {"id": p.id, "name": p.name, "position": p.position} for p in lead_people(target)
+    ]
+    steps = open_steps().filter(crm_update__lead=target).select_related("column")
+    data["open_steps"] = [_step(t) for t in steps.prefetch_related("assignees")]
+    data["updates"] = [_update(u) for u in filter_updates({"lead": target.key})[:limit]]
     return data
 
 
-def _deal_data(
-    *,
-    title=None,
-    company=None,
-    contacts=None,
-    owner=None,
-    value=None,
-    currency=None,
-    project=None,
-    expected_close=None,
-    notes=None,
-    lost_reason=None,
+def upsert_lead(
+    title: str | None = None,
+    lead: str | None = None,
+    stage: str | None = None,
+    company: str | int | None = None,
+    project: str | None = None,
+    notes: str | None = None,
+    lost_reason: str | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
     data: dict[str, Any] = {}
     if title is not None:
         data["title"] = title
+    if stage is not None:
+        data["stage"] = _stage(stage)
     if company is not None:
-        data["company"] = _entity(company, EntityKind.COMPANY) if company != "" else None
-    if contacts is not None:
-        data["contacts"] = [_entity(c, EntityKind.PERSON) for c in contacts]
-    if owner is not None:
-        data["owner"] = _user(owner)
-    if value is not None:
-        data["value"] = _money(value)
-    if currency is not None:
-        data["currency"] = currency.upper()[:3]
+        data["company"] = (
+            _guard(services._resolve_company, company) if company != "" else None
+        )
     if project is not None:
-        data["project"] = _project(project)
-    if expected_close is not None:
-        data["expected_close"] = _date(expected_close)
+        data["project"] = _guard(services.resolve_project, project) if project != "" else None
     if notes is not None:
         data["notes"] = notes
     if lost_reason is not None:
         data["lost_reason"] = lost_reason
-    return data
+    if lead:
+        target = _lead(lead)
+        _guard(services.update_lead, target, data)
+    else:
+        if not title:
+            raise ValueError("A new lead needs a title (or pass `lead` to edit one).")
+        target = _guard(services.create_lead, data, user=_reporter(mcp_user))
+    return _lead_summary(filter_leads().get(pk=target.pk))
 
 
-def create_deal(
-    title: str,
-    pipeline: str = "sales",
-    stage: str | None = None,
-    company: str | int | None = None,
-    contacts: list[str | int] | None = None,
-    owner: str | None = None,
-    value: float | str | None = None,
-    currency: str | None = None,
-    project: str | None = None,
-    expected_close: str | None = None,
-    notes: str | None = None,
-    mcp_user=None,
-) -> dict[str, Any]:
-    pipe = _pipeline(pipeline)
-    data = _deal_data(
-        title=title,
-        company=company,
-        contacts=contacts,
-        owner=owner,
-        value=value,
-        currency=currency,
-        project=project,
-        expected_close=expected_close,
-        notes=notes,
-    )
-    data["pipeline"] = pipe
-    if stage:
-        data["stage"] = _stage(pipe, stage)
-    deal = _guard(services.create_deal, data, user=_reporter(mcp_user))
-    return _deal_summary(deal)
-
-
-def update_deal(
-    deal: str,
-    title: str | None = None,
-    stage: str | None = None,
-    pipeline: str | None = None,
-    company: str | int | None = None,
-    contacts: list[str | int] | None = None,
-    owner: str | None = None,
-    value: float | str | None = None,
-    currency: str | None = None,
-    project: str | None = None,
-    expected_close: str | None = None,
-    notes: str | None = None,
-    lost_reason: str | None = None,
-) -> dict[str, Any]:
-    target = _deal(deal)
-    data = _deal_data(
-        title=title,
-        company=company,
-        contacts=contacts,
-        owner=owner,
-        value=value,
-        currency=currency,
-        project=project,
-        expected_close=expected_close,
-        notes=notes,
-        lost_reason=lost_reason,
-    )
-    pipe = _pipeline(pipeline) if pipeline else target.pipeline
-    if pipeline:
-        data["pipeline"] = pipe
-    if stage:
-        data["stage"] = _stage(pipe, stage)
-    _guard(services.update_deal, target, data)
-    return _deal_summary(Deal.objects.get(pk=target.pk))
-
-
-def delete_deal(deal: str) -> dict[str, Any]:
-    target = _deal(deal)
+def delete_lead(lead: str) -> dict[str, Any]:
+    target = _lead(lead)
     key = target.key
-    services.delete_deal(target)
+    services.delete_lead(target)
     return {"ok": True, "key": key}
 
 
 # ---------------------------------------------------------------------------
-# Notes, history & corrections
+# Updates
 # ---------------------------------------------------------------------------
 
 
-def add_contact_note(
-    contact: str | int,
-    note: str,
+def post_update(
+    body: str,
+    lead: str | None = None,
     kind: str | None = None,
+    people: list[str | int] | None = None,
+    users: list[str] | None = None,
+    meeting: str | None = None,
     occurred_at: str | None = None,
-    deal: str | None = None,
+    next_step: str | None = None,
+    next_due: str | None = None,
+    next_assignee: str | None = None,
+    tz: str | None = None,
     mcp_user=None,
 ) -> dict[str, Any]:
-    entity = _entity(contact, kind)
-    return log_touchpoint(
-        "note",
-        note,
-        people=[entity.pk] if entity.kind == EntityKind.PERSON else None,
-        companies=[entity.pk] if entity.kind == EntityKind.COMPANY else None,
-        occurred_at=occurred_at,
-        deal=deal,
-        source="agent",
-        mcp_user=mcp_user,
+    reporter = _reporter(mcp_user)
+    data: dict[str, Any] = {
+        "body": body,
+        "kind": _kind(kind),
+        "occurred_at": _aware(occurred_at),
+        "next_step": next_step,
+        "next_due": next_due,
+        "next_assignee": _user(next_assignee),
+        "tz": tz,
+        "transition_source": TransitionSource.MCP,
+    }
+    team = [_user(u) for u in users] if users is not None else (
+        [reporter] if getattr(reporter, "is_authenticated", False) else []
     )
+    update = _guard(
+        services.post_update,
+        data,
+        user=reporter,
+        lead=_lead(lead) if lead else None,
+        people=[_person(p) for p in people or []],
+        users=team,
+        meeting=_meeting(meeting) if meeting else None,
+    )
+    return _update(filter_updates().get(pk=update.pk))
 
 
-def _touchpoint(touchpoint_id: int):
-    from .models import Touchpoint
-
-    found = Touchpoint.objects.filter(pk=touchpoint_id).first()
+def _update_row(update_id: int) -> Update:
+    found = Update.objects.filter(pk=update_id).first()
     if found is None:
-        raise ValueError(f"No touchpoint {touchpoint_id} (ids are in get_contact's timeline).")
+        raise ValueError(f"No update {update_id} (ids are in get_lead / get_contact).")
     return found
 
 
-def update_touchpoint(
-    touchpoint_id: int,
-    summary: str | None = None,
+def edit_update(
+    update_id: int,
+    body: str | None = None,
     kind: str | None = None,
     occurred_at: str | None = None,
-    direction: str | None = None,
+    lead: str | None = None,
     people: list[str | int] | None = None,
-    companies: list[str | int] | None = None,
-    deal: str | None = None,
+    users: list[str] | None = None,
+    meeting: str | None = None,
 ) -> dict[str, Any]:
-    target = _touchpoint(touchpoint_id)
-    if kind is not None and kind not in TouchpointKind.values:
-        raise ValueError(f"kind must be one of {', '.join(TouchpointKind.values)}.")
-    data = {
-        "summary": summary,
-        "kind": kind,
-        "occurred_at": _aware(occurred_at) if occurred_at else None,
-        "direction": direction,
-    }
+    target = _update_row(update_id)
+    data = {"body": body, "kind": _kind(kind), "occurred_at": _aware(occurred_at)}
     kwargs: dict[str, Any] = {}
-    if people is not None or companies is not None:
-        kwargs["entities"] = [
-            _entity(p, EntityKind.PERSON if "@" not in str(p) else None) for p in people or []
-        ] + [_entity(c, EntityKind.COMPANY) for c in companies or []]
-    if deal is not None:
-        kwargs["deal"] = _deal(deal) if deal else None
-    _guard(services.update_touchpoint, target, data, **kwargs)
-    target.refresh_from_db()
-    return _json(
-        {
-            "id": target.id,
-            "kind": target.kind,
-            "occurred_at": target.occurred_at,
-            "summary": target.summary,
-            "people": [e.name for e in target.entities.all()],
-            "deal": target.deal.key if target.deal_id else None,
-        }
+    if lead is not None:
+        kwargs["lead"] = _lead(lead) if lead else None
+    if meeting is not None:
+        kwargs["meeting"] = _meeting(meeting) if meeting else None
+    if people is not None:
+        kwargs["people"] = [_person(p) for p in people]
+    if users is not None:
+        kwargs["users"] = [_user(u) for u in users]
+    _guard(services.edit_update, target, data, **kwargs)
+    return _update(filter_updates().get(pk=target.pk))
+
+
+def complete_next_step(task: str, done: bool = True, mcp_user=None) -> dict[str, Any]:
+    target = (
+        Task.objects.select_related("column", "project")
+        .filter(key__iexact=task.strip(), crm_update__isnull=False)
+        .first()
     )
+    if target is None:
+        raise ValueError(f"{task!r} is not a CRM next step.")
+    _guard(
+        services.set_step_done, target, done, user=_reporter(mcp_user), source=TransitionSource.MCP
+    )
+    target.refresh_from_db()
+    return _step(target)
 
 
-def delete_touchpoint(touchpoint_id: int) -> dict[str, Any]:
-    services.delete_touchpoint(_touchpoint(touchpoint_id))
-    return {"ok": True, "id": touchpoint_id}
+def delete_update(update_id: int) -> dict[str, Any]:
+    services.delete_update(_update_row(update_id))
+    return {"ok": True, "id": update_id}
 
 
 def list_crm_activity(
     days: int = 14, limit: int = 100, project: str | None = None
 ) -> list[dict[str, Any]]:
-    from .timeline import crm_activity
-
-    return _json(
-        crm_activity(
-            days=days, limit=max(1, min(limit, MAX_LIST_LIMIT)), project=_scope(project)
-        )
-    )
-
-
-# ---------------------------------------------------------------------------
-# Pipelines
-# ---------------------------------------------------------------------------
-
-
-def _stage_specs(stages: list[Any], pipeline: Pipeline | None = None) -> list[dict[str, Any]]:
-    """Accept names (``"Demo"``) or ``{name, kind, id?}``. A bare name that
-    matches an existing stage keeps its id (and its deals)."""
-    existing = {s.name.lower(): s for s in pipeline.stages.all()} if pipeline else {}
-    specs = []
-    for entry in stages:
-        spec = {"name": entry} if isinstance(entry, str) else dict(entry)
-        name = (spec.get("name") or "").strip()
-        match = existing.get(name.lower())
-        if "id" not in spec and match is not None:
-            spec["id"] = match.pk
-            spec.setdefault("kind", match.kind)
-        spec.setdefault("kind", "open")
-        specs.append(spec)
-    return specs
-
-
-def create_pipeline(name: str, stages: list[Any] | None = None) -> dict[str, Any]:
-    pipeline = _guard(services.create_pipeline, name, _stage_specs(stages) if stages else None)
-    return _json(PipelineSerializer(pipeline).data)
-
-
-def update_pipeline(
-    pipeline: str | int, name: str | None = None, stages: list[Any] | None = None
-) -> dict[str, Any]:
-    target = _pipeline(pipeline)
-    if name:
-        _guard(services.rename_pipeline, target, name)
-    if stages is not None:
-        _guard(services.set_stages, target, _stage_specs(stages, target))
-    return _json(PipelineSerializer(Pipeline.objects.get(pk=target.pk)).data)
-
-
-def delete_pipeline(pipeline: str | int) -> dict[str, Any]:
-    target = _pipeline(pipeline)
-    name = target.name
-    _guard(services.delete_pipeline, target)
-    return {"ok": True, "pipeline": name}
+    rows = filter_updates({"days": max(1, days), "project": _scope(project)})
+    return [_update(u) for u in rows[: max(1, min(limit, MAX_LIST_LIMIT))]]

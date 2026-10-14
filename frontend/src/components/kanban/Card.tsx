@@ -24,6 +24,7 @@ import { currentPeriodStart } from "@/lib/periods";
 import { isCustomColumn } from "@/lib/board-columns";
 import { PRIORITY_DOT, PRIORITY_TEXT } from "@/lib/types";
 import type { Bet, BetRef, Task, Priority, CardField, User } from "@/lib/types";
+import { TaskSources } from "@/components/task/TaskSources";
 
 const PRIORITY_BADGE: Record<
   Priority,
@@ -191,6 +192,9 @@ export function KanbanCard({
 
       {/* Optional rows — each appears only when it carries data, so cards with
           no metadata stay tight (no empty regions). */}
+
+      {/* Where it came from — a CRM lead or a meeting. */}
+      {task.sources?.length > 0 && <TaskSources sources={task.sources} className="px-3 pb-1.5" />}
 
       {/* Linked PRs — chips link out to GitHub. State color encodes open /
           merged / closed / draft without needing the user to hover. */}

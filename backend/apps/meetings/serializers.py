@@ -83,8 +83,6 @@ def _entity_links(meeting: Meeting) -> list[dict]:
             "slug": link.entity.slug,
             "role": link.role,
             "company_id": link.entity.company_id,
-            # Blank = not in the CRM; lets the meeting offer "Add to CRM".
-            "relationship": link.entity.relationship,
         }
         for link in meeting.entity_links.all()  # prefetched, ordered
     ]
@@ -147,6 +145,7 @@ class MeetingListSerializer(serializers.ModelSerializer):
 
 class MeetingDetailSerializer(MeetingListSerializer):
     linked_tasks = serializers.SerializerMethodField()
+    crm_leads = serializers.SerializerMethodField()
     has_brief_html = serializers.SerializerMethodField()
 
     class Meta(MeetingListSerializer.Meta):
@@ -157,6 +156,7 @@ class MeetingDetailSerializer(MeetingListSerializer):
             "transcript_md",
             "action_items",
             "linked_tasks",
+            "crm_leads",
             "has_brief_html",
             "source_meta",
         ]
@@ -178,6 +178,14 @@ class MeetingDetailSerializer(MeetingListSerializer):
             }
             for link in links
         ]
+
+    def get_crm_leads(self, obj):
+        """CRM leads this recording was posted to (staff-only, like tasks)."""
+        user = self.context.get("user") or getattr(self.context.get("request"), "user", None)
+        if user is not None and not has_full_access(user):
+            return []
+        updates = obj.crm_updates.filter(lead__isnull=False).select_related("lead")
+        return list({u.lead.key: {"key": u.lead.key, "title": u.lead.title} for u in updates}.values())
 
     def get_has_brief_html(self, obj):
         return bool(obj.brief_html)

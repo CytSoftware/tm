@@ -1,169 +1,47 @@
-"""Single source of truth for CRM filtering, sorting and derived dates.
+"""Single source of truth for CRM filtering, sorting and derived facts.
 
 Same contract as :mod:`apps.tasks.query` / :mod:`apps.meetings.query`: the DRF
-viewsets and the MCP tools all go through ``filter_contacts`` /
-``filter_deals`` — don't reimplement a filter in either. Unknown filter keys
-are ignored.
+views and the MCP tools all go through these helpers — don't reimplement a
+filter in either. Unknown filter keys are ignored.
 
-``last_contact_at`` and ``next_follow_up_at`` are **annotations, not stored
-columns**, so they can't drift from the meetings, touchpoints and tasks they
-summarise. A company's dates include its people's activity.
-
-Contact filter dict::
-
-    {relationship, kind, owner, company, search, no_next_step, overdue}
-
-``relationship`` defaults to "in the CRM" (set, and not ``internal``); pass a
-comma list (``lead,client``) to narrow, or ``any`` for every entity.
+Derived, never stored: whether an entity is "in the CRM", its last update,
+and a lead's next step (the soonest open task its updates filed) are query
+annotations, so none of them can drift.
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone as dt_timezone
+from datetime import timedelta
 from typing import Any
 
 from django.db.models import (
     Count,
-    DateTimeField,
-    DecimalField,
-    Exists,
-    IntegerField,
     F,
+    IntegerField,
     OuterRef,
     Q,
     QuerySet,
     Subquery,
-    Sum,
-    Value,
 )
-from django.db.models.functions import Coalesce, Greatest
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from apps.meetings.models import Entity, EntityRole, Meeting, RelationshipType
-from apps.tasks.models import ColumnKind, Project
+from apps.meetings.models import Entity
+from apps.tasks.models import ColumnKind, Project, Task
 
-from .models import Deal, FollowUp, StageKind, Touchpoint
+from .models import CLOSED_STAGES, Lead, Update
 
-#: Stand-in for "never" inside ``Greatest`` — portable, unlike relying on how
-#: each database's GREATEST treats NULL (SQLite returns NULL, Postgres skips
-#: it). Converted back to ``None`` by :func:`real_date`.
-EPOCH = datetime(1970, 1, 1, tzinfo=dt_timezone.utc)
-
-#: Task columns that mean a follow-up is no longer owed.
+#: Task columns that mean a next step is no longer owed.
 CLOSED_COLUMN_KINDS = (ColumnKind.DONE, ColumnKind.CANCELLED)
 
-OPEN_FOLLOW_UP = ~Q(task__column__kind__in=CLOSED_COLUMN_KINDS)
-
-#: Entities that count as "in the CRM" by default.
-CRM_RELATIONSHIPS = tuple(
-    value for value, _ in RelationshipType.choices if value != RelationshipType.INTERNAL
+#: A company is in the CRM once it has a lead (or a tagged employee); a person
+#: once an update tags them or their company has a lead.
+IN_CRM = (
+    Q(leads__isnull=False)
+    | Q(crm_updates__isnull=False)
+    | Q(company__leads__isnull=False)
+    | Q(people__crm_updates__isnull=False)
 )
-
-
-def real_date(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    return None if value <= EPOCH else value
-
-
-# ---------------------------------------------------------------------------
-# Contacts
-# ---------------------------------------------------------------------------
-
-
-def _for_entity_or_people(prefix: str) -> Q:
-    """``<prefix>`` is the entity itself, or — for a company — one of its people."""
-    return Q(**{f"{prefix}__id": OuterRef("pk")}) | Q(
-        **{f"{prefix}__company_id": OuterRef("pk")}
-    )
-
-
-def _open_follow_ups() -> QuerySet[FollowUp]:
-    return FollowUp.objects.filter(OPEN_FOLLOW_UP).filter(_for_entity_or_people("entity"))
-
-
-def annotate_contacts(qs: QuerySet[Entity]) -> QuerySet[Entity]:
-    last_meeting = Meeting.objects.filter(
-        Q(entity_links__entity_id=OuterRef("pk"))
-        | Q(entity_links__entity__company_id=OuterRef("pk")),
-        entity_links__role=EntityRole.ATTENDEE,
-    ).order_by("-started_at")
-    last_touch = Touchpoint.objects.filter(_for_entity_or_people("entities")).order_by(
-        "-occurred_at"
-    )
-    next_due = (
-        _open_follow_ups()
-        .filter(task__due_at__isnull=False)
-        .order_by("task__due_at")
-    )
-    epoch = Value(EPOCH, output_field=DateTimeField())
-    return qs.annotate(
-        last_meeting_at=Subquery(last_meeting.values("started_at")[:1]),
-        last_meeting_title=Subquery(last_meeting.values("title")[:1]),
-        last_touch_at=Subquery(last_touch.values("occurred_at")[:1]),
-        last_touch_summary=Subquery(last_touch.values("summary")[:1]),
-        last_touch_kind=Subquery(last_touch.values("kind")[:1]),
-    ).annotate(
-        last_contact_at=Greatest(
-            Coalesce(F("last_meeting_at"), epoch),
-            Coalesce(F("last_touch_at"), epoch),
-            output_field=DateTimeField(),
-        ),
-        next_follow_up_at=Subquery(next_due.values("task__due_at")[:1]),
-        next_follow_up_title=Subquery(next_due.values("task__title")[:1]),
-        has_open_follow_up=Exists(_open_follow_ups()),
-        # Company roll-ups (zero for people), for the Companies tab.
-        people_count=Coalesce(
-            Subquery(
-                Entity.objects.filter(company_id=OuterRef("pk"))
-                .values("company_id")
-                .annotate(n=Count("pk"))
-                .values("n")[:1],
-                output_field=IntegerField(),
-            ),
-            0,
-        ),
-        open_deal_count=Coalesce(
-            Subquery(
-                _open_deals().annotate(n=Count("pk")).values("n")[:1],
-                output_field=IntegerField(),
-            ),
-            0,
-        ),
-        open_deal_value=Subquery(
-            _open_deals().annotate(v=Sum("value")).values("v")[:1],
-            output_field=DecimalField(max_digits=16, decimal_places=2),
-        ),
-    )
-
-
-def _open_deals():
-    """Open deals of the outer company, grouped so aggregates collapse to one row."""
-    return Deal.objects.filter(
-        company_id=OuterRef("pk"), stage__kind=StageKind.OPEN
-    ).values("company_id")
-
-
-def last_activity(entity: Entity) -> dict[str, Any] | None:
-    """The newest of the annotated meeting / touchpoint, for list rows."""
-    meeting_at = getattr(entity, "last_meeting_at", None)
-    touch_at = getattr(entity, "last_touch_at", None)
-    if meeting_at is None and touch_at is None:
-        return None
-    if touch_at is None or (meeting_at is not None and meeting_at >= touch_at):
-        return {"type": "meeting", "at": meeting_at, "text": entity.last_meeting_title}
-    return {
-        "type": "touchpoint",
-        "kind": entity.last_touch_kind,
-        "at": touch_at,
-        "text": entity.last_touch_summary,
-    }
-
-
-def base_contact_queryset() -> QuerySet[Entity]:
-    return annotate_contacts(
-        Entity.objects.select_related("company", "owner").prefetch_related("emails", "projects")
-    )
 
 
 def project_id(value: Any) -> int | None:
@@ -183,227 +61,185 @@ def project_id(value: Any) -> int | None:
     return pk if pk is not None else -1
 
 
-def _relationship_q(value: Any) -> Q | None:
-    raw = str(value or "").strip().lower()
-    if raw == "any":
-        return None
-    if not raw:
-        return Q(relationship__in=CRM_RELATIONSHIPS)
-    wanted = [v.strip() for v in raw.split(",") if v.strip()]
-    return Q(relationship__in=wanted)
+def _id(value: Any) -> int | None:
+    text = str(value or "").strip()
+    return int(text) if text.isdigit() else None
 
 
-def apply_contact_filters(
-    qs: QuerySet[Entity], filters: dict[str, Any] | None
-) -> QuerySet[Entity]:
+# ---------------------------------------------------------------------------
+# Updates
+# ---------------------------------------------------------------------------
+
+
+def about_entity(entity_id: Any) -> Q:
+    """Updates that concern an entity: it is tagged, it employs someone
+    tagged, or the update is on its lead."""
+    return Q(people=entity_id) | Q(people__company=entity_id) | Q(lead__company=entity_id)
+
+
+def base_update_queryset() -> QuerySet[Update]:
+    return Update.objects.select_related(
+        "lead__company", "meeting", "created_by", "task__column"
+    ).prefetch_related("people__company", "users", "task__assignees")
+
+
+def filter_updates(filters: dict[str, Any] | None = None) -> QuerySet[Update]:
+    """``{lead, entity, project, days}``. ``lead`` is a key."""
     filters = filters or {}
-
-    rel_q = _relationship_q(filters.get("relationship"))
-    if rel_q is not None:
-        qs = qs.filter(rel_q)
-
-    if filters.get("kind"):
-        qs = qs.filter(kind=filters["kind"])
-
+    qs = base_update_queryset()
+    if filters.get("lead"):
+        qs = qs.filter(lead__key__iexact=str(filters["lead"]))
+    entity = _id(filters.get("entity"))
+    if entity is not None:
+        qs = qs.filter(about_entity(entity))
     pid = project_id(filters.get("project"))
     if pid is not None:
-        qs = qs.filter(projects__id=pid)
+        qs = qs.filter(lead__project_id=pid)
+    days = _id(filters.get("days"))
+    if days:
+        qs = qs.filter(occurred_at__gte=timezone.now() - timedelta(days=days))
+    # Joins through people repeat a row once per matching person; re-selecting
+    # by id from a fresh, unjoined queryset drops the repeats and stays
+    # sliceable and portable (no DISTINCT ON).
+    return base_update_queryset().filter(pk__in=qs.values("pk")).order_by("-occurred_at", "-id")
 
-    owner = filters.get("owner")
-    if owner not in (None, ""):
-        owner = str(owner)
-        if owner == "none":
-            qs = qs.filter(owner__isnull=True)
-        elif owner.isdigit():
-            qs = qs.filter(owner_id=int(owner))
-        else:
-            qs = qs.filter(owner__username__iexact=owner)
 
-    company = filters.get("company")
-    if company not in (None, ""):
-        company = str(company)
-        qs = (
-            qs.filter(company_id=int(company))
-            if company.isdigit()
-            else qs.filter(company__slug=company)
-        )
+# ---------------------------------------------------------------------------
+# People & companies
+# ---------------------------------------------------------------------------
 
+
+def annotate_contacts(qs: QuerySet[Entity]) -> QuerySet[Entity]:
+    last = Update.objects.filter(about_entity(OuterRef("pk"))).order_by("-occurred_at")
+    return qs.annotate(
+        last_update_at=Subquery(last.values("occurred_at")[:1]),
+        last_update_body=Subquery(last.values("body")[:1]),
+        last_update_kind=Subquery(last.values("kind")[:1]),
+        people_count=Coalesce(
+            Subquery(
+                Entity.objects.filter(company_id=OuterRef("pk"))
+                .values("company_id")
+                .annotate(n=Count("pk"))
+                .values("n")[:1],
+                output_field=IntegerField(),
+            ),
+            0,
+        ),
+        open_lead_count=Coalesce(
+            Subquery(
+                Lead.objects.filter(company_id=OuterRef("pk"))
+                .exclude(stage__in=CLOSED_STAGES)
+                .values("company_id")
+                .annotate(n=Count("pk"))
+                .values("n")[:1],
+                output_field=IntegerField(),
+            ),
+            0,
+        ),
+    )
+
+
+def base_contact_queryset() -> QuerySet[Entity]:
+    return annotate_contacts(Entity.objects.select_related("company").prefetch_related("emails"))
+
+
+def filter_contacts(filters: dict[str, Any] | None = None) -> QuerySet[Entity]:
+    """``{kind, company, search, project, all}``. Defaults to entities in the
+    CRM; a search (or ``all``) looks through every person and company we know,
+    so someone met once in a meeting can still be found and tagged."""
+    filters = filters or {}
+    qs = Entity.objects.all()
     term = (filters.get("search") or "").strip()
+    if not term and str(filters.get("all") or "").lower() not in ("1", "true", "yes"):
+        qs = qs.filter(IN_CRM)
+    if filters.get("kind"):
+        qs = qs.filter(kind=filters["kind"])
+    company = _id(filters.get("company"))
+    if company is not None:
+        qs = qs.filter(company_id=company)
+    pid = project_id(filters.get("project"))
+    if pid is not None:
+        qs = qs.filter(
+            Q(leads__project_id=pid)
+            | Q(company__leads__project_id=pid)
+            | Q(crm_updates__lead__project_id=pid)
+            | Q(people__crm_updates__lead__project_id=pid)
+        )
     if term:
         qs = qs.filter(
             Q(name__icontains=term)
             | Q(aliases__icontains=term)
-            | Q(headline__icontains=term)
+            | Q(position__icontains=term)
             | Q(emails__email__icontains=term)
             | Q(company__name__icontains=term)
         )
-
-    if _truthy(filters.get("no_next_step")):
-        qs = qs.filter(has_open_follow_up=False)
-    if _truthy(filters.get("overdue")):
-        qs = qs.filter(next_follow_up_at__lt=timezone.now())
-
-    return qs.distinct()
-
-
-CONTACT_SORTS = {
-    "last_contact": ("-last_contact_at", "name"),
-    "next_follow_up": ("next_follow_up_at", "name"),
-    "name": ("name",),
-    "created": ("-created_at",),
-    "open_deals": ("-open_deal_count", "-last_contact_at"),
-}
-
-
-def filter_contacts(
-    filters: dict[str, Any] | None = None, *, sort: str | None = None
-) -> QuerySet[Entity]:
-    qs = apply_contact_filters(base_contact_queryset(), filters)
-    order = CONTACT_SORTS.get(sort or "last_contact", CONTACT_SORTS["last_contact"])
-    if order[0] == "next_follow_up_at":
-        # Undated / no follow-up last, portable across SQLite and Postgres.
-        return qs.order_by(F("next_follow_up_at").asc(nulls_last=True), "name")
-    return qs.order_by(*order)
-
-
-# ---------------------------------------------------------------------------
-# Deals
-# ---------------------------------------------------------------------------
-
-
-def base_deal_queryset() -> QuerySet[Deal]:
-    return Deal.objects.select_related(
-        "pipeline", "stage", "company", "owner", "project"
-    ).prefetch_related("contacts")
-
-
-def apply_deal_filters(qs: QuerySet[Deal], filters: dict[str, Any] | None) -> QuerySet[Deal]:
-    filters = filters or {}
-
-    pipeline = filters.get("pipeline")
-    if pipeline not in (None, ""):
-        pipeline = str(pipeline)
-        qs = (
-            qs.filter(pipeline_id=int(pipeline))
-            if pipeline.isdigit()
-            else qs.filter(pipeline__slug=pipeline)
-        )
-    if filters.get("stage"):
-        qs = qs.filter(stage_id=int(filters["stage"]))
-
-    pid = project_id(filters.get("project"))
-    if pid is not None:
-        qs = qs.filter(project_id=pid)
-
-    status = (filters.get("status") or "").lower()
-    if status == "open":
-        qs = qs.filter(stage__kind=StageKind.OPEN)
-    elif status in (StageKind.WON, StageKind.LOST):
-        qs = qs.filter(stage__kind=status)
-    elif status == "closed":
-        qs = qs.exclude(stage__kind=StageKind.OPEN)
-
-    entity = filters.get("entity")
-    if entity not in (None, ""):
-        entity_id = int(entity)
-        qs = qs.filter(
-            Q(company_id=entity_id)
-            | Q(contacts__id=entity_id)
-            | Q(company__people__id=entity_id)
-        )
-
-    owner = filters.get("owner")
-    if owner not in (None, ""):
-        owner = str(owner)
-        qs = (
-            qs.filter(owner_id=int(owner))
-            if owner.isdigit()
-            else qs.filter(owner__username__iexact=owner)
-        )
-
-    term = (filters.get("search") or "").strip()
-    if term:
-        qs = qs.filter(
-            Q(title__icontains=term)
-            | Q(key__iexact=term)
-            | Q(company__name__icontains=term)
-            | Q(contacts__name__icontains=term)
-        )
-    return qs.distinct()
-
-
-def filter_deals(filters: dict[str, Any] | None = None) -> QuerySet[Deal]:
-    return apply_deal_filters(base_deal_queryset(), filters).order_by(
-        "pipeline__position", "stage__position", "position", "id"
+    ids = qs.values("pk")
+    return base_contact_queryset().filter(pk__in=ids).order_by(
+        F("last_update_at").desc(nulls_last=True), "name"
     )
 
 
 # ---------------------------------------------------------------------------
-# Follow-ups
+# Leads
 # ---------------------------------------------------------------------------
 
 
-def base_follow_up_queryset() -> QuerySet[FollowUp]:
-    return FollowUp.objects.select_related(
-        "task__column",
-        "task__project",
-        "entity__company",
-        "deal",
-    ).prefetch_related("task__assignees")
+def open_steps() -> QuerySet[Task]:
+    """Next steps still owed, soonest first (undated last)."""
+    return (
+        Task.objects.filter(crm_update__isnull=False)
+        .exclude(column__kind__in=CLOSED_COLUMN_KINDS)
+        .order_by(F("due_at").asc(nulls_last=True), "created_at", "id")
+    )
 
 
-def open_follow_ups(filters: dict[str, Any] | None = None) -> QuerySet[FollowUp]:
+def base_lead_queryset() -> QuerySet[Lead]:
+    step = open_steps().filter(crm_update__lead_id=OuterRef("pk"))
+    last = Update.objects.filter(lead_id=OuterRef("pk")).order_by("-occurred_at", "-id")
+    return Lead.objects.select_related("company", "project").annotate(
+        next_step_key=Subquery(step.values("key")[:1]),
+        next_step_title=Subquery(step.values("title")[:1]),
+        next_step_due=Subquery(step.values("due_at")[:1]),
+        last_update_at=Subquery(last.values("occurred_at")[:1]),
+    )
+
+
+def filter_leads(filters: dict[str, Any] | None = None) -> QuerySet[Lead]:
+    """``{stage, status, entity, project, search}``. ``status``: open, won,
+    lost, closed. ``entity`` matches the lead's company, or — for a person —
+    leads they're tagged on and their employer's leads."""
     filters = filters or {}
-    qs = base_follow_up_queryset().filter(OPEN_FOLLOW_UP)
-    owner = filters.get("owner")
-    if owner not in (None, ""):
-        owner = str(owner)
-        qs = (
-            qs.filter(task__assignees__id=int(owner))
-            if owner.isdigit()
-            else qs.filter(task__assignees__username__iexact=owner)
-        )
-    if filters.get("entity"):
+    qs = Lead.objects.all()
+    if filters.get("stage"):
+        qs = qs.filter(stage=filters["stage"])
+    status = (filters.get("status") or "").lower()
+    if status == "open":
+        qs = qs.exclude(stage__in=CLOSED_STAGES)
+    elif status in CLOSED_STAGES:
+        qs = qs.filter(stage=status)
+    elif status == "closed":
+        qs = qs.filter(stage__in=CLOSED_STAGES)
+    entity = _id(filters.get("entity"))
+    if entity is not None:
         qs = qs.filter(
-            Q(entity_id=int(filters["entity"]))
-            | Q(entity__company_id=int(filters["entity"]))
+            Q(company_id=entity) | Q(updates__people=entity) | Q(company__people=entity)
         )
     pid = project_id(filters.get("project"))
     if pid is not None:
-        qs = qs.filter(Q(entity__projects__id=pid) | Q(deal__project_id=pid))
-    return qs.distinct().order_by(F("task__due_at").asc(nulls_last=True), "id")
+        qs = qs.filter(project_id=pid)
+    term = (filters.get("search") or "").strip()
+    if term:
+        qs = qs.filter(
+            Q(title__icontains=term) | Q(key__iexact=term) | Q(company__name__icontains=term)
+        )
+    return base_lead_queryset().filter(pk__in=qs.values("pk")).order_by("position", "id")
 
 
-def _truthy(value: Any) -> bool:
-    return str(value).lower() in ("1", "true", "yes") if value is not None else False
-
-
-#: Inbox sections, in display order.
-BUCKETS = ("overdue", "today", "week", "later")
-
-
-def bucket_follow_ups(follow_ups, tz) -> tuple[date, dict[str, list[FollowUp]]]:
-    """Split open follow-ups into Overdue / Today / This week (next 7 days) /
-    Later by their due date *in* ``tz``. Undated ones are Later."""
-    today = timezone.now().astimezone(tz).date()
-    week_end = today + timedelta(days=7)
-    out: dict[str, list[FollowUp]] = {name: [] for name in BUCKETS}
-    for f in follow_ups:
-        due = f.task.due_at.astimezone(tz).date() if f.task.due_at else None
-        if due is None or due > week_end:
-            out["later"].append(f)
-        elif due < today:
-            out["overdue"].append(f)
-        elif due == today:
-            out["today"].append(f)
-        else:
-            out["week"].append(f)
-    return today, out
-
-
-def without_listed_companies_people(contacts) -> list:
-    """Drop people whose company is already in ``contacts`` — the inbox's
-    "no next step" list would otherwise show Sharq *and* Firoz for one gap."""
-    rows = list(contacts)
-    company_ids = {c.pk for c in rows if c.kind == "company"}
-    return [c for c in rows if c.company_id not in company_ids]
+def lead_people(lead: Lead) -> QuerySet[Entity]:
+    """Everyone tagged on the lead's thread, by name."""
+    return (
+        Entity.objects.filter(crm_updates__lead=lead)
+        .select_related("company")
+        .distinct()
+        .order_by("name")
+    )

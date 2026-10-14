@@ -62,6 +62,7 @@ import type {
 } from "@/lib/types";
 import { PRIORITY_LABELS, PRIORITY_ORDER } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { TaskSources } from "./TaskSources";
 
 // TAS-057: the panel mounts bottom-anchored directly under wherever the
 // mouse was when the triggering card was clicked. Its entry animation
@@ -843,6 +844,15 @@ export function TaskPanel(props: Props) {
                 />
               </div>
             </div>
+
+            {task && task.sources?.length > 0 && (
+              <div className="pt-2 mt-2 border-t border-border/40">
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground px-1">
+                  From
+                </span>
+                <TaskSources sources={task.sources} className="mt-1 px-1" />
+              </div>
+            )}
 
             {task && task.linked_prs.length > 0 && (
               <div className="pt-2 mt-2 border-t border-border/40">

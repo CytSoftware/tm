@@ -1,35 +1,18 @@
 from django.contrib import admin
 
-from .models import Deal, FollowUp, Pipeline, Stage, Touchpoint
+from .models import Lead, Update
 
 
-class StageInline(admin.TabularInline):
-    model = Stage
-    extra = 0
-
-
-@admin.register(Pipeline)
-class PipelineAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "position")
-    inlines = [StageInline]
-
-
-@admin.register(Deal)
-class DealAdmin(admin.ModelAdmin):
-    list_display = ("key", "title", "pipeline", "stage", "company", "owner", "value")
-    list_filter = ("pipeline", "stage")
+@admin.register(Lead)
+class LeadAdmin(admin.ModelAdmin):
+    list_display = ("key", "title", "stage", "company", "project")
+    list_filter = ("stage", "project")
     search_fields = ("key", "title", "company__name")
-    raw_id_fields = ("company", "contacts")
+    raw_id_fields = ("company",)
 
 
-@admin.register(Touchpoint)
-class TouchpointAdmin(admin.ModelAdmin):
-    list_display = ("occurred_at", "kind", "source", "summary")
-    list_filter = ("kind", "source")
-    raw_id_fields = ("entities", "deal")
-
-
-@admin.register(FollowUp)
-class FollowUpAdmin(admin.ModelAdmin):
-    list_display = ("task", "entity", "deal")
-    raw_id_fields = ("task", "entity", "deal")
+@admin.register(Update)
+class UpdateAdmin(admin.ModelAdmin):
+    list_display = ("occurred_at", "kind", "lead", "body")
+    list_filter = ("kind",)
+    raw_id_fields = ("lead", "people", "meeting")
