@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/api";
 import { md } from "@/lib/markdown";
 import { routineKey, routineRunsKey, routinesKey } from "@/lib/query-keys";
-import { errorText, formatDate, statusLabel, statusStyle, type Routine, type RoutineRun, type TranscriptMessage } from "@/lib/routines";
+import { describeSchedule, errorText, formatDate, statusLabel, statusStyle, type Routine, type RoutineRun, type TranscriptMessage } from "@/lib/routines";
 
 // Hermes rejects longer prompts (api_server _MAX_PROMPT_LENGTH).
 const MAX_PROMPT = 5000;
@@ -64,7 +64,7 @@ export default function RoutinePage() {
           {routine.isError && <p role="alert" className="text-sm text-destructive">Couldn’t load this routine from Hermes: {errorText(routine.error)}</p>}
           {data && (
             <dl className="grid gap-3 text-xs sm:grid-cols-4">
-              <div><dt className="text-muted-foreground">Schedule</dt><dd className="mt-1 font-mono">{data.schedule_display}</dd></div>
+              <div><dt className="text-muted-foreground">Schedule</dt><dd className="mt-1" title={`cron (UTC): ${data.schedule_display}`}>{describeSchedule(data.schedule_display)}</dd></div>
               <div><dt className="text-muted-foreground">State</dt><dd className="mt-1">{data.enabled ? "Enabled" : "Paused"}</dd></div>
               <div><dt className="text-muted-foreground">Next run</dt><dd className="mt-1">{data.enabled ? formatDate(data.next_run_at) : "Paused"}</dd></div>
               <div><dt className="text-muted-foreground">Recap delivered to</dt><dd className="mt-1">{data.deliver === "local" ? "This page only" : data.deliver}</dd></div>

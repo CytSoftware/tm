@@ -6,7 +6,7 @@ import { RefreshCw, Repeat } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import { routinesKey } from "@/lib/query-keys";
-import { errorText, formatDate, statusLabel, statusStyle, type Routine } from "@/lib/routines";
+import { describeSchedule, errorText, formatDate, statusLabel, statusStyle, type Routine } from "@/lib/routines";
 
 export default function RoutinesPage() {
   const query = useQuery({
@@ -39,7 +39,7 @@ export default function RoutinesPage() {
                 <h2 className="min-w-0 flex-1 break-words text-sm font-semibold">{routine.name}</h2>
                 <span className={`rounded-full px-2 py-0.5 text-xs ${routine.enabled ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-muted text-muted-foreground"}`}>{routine.enabled ? "Enabled" : "Paused"}</span>
               </div>
-              <p className="mt-2 break-words font-mono text-xs text-muted-foreground">{routine.schedule_display}</p>
+              <p className="mt-2 break-words text-xs text-muted-foreground" title={`cron (UTC): ${routine.schedule_display}`}>{describeSchedule(routine.schedule_display)}</p>
               <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
                 <div><dt className="text-muted-foreground">Next run</dt><dd className="mt-1">{routine.enabled ? formatDate(routine.next_run_at) : "Paused"}</dd></div>
                 <div><dt className="text-muted-foreground">Last run</dt><dd className="mt-1">{formatDate(routine.last_run_at)}</dd></div>

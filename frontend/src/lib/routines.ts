@@ -54,3 +54,40 @@ export function errorText(error: Error) {
   const detail = (error as { payload?: { detail?: unknown } }).payload?.detail;
   return typeof detail === "string" ? detail : error.message;
 }
+
+/**
+ * "0 2 * * 6" → "Every Saturday at 5:00 AM" in the viewer's timezone.
+ * Hermes evaluates cron in UTC. Handles the fixed-time daily/weekly shapes
+ * Hermes jobs use; anything else (intervals, month days) is returned as-is.
+ */
+export function describeSchedule(expr: string) {
+  const fields = expr.trim().split(/\s+/);
+  if (fields.length !== 5) return expr;
+  const [minute, hour, dom, month, dow] = fields;
+  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour) || dom !== "*" || month !== "*") return expr;
+  const days = dow === "*" ? null : expandDays(dow);
+  if (days === undefined) return expr;
+  // A date near today keeps the local offset (DST) current.
+  const at = (day: number | null) => {
+    const date = new Date();
+    date.setUTCHours(Number(hour), Number(minute), 0, 0);
+    if (day !== null) date.setUTCDate(date.getUTCDate() + ((day - date.getUTCDay() + 7) % 7));
+    return date;
+  };
+  const time = at(null).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (days === null || days.length === 7) return `Every day at ${time}`;
+  const names = days.map(day => at(day).toLocaleDateString(undefined, { weekday: "long" }));
+  return `Every ${new Intl.ListFormat(undefined, { type: "conjunction" }).format(names)} at ${time}`;
+}
+
+function expandDays(field: string): number[] | undefined {
+  const days = new Set<number>();
+  for (const part of field.split(",")) {
+    const range = part.match(/^(\d)(?:-(\d))?$/);
+    if (!range) return undefined;
+    const [start, end] = [Number(range[1]), Number(range[2] ?? range[1])];
+    if (start > end || end > 7) return undefined;
+    for (let day = start; day <= end; day++) days.add(day % 7);
+  }
+  return [...days].sort((a, b) => a - b);
+}
