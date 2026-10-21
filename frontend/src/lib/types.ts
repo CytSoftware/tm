@@ -824,6 +824,8 @@ export type EventSource = {
   columns: MonitoringColumn[];
   active: boolean;
   webhook_url: string;
+  /** Untriaged events; null on create/update responses. */
+  new_count: number | null;
   /** Attribution only — sources are shared workspace-wide, not owner-scoped. */
   created_by: number | null;
   created_at: string;

@@ -19,6 +19,7 @@ import {
   Handshake,
   BarChart3,
   BookText,
+  Activity,
   Boxes,
   ChartColumn,
   ChevronRight,
@@ -61,7 +62,6 @@ import { usePullRequestsQuery } from "@/hooks/use-pull-requests";
 import { pullRequestQueues } from "@/lib/pull-request-queues";
 import { useEventSourcesQuery } from "@/hooks/use-events";
 import { CRM_SECTIONS, crmSectionHref } from "@/lib/crm-meta";
-import { MonitoringIcon } from "@/lib/monitoring";
 import { QuickActionIcon } from "@/lib/quick-actions";
 import type { Me, QuickAction, User } from "@/lib/types";
 
@@ -321,16 +321,10 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           >
             {link("/routines", "Routines", Repeat)}
             {link("/services", "Services", Boxes)}
-            {monitoringSources.map((source) => (
-              <NavLink
-                key={source.id}
-                icon={<MonitoringIcon name={source.icon} className={iconCls} />}
-                label={source.name}
-                active={pathname === `/monitoring/${source.id}`}
-                collapsed={isCollapsed}
-                onNavigate={() => go(`/monitoring/${source.id}`)}
-              />
-            ))}
+            {monitoringSources.length > 0 &&
+              link("/monitoring", "Monitoring", Activity, {
+                badge: monitoringSources.reduce((sum, source) => sum + (source.new_count ?? 0), 0) || undefined,
+              })}
           </SidebarGroup>
         )}
       </nav>

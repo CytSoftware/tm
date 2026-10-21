@@ -418,6 +418,14 @@ class EventInboxTests(TestCase):
             content_type="application/json",
         )
 
+    def test_source_list_counts_untriaged_events(self):
+        source, _ = self.create_source()
+        for event_id in ("a", "b"):
+            self.ingest(source, {"id": event_id, "title": event_id})
+        ExternalEvent.objects.filter(source=source, external_id="a").update(workflow_status=EventWorkflowStatus.FIXED)
+        listed = self.client.get("/api/integrations/event-sources/").json()["results"]
+        self.assertEqual([(s["id"], s["new_count"]) for s in listed], [(source.id, 1)])
+
     def test_source_create_returns_public_webhook_url(self):
         source, body = self.create_source()
         self.assertEqual(source.created_by, self.user)
