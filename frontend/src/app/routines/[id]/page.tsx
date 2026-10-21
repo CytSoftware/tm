@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/api";
+import { md } from "@/lib/markdown";
 import { routineKey, routineRunsKey, routinesKey } from "@/lib/query-keys";
 import { errorText, formatDate, statusLabel, statusStyle, type Routine, type RoutineRun, type TranscriptMessage } from "@/lib/routines";
 
@@ -93,7 +94,7 @@ export default function RoutinePage() {
             {runs.isPending ? <p role="status" className="text-sm text-muted-foreground">Loading runs…</p> : runs.data?.results.length === 0 ? (
               <p className="text-sm text-muted-foreground">No runs yet.</p>
             ) : runs.data?.results.map(item => (
-              <RunRow key={item.session_id ?? item.finished_at} routineId={id} run={item} onRetry={() => run.mutate()} retrying={run.isPending} />
+              <RunRow key={item.session_id ?? item.finished_at} routineId={id} script={data?.script ?? null} run={item} onRetry={() => run.mutate()} retrying={run.isPending} />
             ))}
           </section>
         </div>
@@ -102,7 +103,7 @@ export default function RoutinePage() {
   );
 }
 
-function RunRow({ routineId, run, onRetry, retrying }: { routineId: string; run: RoutineRun; onRetry: () => void; retrying: boolean }) {
+function RunRow({ routineId, script, run, onRetry, retrying }: { routineId: string; script: string | null; run: RoutineRun; onRetry: () => void; retrying: boolean }) {
   const [open, setOpen] = useState(false);
   const recap = useQuery({
     queryKey: [...routineRunsKey(routineId), run.session_id],
@@ -123,11 +124,12 @@ function RunRow({ routineId, run, onRetry, retrying }: { routineId: string; run:
       </summary>
       <div className="space-y-3 border-t p-3 text-sm">
         {run.error && <pre className="whitespace-pre-wrap break-words rounded bg-destructive/5 p-2 text-xs text-destructive">{run.error}</pre>}
-        {run.session_id === null ? <p className="text-muted-foreground">Hermes has no stored conversation for this run.</p>
+        {run.status === "skipped" ? <p className="text-muted-foreground">Nothing to do. The gate script{script ? <> <code>{script}</code></> : ""} found no new work, so Hermes did not start the agent.</p>
+          : run.session_id === null ? <p className="text-muted-foreground">Hermes has no stored conversation for this run.</p>
           : recap.isPending ? <p role="status" className="text-muted-foreground">Loading recap…</p>
           : recap.isError ? <p role="alert" className="text-destructive">Couldn’t load the recap: {errorText(recap.error)}</p>
           : <>
-            <p className="whitespace-pre-wrap break-words">{recap.data.recap || "This run produced no reply."}</p>
+            <Recap text={recap.data.recap} />
             <details className="border-t pt-3">
               <summary className="cursor-pointer text-xs text-muted-foreground">Full conversation ({recap.data.messages.length} messages)</summary>
               <ol className="mt-3 space-y-2">
@@ -140,6 +142,19 @@ function RunRow({ routineId, run, onRetry, retrying }: { routineId: string; run:
   );
 }
 
+const PROSE = "prose prose-sm dark:prose-invert max-w-none break-words [&_pre]:overflow-x-auto [&_table]:block [&_table]:overflow-x-auto";
+
+// Agent-written markdown; md is the app's html:false renderer, safe for innerHTML.
+function Markdown({ text, className = "" }: { text: string; className?: string }) {
+  return <div className={`${PROSE} ${className}`} dangerouslySetInnerHTML={{ __html: md.render(text) }} />;
+}
+
+function Recap({ text }: { text: string }) {
+  // Cron prompts tell the agent to answer exactly [SILENT] when there is nothing new.
+  if (/^\[SILENT\]/i.test(text.trim())) return <p className="text-muted-foreground">Nothing new to report. Hermes replied [SILENT].</p>;
+  return text ? <Markdown text={text} /> : <p className="text-muted-foreground">This run produced no reply.</p>;
+}
+
 const ROLE_LABELS: Record<TranscriptMessage["role"], string> = { user: "Prompt", assistant: "Hermes", tool: "Tool", system: "System" };
 
 function TranscriptItem({ message }: { message: TranscriptMessage }) {
@@ -148,7 +163,9 @@ function TranscriptItem({ message }: { message: TranscriptMessage }) {
     <li className={`rounded border p-2 text-xs ${message.role === "assistant" ? "bg-card" : "bg-muted/40"}`}>
       <p className="font-medium text-muted-foreground">{label}</p>
       {message.tool_calls.length > 0 && <p className="mt-1 font-mono text-muted-foreground">Called {message.tool_calls.join(", ")}</p>}
-      {message.content && <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words font-sans">{message.content}</pre>}
+      {message.content && (message.role === "tool"
+        ? <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px]">{message.content}</pre>
+        : <Markdown className="mt-1 max-h-96 overflow-auto text-xs" text={message.content} />)}
       {message.truncated && <p className="mt-1 text-muted-foreground">Trimmed to the first 4,000 characters.</p>}
     </li>
   );

@@ -59,6 +59,10 @@ class RoutineTests(TestCase):
         ]
         runs = match_runs(sessions, RoutineRun.objects.filter(job_id="abc"))
         self.assertEqual([(r["session_id"][-15:-7], r["status"], r["error"]) for r in runs], [("20261022", "running", ""), ("20261021", "ok", ""), ("20261020", "error", "boom")])
+        record_finished_runs([{"id": "abc", "last_run_at": "2026-10-23T00:00:05+00:00", "last_status": "ok"}])  # gate skipped the agent: no session
+        gated = match_runs(sessions[:2], RoutineRun.objects.filter(job_id="abc"), gated=True)
+        self.assertEqual([r["status"] for r in gated], ["skipped", "ok", "error"])
+        self.assertEqual(match_runs(sessions[:2], RoutineRun.objects.filter(job_id="abc"))[0]["status"], "ok")
 
     @patch("apps.integrations.routines.hermes")
     def test_http_routines_are_authenticated_and_recap_only_reads_cron_runs(self, hermes):
