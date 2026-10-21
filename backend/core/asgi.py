@@ -34,7 +34,12 @@ from apps.wiki.routing import (  # noqa: E402
     websocket_urlpatterns as wiki_ws_urlpatterns,
 )
 
+from apps.integrations.routines import start_run_recorder  # noqa: E402
+
 logger = logging.getLogger(__name__)
+
+# Started here, not in AppConfig.ready, so manage.py commands don't poll Hermes.
+start_run_recorder()
 
 # Authenticated user for the current MCP *session*, for the stdio transport.
 #

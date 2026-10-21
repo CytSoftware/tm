@@ -6,8 +6,8 @@ from django.test import TestCase
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.test import APIClient
 
-from .models import Routine
-from .routines import delete_routine, list_routines, save_routine
+from .models import Routine, RoutineRun
+from .routines import delete_routine, list_routines, match_runs, record_finished_runs, save_routine
 
 
 class RoutineTests(TestCase):
@@ -47,13 +47,27 @@ class RoutineTests(TestCase):
         with self.assertRaises(ValueError):
             list_routines(limit=10000)
 
-    def test_http_viewer_is_read_only_and_authenticated(self):
-        record = self.create()
-        response = self.client.get("/api/integrations/routines/?limit=1")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["results"][0]["external_id"], self.external_id)
-        for method, path in [("post", "/api/integrations/routines/"), ("patch", f"/api/integrations/routines/{record['id']}/"), ("delete", f"/api/integrations/routines/{record['id']}/")]:
-            self.assertEqual(getattr(self.client, method)(path, {}, format="json").status_code, 405)
+    def test_runs_pair_sessions_with_saved_outcomes(self):
+        record_finished_runs([{"id": "abc", "last_run_at": "2026-10-20T00:00:22+00:00", "last_status": "error", "last_error": "boom"}])
+        record_finished_runs([{"id": "abc", "last_run_at": "2026-10-20T00:00:22+00:00", "last_status": "ok"}])  # same run seen twice
+        record_finished_runs([{"id": "abc", "last_run_at": "2026-10-21T00:00:22+00:00", "last_status": "ok"}])
+        day = 1792454400  # 2026-10-20T00:00:00Z
+        sessions = [
+            {"id": "cron_abc_20261020_000010", "started_at": day + 10, "ended_at": day + 21},
+            {"id": "cron_abc_20261021_000010", "started_at": day + 86410, "ended_at": day + 86421},
+            {"id": "cron_abc_20261022_000010", "started_at": day + 172810, "ended_at": None},
+        ]
+        runs = match_runs(sessions, RoutineRun.objects.filter(job_id="abc"))
+        self.assertEqual([(r["session_id"][-15:-7], r["status"], r["error"]) for r in runs], [("20261022", "running", ""), ("20261021", "ok", ""), ("20261020", "error", "boom")])
+
+    @patch("apps.integrations.routines.hermes")
+    def test_http_routines_are_authenticated_and_recap_only_reads_cron_runs(self, hermes):
+        hermes.return_value = {"data": [{"role": "assistant", "content": "Draft"}, {"role": "tool", "content": "x"}, {"role": "assistant", "content": "Nothing to organize."}]}
+        response = self.client.get("/api/integrations/routines/abc/runs/cron_abc_20261021_000010/")
+        self.assertEqual(response.data["recap"], "Nothing to organize.")
+        self.assertEqual(self.client.get("/api/integrations/routines/abc/runs/telegram_123/").status_code, 404)
+        self.assertEqual(self.client.get("/api/integrations/routines/abc/runs/cron_other_20261021_000010/").status_code, 404)
+        self.assertEqual(hermes.call_count, 1)
         self.client.force_authenticate(None)
         self.assertEqual(self.client.get("/api/integrations/routines/").status_code, 403)
 

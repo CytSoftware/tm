@@ -147,6 +147,8 @@ export const mcpTokensKey = () => ["mcp-tokens"] as const;
 export const githubPullRequestsKey = () => ["github-pull-requests"] as const;
 
 export const routinesKey = () => ["routines"] as const;
+export const routineKey = (id: string) => ["routines", id] as const;
+export const routineRunsKey = (id: string) => ["routines", id, "runs"] as const;
 
 // CRM. Everything lives under ["crm"] so the crm socket (and any write) can
 // invalidate the lot — one update moves the lead card, its thread, the

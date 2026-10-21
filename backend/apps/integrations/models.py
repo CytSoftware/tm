@@ -350,3 +350,20 @@ class Routine(models.Model):
 
     class Meta:
         ordering = ["name", "id"]
+
+
+class RoutineRun(models.Model):
+    """Outcome of one Hermes cron run.
+
+    Hermes keeps only the latest ``last_status``, so TM saves it each time a
+    job's ``last_run_at`` advances.
+    """
+
+    job_id = models.CharField(max_length=100)
+    run_at = models.DateTimeField()
+    status = models.CharField(max_length=40, blank=True, default="")
+    error = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-run_at"]
+        constraints = [models.UniqueConstraint(fields=["job_id", "run_at"], name="routine_run_job_time_uniq")]
