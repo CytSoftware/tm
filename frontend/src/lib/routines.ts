@@ -3,6 +3,7 @@ export type Routine = {
   name: string;
   prompt: string;
   skills: string[];
+  script: string | null;
   schedule_display: string;
   enabled: boolean;
   state: string;
@@ -37,6 +38,7 @@ const STATUS_STYLES: Record<string, string> = {
   ok: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
   error: "bg-destructive/10 text-destructive",
   running: "bg-sky-500/10 text-sky-700 dark:text-sky-400",
+  skipped: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
 };
 
 export function statusStyle(status: string | null) {
@@ -44,7 +46,7 @@ export function statusStyle(status: string | null) {
 }
 
 export function statusLabel(status: string | null) {
-  return { ok: "Succeeded", error: "Failed", running: "Running" }[status ?? ""] ?? "Unknown";
+  return { ok: "Succeeded", error: "Failed", running: "Running", skipped: "Nothing to do" }[status ?? ""] ?? "Unknown";
 }
 
 /** Hermes' own reason (relayed by the backend as DRF `detail`), else the HTTP summary. */

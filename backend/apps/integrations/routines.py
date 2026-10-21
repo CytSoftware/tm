@@ -20,7 +20,7 @@ from .models import Routine, RoutineRun
 
 logger = logging.getLogger(__name__)
 
-JOB_FIELDS = ("id", "name", "prompt", "skills", "schedule_display", "enabled", "state", "next_run_at", "last_run_at", "last_status", "last_error", "deliver")
+JOB_FIELDS = ("id", "name", "prompt", "skills", "script", "schedule_display", "enabled", "state", "next_run_at", "last_run_at", "last_status", "last_error", "deliver")
 
 
 class HermesUnavailable(APIException):
@@ -66,13 +66,13 @@ def record_finished_runs(jobs):
             )
 
 
-def match_runs(sessions, saved):
+def match_runs(sessions, saved, gated=False):
     """Pair cron sessions with saved outcomes.
 
     A run's ``last_run_at`` is stamped just after its session ends, so each
     session owns the first saved outcome before the next session starts.
-    Outcomes with no session (e.g. a run that failed before the agent started)
-    are listed on their own.
+    Outcomes with no session are listed on their own: on a job with a gate
+    script, a successful run without a session is the gate skipping the agent.
     """
     sessions = sorted(sessions, key=lambda s: s["started_at"])
     saved = sorted(saved, key=lambda r: r.run_at)
@@ -89,7 +89,10 @@ def match_runs(sessions, saved):
             "finished_at": match.run_at.isoformat() if match else None,
             "status": status, "error": match.error if match else "",
         })
-    runs += [{"session_id": None, "started_at": None, "finished_at": r.run_at.isoformat(), "status": r.status, "error": r.error} for r in saved]
+    runs += [{
+        "session_id": None, "started_at": None, "finished_at": r.run_at.isoformat(),
+        "status": "skipped" if gated and r.status == "ok" else r.status, "error": r.error,
+    } for r in saved]
     return sorted(runs, key=lambda r: r["started_at"] or r["finished_at"], reverse=True)
 
 
@@ -169,7 +172,8 @@ class RoutineViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["get"])
     def runs(self, request, pk):
-        return Response({"results": match_runs(cron_sessions(pk), RoutineRun.objects.filter(job_id=pk))})
+        gated = bool(hermes("GET", f"/api/jobs/{pk}")["job"].get("script"))
+        return Response({"results": match_runs(cron_sessions(pk), RoutineRun.objects.filter(job_id=pk), gated)})
 
     @action(detail=True, methods=["get"], url_path=r"runs/(?P<session_id>[A-Za-z0-9_]+)")
     def recap(self, request, pk, session_id):
