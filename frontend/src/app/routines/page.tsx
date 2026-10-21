@@ -25,7 +25,7 @@ export default function RoutinesPage() {
         <Button className="h-7 text-[12px] tap-target" size="sm" variant="outline" render={<a href="https://t.me/CytAiBot" target="_blank" rel="noopener noreferrer" />}>Open Hermes</Button>
       </header>
       <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="w-full space-y-4 p-4">
+        <div className="w-full space-y-2 p-4">
           <p className="text-sm text-muted-foreground">Live from Hermes. Ask Hermes to create, schedule, pause, or remove a routine. Times shown in your local timezone.</p>
           {query.isError && <p role="alert" className="text-sm text-destructive">Couldn’t load routines from Hermes: {errorText(query.error)}. Use Refresh to retry.</p>}
           {query.isPending ? <p role="status" className="py-12 text-center text-muted-foreground">Loading routines…</p> : query.data?.results.length === 0 ? (
@@ -34,17 +34,17 @@ export default function RoutinesPage() {
               <p className="mt-2 text-sm text-muted-foreground">Ask Hermes to create one.</p>
             </div>
           ) : query.data?.results.map(routine => (
-            <Link key={routine.id} href={`/routines/${routine.id}`} className="block rounded-lg border bg-card p-4 transition-colors hover:bg-accent/40">
-              <div className="flex flex-wrap items-start gap-2">
-                <h2 className="min-w-0 flex-1 break-words text-sm font-semibold">{routine.name}</h2>
-                <span className={`rounded-full px-2 py-0.5 text-xs ${routine.enabled ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-muted text-muted-foreground"}`}>{routine.enabled ? "Enabled" : "Paused"}</span>
+            <Link key={routine.id} href={`/routines/${routine.id}`} className="block rounded-lg border bg-card px-3 py-2 transition-colors hover:bg-accent/40">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <h2 className="min-w-0 truncate text-sm font-semibold">{routine.name}</h2>
+                <span className="text-xs text-muted-foreground" title={`cron (UTC): ${routine.schedule_display}`}>{describeSchedule(routine.schedule_display)}</span>
+                <span className={`ml-auto rounded-full px-2 py-0.5 text-xs ${routine.enabled ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-muted text-muted-foreground"}`}>{routine.enabled ? "Enabled" : "Paused"}</span>
               </div>
-              <p className="mt-2 break-words text-xs text-muted-foreground" title={`cron (UTC): ${routine.schedule_display}`}>{describeSchedule(routine.schedule_display)}</p>
-              <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
-                <div><dt className="text-muted-foreground">Next run</dt><dd className="mt-1">{routine.enabled ? formatDate(routine.next_run_at) : "Paused"}</dd></div>
-                <div><dt className="text-muted-foreground">Last run</dt><dd className="mt-1">{formatDate(routine.last_run_at)}</dd></div>
-                <div><dt className="text-muted-foreground">Last status</dt><dd className="mt-1"><span className={`rounded-full px-2 py-0.5 ${statusStyle(routine.last_status)}`}>{routine.last_run_at ? statusLabel(routine.last_status) : "Never run"}</span></dd></div>
-              </dl>
+              <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span>Next: {routine.enabled ? formatDate(routine.next_run_at) : "Paused"}</span>
+                <span>Last: {formatDate(routine.last_run_at)}</span>
+                {routine.last_run_at && <span className={`rounded-full px-2 py-0.5 ${statusStyle(routine.last_status)}`}>{statusLabel(routine.last_status)}</span>}
+              </p>
             </Link>
           ))}
         </div>
