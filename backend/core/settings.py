@@ -330,6 +330,10 @@ GITHUB_WEBHOOK_SECRET = _os.environ.get("GITHUB_WEBHOOK_SECRET", "")
 GITHUB_APP_ID = _os.environ.get("GITHUB_APP_ID", "")
 GITHUB_PRIVATE_KEY = _os.environ.get("GITHUB_PRIVATE_KEY", "").replace("\\n", "\n")
 
+# Hermes gateway api_server, reached over the internal Docker network.
+HERMES_API_URL = _os.environ.get("HERMES_API_URL", "").rstrip("/")
+HERMES_API_KEY = _os.environ.get("HERMES_API_KEY", "")
+
 # ---------------------------------------------------------------------------
 # Remote MCP authentication
 # ---------------------------------------------------------------------------

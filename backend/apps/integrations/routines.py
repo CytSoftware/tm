@@ -1,11 +1,124 @@
-"""Read-only routine API and validated MCP writes to the Hermes mirror."""
+"""Routines: live Hermes cron jobs over its api_server, plus the MCP mirror."""
 
-from django.db import transaction
+import logging
+import re
+import threading
+import time
+from datetime import datetime, timezone
+
+import httpx
+from django.conf import settings
+from django.db import close_old_connections, transaction
+from django.utils.dateparse import parse_datetime
 from rest_framework import serializers, viewsets
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.decorators import action
+from rest_framework.exceptions import APIException, NotFound, ValidationError
+from rest_framework.response import Response
 
 from apps.tasks.broadcast import broadcast_task_event
-from .models import Routine
+from .models import Routine, RoutineRun
+
+logger = logging.getLogger(__name__)
+
+JOB_FIELDS = ("id", "name", "prompt", "skills", "schedule_display", "enabled", "state", "next_run_at", "last_run_at", "last_status", "last_error", "deliver")
+
+
+class HermesUnavailable(APIException):
+    status_code = 502
+    default_detail = "Hermes is unreachable."
+
+
+class HermesRejected(APIException):
+    status_code = 400
+    default_detail = "Hermes rejected the request."
+
+
+def hermes(method, path, **kwargs):
+    if not settings.HERMES_API_URL:
+        raise HermesUnavailable("Hermes API is not configured (HERMES_API_URL).")
+    try:
+        response = httpx.request(
+            method, settings.HERMES_API_URL + path, timeout=15,
+            headers={"Authorization": f"Bearer {settings.HERMES_API_KEY}"}, **kwargs,
+        )
+    except httpx.HTTPError as exc:
+        raise HermesUnavailable(f"Hermes is unreachable ({exc.__class__.__name__}).") from None
+    if response.status_code == 404:
+        raise NotFound("Not found in Hermes.")
+    if response.status_code == 400:
+        raise HermesRejected(str(response.json().get("error", HermesRejected.default_detail)))
+    if response.is_error:
+        raise HermesUnavailable(f"Hermes returned HTTP {response.status_code}.")
+    return response.json()
+
+
+def public_job(job):
+    return {key: job.get(key) for key in JOB_FIELDS}
+
+
+def record_finished_runs(jobs):
+    for job in jobs:
+        run_at = parse_datetime(job.get("last_run_at") or "")
+        if run_at:
+            RoutineRun.objects.get_or_create(
+                job_id=job["id"], run_at=run_at,
+                defaults={"status": job.get("last_status") or "", "error": job.get("last_error") or ""},
+            )
+
+
+def match_runs(sessions, saved):
+    """Pair cron sessions with saved outcomes.
+
+    A run's ``last_run_at`` is stamped just after its session ends, so each
+    session owns the first saved outcome before the next session starts.
+    Outcomes with no session (e.g. a run that failed before the agent started)
+    are listed on their own.
+    """
+    sessions = sorted(sessions, key=lambda s: s["started_at"])
+    saved = sorted(saved, key=lambda r: r.run_at)
+    runs = []
+    for i, session in enumerate(sessions):
+        start = datetime.fromtimestamp(session["started_at"], timezone.utc)
+        end = datetime.fromtimestamp(sessions[i + 1]["started_at"], timezone.utc) if i + 1 < len(sessions) else None
+        match = next((r for r in saved if r.run_at >= start and (end is None or r.run_at < end)), None)
+        if match:
+            saved.remove(match)
+        status = match.status if match else ("running" if session["ended_at"] is None and end is None else "")
+        runs.append({
+            "session_id": session["id"], "started_at": start.isoformat(),
+            "finished_at": match.run_at.isoformat() if match else None,
+            "status": status, "error": match.error if match else "",
+        })
+    runs += [{"session_id": None, "started_at": None, "finished_at": r.run_at.isoformat(), "status": r.status, "error": r.error} for r in saved]
+    return sorted(runs, key=lambda r: r["started_at"] or r["finished_at"], reverse=True)
+
+
+def cron_sessions(job_id):
+    # ponytail: scans every cron session per request; page the API by job if this passes a few thousand.
+    prefix, sessions, offset = f"cron_{job_id}_", [], 0
+    while True:
+        page = hermes("GET", "/api/sessions", params={"source": "cron", "limit": 200, "offset": offset})
+        sessions += [s for s in page["data"] if s["id"].startswith(prefix)]
+        if not page["has_more"]:
+            return sessions
+        offset += 200
+
+
+def start_run_recorder(interval=60):
+    """Save run outcomes even when nobody has the routines page open."""
+    if not settings.HERMES_API_URL:
+        return
+
+    def loop():
+        while True:
+            close_old_connections()
+            try:
+                record_finished_runs(hermes("GET", "/api/jobs", params={"include_disabled": "true"})["jobs"])
+            except Exception:
+                logger.warning("Routine run recorder failed", exc_info=True)
+            time.sleep(interval)
+
+    threading.Thread(target=loop, name="routine-run-recorder", daemon=True).start()
 
 
 class RoutineSerializer(serializers.ModelSerializer):
@@ -31,9 +144,41 @@ class RoutineSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class RoutineViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Routine.objects.all()
-    serializer_class = RoutineSerializer
+class RoutineViewSet(viewsets.ViewSet):
+    lookup_value_regex = r"[A-Za-z0-9_-]+"
+
+    def list(self, request):
+        jobs = hermes("GET", "/api/jobs", params={"include_disabled": "true"})["jobs"]
+        record_finished_runs(jobs)
+        return Response({"results": [public_job(job) for job in jobs]})
+
+    def retrieve(self, request, pk):
+        job = hermes("GET", f"/api/jobs/{pk}")["job"]
+        record_finished_runs([job])
+        return Response(public_job(job))
+
+    def partial_update(self, request, pk):
+        prompt = request.data.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise HermesRejected("Instructions cannot be empty.")
+        return Response(public_job(hermes("PATCH", f"/api/jobs/{pk}", json={"prompt": prompt})["job"]))
+
+    @action(detail=True, methods=["post"])
+    def run(self, request, pk):
+        return Response(public_job(hermes("POST", f"/api/jobs/{pk}/run")["job"]))
+
+    @action(detail=True, methods=["get"])
+    def runs(self, request, pk):
+        return Response({"results": match_runs(cron_sessions(pk), RoutineRun.objects.filter(job_id=pk))})
+
+    @action(detail=True, methods=["get"], url_path=r"runs/(?P<session_id>[A-Za-z0-9_]+)")
+    def recap(self, request, pk, session_id):
+        # Only this job's cron sessions: the same API also serves private chats.
+        if not re.fullmatch(rf"cron_{re.escape(pk)}_\d{{8}}_\d{{6}}", session_id):
+            raise NotFound("Not a run of this routine.")
+        messages = hermes("GET", f"/api/sessions/{session_id}/messages")["data"]
+        replies = [m["content"] for m in messages if m["role"] == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()]
+        return Response({"recap": replies[-1] if replies else ""})
 
 
 def list_routines(limit=100, offset=0):
