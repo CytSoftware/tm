@@ -21,6 +21,14 @@ export type RoutineRun = {
   error: string;
 };
 
+export type TranscriptMessage = {
+  role: "user" | "assistant" | "tool" | "system";
+  tool_name: string | null;
+  tool_calls: string[];
+  content: string;
+  truncated: boolean;
+};
+
 export function formatDate(value: string | null) {
   return value ? new Date(value).toLocaleString() : "—";
 }
