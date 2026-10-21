@@ -56,6 +56,7 @@ class LinkedPRSerializer(serializers.ModelSerializer):
 
 class EventSourceSerializer(serializers.ModelSerializer):
     webhook_url = serializers.SerializerMethodField()
+    new_count = serializers.SerializerMethodField()
 
     class Meta:
         model = EventSource
@@ -67,6 +68,7 @@ class EventSourceSerializer(serializers.ModelSerializer):
             "columns",
             "active",
             "webhook_url",
+            "new_count",
             "created_by",
             "created_at",
             "updated_at",
@@ -74,6 +76,7 @@ class EventSourceSerializer(serializers.ModelSerializer):
         read_only_fields = (
             "id",
             "webhook_url",
+            "new_count",
             "created_by",
             "created_at",
             "updated_at",
@@ -105,6 +108,10 @@ class EventSourceSerializer(serializers.ModelSerializer):
                 {"id": column_id, "label": label.strip(), "visible": visible}
             )
         return cleaned
+
+    def get_new_count(self, obj):
+        # Only the viewset's queryset annotates it; create/update responses omit it.
+        return getattr(obj, "new_count", None)
 
     def get_webhook_url(self, obj: EventSource) -> str:
         path = reverse("event-source-ingest", kwargs={"token": obj.token})

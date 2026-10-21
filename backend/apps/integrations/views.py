@@ -27,7 +27,10 @@ class EventSourceViewSet(viewsets.ModelViewSet):
     every source. ``created_by`` is attribution only.
     """
 
-    queryset = EventSource.objects.all()
+    # new_count feeds the untriaged badge on each monitoring tab.
+    queryset = EventSource.objects.annotate(
+        new_count=Count("events", filter=Q(events__workflow_status=EventWorkflowStatus.NEW))
+    )
     serializer_class = EventSourceSerializer
 
     def perform_create(self, serializer):

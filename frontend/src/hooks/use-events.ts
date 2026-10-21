@@ -26,6 +26,8 @@ export function useEventSourcesQuery(enabled = true) {
     queryKey: eventSourcesKey(),
     queryFn: () =>
       apiFetch<EventSourceListResponse>("/api/integrations/event-sources/"),
+    // Keeps the per-source New badges current as webhooks arrive.
+    refetchInterval: 30_000,
   });
 }
 
@@ -113,6 +115,10 @@ export function useUpdateEvent() {
         method: "PATCH",
         body: { workflow_status },
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["external-events"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["external-events"] });
+      // Tab badges count New events per source.
+      qc.invalidateQueries({ queryKey: eventSourcesKey() });
+    },
   });
 }
