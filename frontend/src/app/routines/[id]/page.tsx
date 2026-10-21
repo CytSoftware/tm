@@ -123,7 +123,7 @@ function RunRow({ routineId, run, onRetry, retrying }: { routineId: string; run:
       </summary>
       <div className="space-y-3 border-t p-3 text-sm">
         {run.error && <pre className="whitespace-pre-wrap break-words rounded bg-destructive/5 p-2 text-xs text-destructive">{run.error}</pre>}
-        {run.session_id === null ? <p className="text-muted-foreground">No recap: this run ended before the agent started.</p>
+        {run.session_id === null ? <p className="text-muted-foreground">Hermes has no stored conversation for this run.</p>
           : recap.isPending ? <p role="status" className="text-muted-foreground">Loading recap…</p>
           : recap.isError ? <p role="alert" className="text-destructive">Couldn’t load the recap: {errorText(recap.error)}</p>
           : <>
