@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/api";
 import { routineKey, routineRunsKey, routinesKey } from "@/lib/query-keys";
-import { errorText, formatDate, statusLabel, statusStyle, type Routine, type RoutineRun } from "@/lib/routines";
+import { errorText, formatDate, statusLabel, statusStyle, type Routine, type RoutineRun, type TranscriptMessage } from "@/lib/routines";
 
 // Hermes rejects longer prompts (api_server _MAX_PROMPT_LENGTH).
 const MAX_PROMPT = 5000;
@@ -106,7 +106,7 @@ function RunRow({ routineId, run, onRetry, retrying }: { routineId: string; run:
   const [open, setOpen] = useState(false);
   const recap = useQuery({
     queryKey: [...routineRunsKey(routineId), run.session_id],
-    queryFn: () => apiFetch<{ recap: string }>(`/api/integrations/routines/${routineId}/runs/${run.session_id}/`),
+    queryFn: () => apiFetch<{ recap: string; messages: TranscriptMessage[] }>(`/api/integrations/routines/${routineId}/runs/${run.session_id}/`),
     enabled: open && run.session_id !== null,
     staleTime: Infinity,
   });
@@ -126,8 +126,30 @@ function RunRow({ routineId, run, onRetry, retrying }: { routineId: string; run:
         {run.session_id === null ? <p className="text-muted-foreground">No recap: this run ended before the agent started.</p>
           : recap.isPending ? <p role="status" className="text-muted-foreground">Loading recap…</p>
           : recap.isError ? <p role="alert" className="text-destructive">Couldn’t load the recap: {errorText(recap.error)}</p>
-          : <p className="whitespace-pre-wrap break-words">{recap.data.recap || "This run produced no reply."}</p>}
+          : <>
+            <p className="whitespace-pre-wrap break-words">{recap.data.recap || "This run produced no reply."}</p>
+            <details className="border-t pt-3">
+              <summary className="cursor-pointer text-xs text-muted-foreground">Full conversation ({recap.data.messages.length} messages)</summary>
+              <ol className="mt-3 space-y-2">
+                {recap.data.messages.map((message, index) => <TranscriptItem key={index} message={message} />)}
+              </ol>
+            </details>
+          </>}
       </div>
     </details>
+  );
+}
+
+const ROLE_LABELS: Record<TranscriptMessage["role"], string> = { user: "Prompt", assistant: "Hermes", tool: "Tool", system: "System" };
+
+function TranscriptItem({ message }: { message: TranscriptMessage }) {
+  const label = message.role === "tool" && message.tool_name ? `Tool · ${message.tool_name}` : ROLE_LABELS[message.role] ?? message.role;
+  return (
+    <li className={`rounded border p-2 text-xs ${message.role === "assistant" ? "bg-card" : "bg-muted/40"}`}>
+      <p className="font-medium text-muted-foreground">{label}</p>
+      {message.tool_calls.length > 0 && <p className="mt-1 font-mono text-muted-foreground">Called {message.tool_calls.join(", ")}</p>}
+      {message.content && <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words font-sans">{message.content}</pre>}
+      {message.truncated && <p className="mt-1 text-muted-foreground">Trimmed to the first 4,000 characters.</p>}
+    </li>
   );
 }

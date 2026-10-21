@@ -65,6 +65,7 @@ class RoutineTests(TestCase):
         hermes.return_value = {"data": [{"role": "assistant", "content": "Draft"}, {"role": "tool", "content": "x"}, {"role": "assistant", "content": "Nothing to organize."}]}
         response = self.client.get("/api/integrations/routines/abc/runs/cron_abc_20261021_000010/")
         self.assertEqual(response.data["recap"], "Nothing to organize.")
+        self.assertEqual([m["role"] for m in response.data["messages"]], ["assistant", "tool", "assistant"])
         self.assertEqual(self.client.get("/api/integrations/routines/abc/runs/telegram_123/").status_code, 404)
         self.assertEqual(self.client.get("/api/integrations/routines/abc/runs/cron_other_20261021_000010/").status_code, 404)
         self.assertEqual(hermes.call_count, 1)

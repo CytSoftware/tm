@@ -178,7 +178,21 @@ class RoutineViewSet(viewsets.ViewSet):
             raise NotFound("Not a run of this routine.")
         messages = hermes("GET", f"/api/sessions/{session_id}/messages")["data"]
         replies = [m["content"] for m in messages if m["role"] == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()]
-        return Response({"recap": replies[-1] if replies else ""})
+        return Response({"recap": replies[-1] if replies else "", "messages": [transcript_entry(m) for m in messages]})
+
+
+# ponytail: tool outputs reach ~90 KB and runs ~1000 messages; clip instead of paging.
+MAX_MESSAGE_CHARS = 4000
+
+
+def transcript_entry(message):
+    content = message.get("content")
+    content = content if isinstance(content, str) else ("" if content is None else str(content))
+    calls = [(call.get("function") or call).get("name", "") for call in message.get("tool_calls") or [] if isinstance(call, dict)]
+    return {
+        "role": message.get("role"), "tool_name": message.get("tool_name"), "tool_calls": [c for c in calls if c],
+        "content": content[:MAX_MESSAGE_CHARS], "truncated": len(content) > MAX_MESSAGE_CHARS,
+    }
 
 
 def list_routines(limit=100, offset=0):
