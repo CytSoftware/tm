@@ -59,11 +59,47 @@ def public_job(job):
 def record_finished_runs(jobs):
     for job in jobs:
         run_at = parse_datetime(job.get("last_run_at") or "")
-        if run_at:
-            RoutineRun.objects.get_or_create(
-                job_id=job["id"], run_at=run_at,
-                defaults={"status": job.get("last_status") or "", "error": job.get("last_error") or ""},
-            )
+        if not run_at:
+            continue
+        run, created = RoutineRun.objects.get_or_create(
+            job_id=job["id"], run_at=run_at,
+            defaults={"status": job.get("last_status") or "", "error": job.get("last_error") or ""},
+        )
+        if created and run.status == "ok":
+            mark_reported_failure(run)
+
+
+def mark_reported_failure(run):
+    """A routine reports a failed step by starting its final reply with FAILED.
+
+    Hermes records those runs as ok because the agent itself finished, so the
+    outcome is read from the reply once, when the run is first recorded.
+    """
+    try:
+        sessions = [s for s in cron_sessions(run.job_id) if s["started_at"] <= run.run_at.timestamp()]
+        reply = final_reply(max(sessions, key=lambda s: s["started_at"])["id"]) if sessions else ""
+    except APIException:
+        return  # ponytail: a Hermes hiccup here leaves this one run marked ok.
+    if reply.lstrip().startswith("FAILED"):
+        run.status, run.error = "error", reply.strip().splitlines()[0][:4000]
+        run.save(update_fields=["status", "error"])
+
+
+def final_reply(session_id):
+    return last_reply(hermes("GET", f"/api/sessions/{session_id}/messages")["data"])
+
+
+def last_reply(messages):
+    replies = [m["content"] for m in messages if m["role"] == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()]
+    return replies[-1] if replies else ""
+
+
+def with_saved_status(job):
+    """Prefer TM's recorded outcome for the latest run (it can be a reported failure)."""
+    run = RoutineRun.objects.filter(job_id=job.get("id"), run_at=parse_datetime(job.get("last_run_at") or "")).first() if job.get("last_run_at") else None
+    if run and run.status:
+        job = {**job, "last_status": run.status, "last_error": run.error or job.get("last_error")}
+    return public_job(job)
 
 
 def match_runs(sessions, saved, gated=False):
@@ -153,12 +189,12 @@ class RoutineViewSet(viewsets.ViewSet):
     def list(self, request):
         jobs = hermes("GET", "/api/jobs", params={"include_disabled": "true"})["jobs"]
         record_finished_runs(jobs)
-        return Response({"results": [public_job(job) for job in jobs]})
+        return Response({"results": [with_saved_status(job) for job in jobs]})
 
     def retrieve(self, request, pk):
         job = hermes("GET", f"/api/jobs/{pk}")["job"]
         record_finished_runs([job])
-        return Response(public_job(job))
+        return Response(with_saved_status(job))
 
     def partial_update(self, request, pk):
         prompt = request.data.get("prompt")
@@ -181,8 +217,7 @@ class RoutineViewSet(viewsets.ViewSet):
         if not re.fullmatch(rf"cron_{re.escape(pk)}_\d{{8}}_\d{{6}}", session_id):
             raise NotFound("Not a run of this routine.")
         messages = hermes("GET", f"/api/sessions/{session_id}/messages")["data"]
-        replies = [m["content"] for m in messages if m["role"] == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()]
-        return Response({"recap": replies[-1] if replies else "", "messages": [transcript_entry(m) for m in messages]})
+        return Response({"recap": last_reply(messages), "messages": [transcript_entry(m) for m in messages]})
 
 
 # ponytail: tool outputs reach ~90 KB and runs ~1000 messages; clip instead of paging.

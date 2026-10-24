@@ -76,6 +76,21 @@ class RoutineTests(TestCase):
         self.client.force_authenticate(None)
         self.assertEqual(self.client.get("/api/integrations/routines/").status_code, 403)
 
+    @patch("apps.integrations.routines.hermes")
+    def test_failed_marker_in_final_reply_marks_the_run_failed(self, hermes):
+        day = 1792454400  # 2026-10-20T00:00:00Z
+        replies = {"cron_abc_20261020_000010": "FAILED at step 7 (whats-new): build failed\n\ndetails", "cron_abc_20261021_000010": "All published."}
+        def fake(method, path, **kwargs):
+            if path == "/api/sessions":
+                return {"data": [{"id": sid, "started_at": day + 10 + i * 86400, "ended_at": None} for i, sid in enumerate(replies)], "has_more": False}
+            return {"data": [{"role": "assistant", "content": replies[path.split("/")[3]]}]}
+        hermes.side_effect = fake
+        record_finished_runs([{"id": "abc", "last_run_at": "2026-10-20T00:30:00+00:00", "last_status": "ok"}])
+        record_finished_runs([{"id": "abc", "last_run_at": "2026-10-21T00:30:00+00:00", "last_status": "ok"}])
+        statuses = dict(RoutineRun.objects.filter(job_id="abc").values_list("run_at__day", "status"))
+        self.assertEqual(statuses, {20: "error", 21: "ok"})
+        self.assertEqual(RoutineRun.objects.get(run_at__day=20).error, "FAILED at step 7 (whats-new): build failed")
+
     def test_delete_retry_and_mcp_registration(self):
         self.create()
         self.assertTrue(delete_routine(self.external_id, mcp_user=self.user)["deleted"])
