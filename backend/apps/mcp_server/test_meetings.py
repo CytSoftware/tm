@@ -211,9 +211,10 @@ class CurationToolTests(MeetingToolTestCase):
 
         with mock.patch("apps.meetings.services.broadcast_task_event") as board:
             result = mcp_tools.create_task_from_meeting_action_item(
-                "MTG-001", item_id, mcp_user=self.user
+                "MTG-001", item_id, due_at="2026-11-20", mcp_user=self.user
             )
         task = Task.objects.get()
+        self.assertEqual(task.due_at.date().isoformat(), "2026-11-20")
         self.assertEqual(result["task"]["key"], task.key)
         self.assertEqual(task.reporter, self.user)
         self.assertEqual(task.project, self.project)

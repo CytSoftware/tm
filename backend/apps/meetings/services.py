@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import datetime
 from typing import Any, Iterable
 
 from django.db import transaction
@@ -274,6 +275,7 @@ def create_task_from_action_item(
     user,
     project: Any = None,
     source: str = TransitionSource.USER,
+    due_at: datetime | None = None,
 ) -> Task:
     """Turn an action item into a real task and link it to the meeting.
 
@@ -304,6 +306,7 @@ def create_task_from_action_item(
         title=item["text"][:200],
         description=f"From meeting {meeting.key} — {meeting.title}",
         reporter=user,
+        due_at=due_at,
     )
     task.save()
     MeetingTask.objects.create(meeting=meeting, task=task)

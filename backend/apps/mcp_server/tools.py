@@ -13,7 +13,7 @@ functions means:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from typing import Any, Iterable
 
 from django.contrib.auth import get_user_model
@@ -554,6 +554,8 @@ def list_tasks(
     column_kind: str | None = None,
     bet: str | int | None = None,
     done: bool | None = None,
+    due_before: str | None = None,
+    overdue: bool | None = None,
     limit: int = 200,
     mcp_user=None,
 ) -> list[dict[str, Any]]:
@@ -576,6 +578,10 @@ def list_tasks(
         filters["bet"] = bet
     if done is not None:
         filters["done"] = done
+    if due_before is not None:
+        filters["due_before"] = parse_due_at(due_before)
+    if overdue is not None:
+        filters["overdue"] = overdue
     qs = filter_and_sort_tasks(filters=filters, base=_tasks(mcp_user))
     return [_task_dict(t, include_description=False) for t in qs[:limit]]
 
@@ -600,6 +606,7 @@ def create_task(
     story_points: int | None = None,
     column: str | int | None = None,
     bet: str | int | None = None,
+    due_at: str | None = None,
     mcp_user=None,
 ) -> dict[str, Any]:
     proj = _resolve_project(project, mcp_user)
@@ -616,6 +623,7 @@ def create_task(
         story_points=story_points,
         reporter=reporter,
         bet=_resolve_bet(bet, project=proj) if bet is not None else None,
+        due_at=parse_due_at(due_at) if due_at is not None else None,
         position=_next_bottom_position(col),
     )
     task.save()
@@ -654,6 +662,7 @@ def update_task(
     story_points: int | None = None,
     bet: str | int | None = None,
     reviewer: str | int | None = None,
+    due_at: str | None = None,
     mcp_user=None,
 ) -> dict[str, Any]:
     task = _tasks(mcp_user).get(key=key)
@@ -663,7 +672,8 @@ def update_task(
     old_label_ids = set(task.labels.values_list("id", flat=True))
     old_reviewer_id = task.reviewer_id
     old_values = {
-        f: getattr(task, f) for f in ("title", "description", "priority", "story_points")
+        f: getattr(task, f)
+        for f in ("title", "description", "priority", "story_points", "due_at")
     }
 
     if title is not None:
@@ -690,6 +700,10 @@ def update_task(
     if reviewer is not None:
         # ``"none"`` clears; anything else resolves to a user (username or id).
         task.reviewer = None if reviewer == "none" else _resolve_user(reviewer)
+        dirty = True
+    if due_at is not None:
+        # ``"none"`` clears the deadline.
+        task.due_at = None if due_at == "none" else parse_due_at(due_at)
         dirty = True
 
     if dirty:
@@ -1548,6 +1562,36 @@ def _parse_iso_datetime(value: str) -> datetime:
         ) from e
     if timezone.is_naive(parsed):
         parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+#: A date-only deadline (``2026-11-20``) means the end of that day.
+DUE_END_OF_DAY = time(23, 59, 59)
+
+
+def parse_due_at(value: Any) -> datetime:
+    """Read a task deadline: an ISO-8601 datetime, or a ``YYYY-MM-DD`` date.
+
+    A date means the end of that day, and a datetime without an offset is
+    read as local time — both in the company timezone (the CRM's
+    ``DEFAULT_TZ``), since that's where the people setting deadlines are.
+    Anything else raises a ``ValueError`` that says what to send instead.
+    """
+    from apps.crm.services import resolve_tz
+
+    raw = str(value).strip() if isinstance(value, str) else ""
+    try:
+        if len(raw) == 10:
+            day = datetime.strptime(raw, "%Y-%m-%d").date()
+            return datetime.combine(day, DUE_END_OF_DAY, tzinfo=resolve_tz(None))
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(
+            f"Can't read due_at {value!r}. Use an ISO-8601 datetime "
+            "(2026-11-20T17:00:00+03:00) or a date (2026-11-20 = end of that day)."
+        ) from None
+    if timezone.is_naive(parsed):
+        parsed = parsed.replace(tzinfo=resolve_tz(None))
     return parsed
 
 
