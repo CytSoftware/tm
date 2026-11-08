@@ -387,10 +387,16 @@ def set_meeting_action_item(
 
 
 def create_task_from_meeting_action_item(
-    meeting: str, item_id: str, project: str | int | None = None, mcp_user=None
+    meeting: str,
+    item_id: str,
+    project: str | int | None = None,
+    due_at: str | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
     # Local import: apps.mcp_server.tools imports half the project.
-    from apps.mcp_server.tools import _resolve_reporter_for_mcp, _task_dict
+    from apps.mcp_server.tools import _resolve_reporter_for_mcp, _task_dict, parse_due_at
+
+    due = parse_due_at(due_at) if due_at is not None else None
 
     target = _get_meeting(meeting, mcp_user)
     _require_project_access(project if project is not None else target.project, mcp_user)
@@ -400,6 +406,7 @@ def create_task_from_meeting_action_item(
         user=_resolve_reporter_for_mcp(mcp_user),
         project=project,
         source=TransitionSource.MCP,
+        due_at=due,
     )
     broadcast_meeting_event("meeting.updated", {"key": target.key})
     return {"task": _task_dict(task), "meeting": target.key}

@@ -19,6 +19,9 @@ saved ``View`` stores in its JSON fields:
         "project": 1,                  # project id OR prefix
         "bet": 4,                      # bet id OR name, or "none" for unlinked
         "done": False,                 # True = in an is_done column, False = not
+        "due_before": datetime,        # due_at on or before this (aware datetime
+                                       # or ISO string); undated tasks never match
+        "overdue": True,               # True = open task past its due_at, False = not
         "search": "oauth",             # case-insensitive substring match on key+title
         "include_archived": False,     # when NO project filter is set: False
                                        # hides archived-project tasks, True (or
@@ -37,6 +40,7 @@ ignored silently (saved views may carry fields this version doesn't know yet).
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any, Iterable, Mapping
 
 from django.contrib.auth import get_user_model
@@ -50,6 +54,8 @@ from django.db.models import (
     Subquery,
     When,
 )
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from .models import (
     Bet,
@@ -359,6 +365,24 @@ def apply_task_filters(
             qs = qs.filter(column__is_done=True)
         else:
             qs = qs.exclude(column__is_done=True)
+
+    # Deadline — ``due_before`` is inclusive; an unreadable value matches
+    # nothing rather than silently dropping the filter. ``overdue`` is an open
+    # task whose deadline has passed.
+    if (raw_due := filters.get("due_before")) not in (None, ""):
+        try:
+            due = raw_due if isinstance(raw_due, datetime) else parse_datetime(str(raw_due))
+        except ValueError:  # well-formed but impossible, e.g. month 13
+            due = None
+        if due is not None and timezone.is_naive(due):
+            due = timezone.make_aware(due)
+        qs = qs.filter(due_at__lte=due) if due else qs.none()
+    if (raw_overdue := filters.get("overdue")) not in (None, ""):
+        overdue = Q(due_at__lt=timezone.now()) & ~Q(column__is_done=True)
+        truthy = raw_overdue in (True, 1) or (
+            isinstance(raw_overdue, str) and raw_overdue.lower() in ("1", "true", "yes")
+        )
+        qs = qs.filter(overdue) if truthy else qs.exclude(overdue)
 
     # Free-text search (key + title + description). Whitespace-separated
     # words are ANDed: every token must appear somewhere across those fields.

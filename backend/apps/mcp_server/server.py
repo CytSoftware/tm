@@ -222,6 +222,15 @@ class _ScopedFastMCP(FastMCP):
             raise ValueError(f"{name} is limited to staff accounts.")
         if name not in READ_ONLY_TOOLS:
             _require_write_scope(name)
+        # FastMCP drops arguments a tool doesn't declare, so a misspelled or
+        # unsupported field (``deadline=``) used to "succeed" doing nothing.
+        if (tool := self._tool_manager.get_tool(name)) is not None:
+            known = tool.parameters.get("properties", {})
+            if unknown := sorted(set(arguments or {}) - set(known)):
+                raise ValueError(
+                    f"{name} got unknown argument(s): {', '.join(unknown)}. "
+                    f"Accepted: {', '.join(sorted(known))}."
+                )
         return await super().call_tool(name, arguments)
 
 
@@ -279,6 +288,8 @@ async def list_tasks(
     column_kind: str | None = None,
     bet: str | int | None = None,
     done: bool | None = None,
+    due_before: str | None = None,
+    overdue: bool | None = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     """List tasks matching the given filters.
@@ -295,7 +306,10 @@ async def list_tasks(
     "todo", "in_progress", "review", "done", "cancelled", "other"). ``bet`` accepts a
     bet id or name, or ``"none"`` for tasks not linked to any bet. ``done``
     filters by completion: ``true`` keeps only tasks in a done column,
-    ``false`` keeps open tasks.
+    ``false`` keeps open tasks. ``due_before`` keeps tasks due on or before a
+    datetime or date (``"2026-11-20"`` includes that whole day; undated tasks
+    never match). ``overdue`` set to ``true`` keeps open tasks whose deadline
+    has passed; ``false`` drops them.
     """
     return await _async(tools.list_tasks)(
         project=project,
@@ -307,6 +321,8 @@ async def list_tasks(
         column_kind=column_kind,
         bet=bet,
         done=done,
+        due_before=due_before,
+        overdue=overdue,
         limit=limit,
         mcp_user=_get_mcp_user(),
     )
@@ -329,6 +345,7 @@ async def create_task(
     story_points: int | None = None,
     column: str | int | None = None,
     bet: str | int | None = None,
+    due_at: str | None = None,
 ) -> dict[str, Any]:
     """Create a new task in ``project``.
 
@@ -337,7 +354,11 @@ async def create_task(
     sorts last in priority-desc order). ``assignees`` is a list of usernames or
     ids — a task can have zero or many assignees. Priority values when set:
     ``P1`` (highest), ``P2``, ``P3``, ``P4`` (lowest). ``bet`` links the task
-    to a bet in the same project (bet id or name).
+    to a bet in the same project (bet id or name). ``due_at`` sets the
+    deadline (shown as "Deadline" in the app): an ISO-8601 datetime like
+    ``"2026-11-20T17:00:00+03:00"``, or a date ``"2026-11-20"`` meaning the
+    end of that day. Times without an offset, and dates, are read in the
+    company timezone (Asia/Qatar).
     """
     return await _async(tools.create_task)(
         project=project,
@@ -349,6 +370,7 @@ async def create_task(
         story_points=story_points,
         column=column,
         bet=bet,
+        due_at=due_at,
         mcp_user=_get_mcp_user(),
     )
 
@@ -364,6 +386,7 @@ async def update_task(
     story_points: int | None = None,
     bet: str | int | None = None,
     reviewer: str | int | None = None,
+    due_at: str | None = None,
 ) -> dict[str, Any]:
     """Update any subset of a task's fields. Omitted fields are left unchanged.
 
@@ -372,7 +395,10 @@ async def update_task(
     ``bet`` links the task to a bet in its project (bet id or name); pass the
     string ``"none"`` to unlink. ``reviewer`` accepts a username or user id
     and sets who's reviewing this task's linked PR; pass the string
-    ``"none"`` to clear it.
+    ``"none"`` to clear it. ``due_at`` sets the deadline, same format as
+    ``create_task``: an ISO-8601 datetime, or a date ``"2026-11-20"`` meaning
+    the end of that day (company timezone, Asia/Qatar). Pass the string
+    ``"none"`` to clear the deadline.
     """
     return await _async(tools.update_task)(
         key=key,
@@ -384,6 +410,7 @@ async def update_task(
         story_points=story_points,
         bet=bet,
         reviewer=reviewer,
+        due_at=due_at,
         mcp_user=_get_mcp_user(),
     )
 
@@ -1684,18 +1711,22 @@ async def set_meeting_action_item(
 
 @mcp.tool()
 async def create_task_from_meeting_action_item(
-    meeting: str, item_id: str, project: str | int | None = None
+    meeting: str,
+    item_id: str,
+    project: str | int | None = None,
+    due_at: str | None = None,
 ) -> dict[str, Any]:
     """Turn a meeting's action item into a real task, linked back to the meeting.
 
     The task goes into the meeting's project; pass ``project`` if the meeting
     has none. Deliberately one at a time — extracted action items are noisy,
-    so don't bulk-convert them without being asked to.
+    so don't bulk-convert them without being asked to. ``due_at`` sets the
+    task's deadline, same format as ``create_task``.
     """
     from apps.meetings import mcp_tools
 
     return await _async(mcp_tools.create_task_from_meeting_action_item)(
-        meeting, item_id, project=project, mcp_user=_get_mcp_user()
+        meeting, item_id, project=project, due_at=due_at, mcp_user=_get_mcp_user()
     )
 
 

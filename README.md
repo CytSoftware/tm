@@ -374,10 +374,10 @@ The `CYT_BROADCAST_URL` var is what routes LLM-fired broadcasts through the loop
 | ------------------------ | --------------------------------------------------------------------------------- |
 | `list_projects`          | List all projects.                                                                |
 | `list_users`             | List active users (for assignee lookups).                                         |
-| `list_tasks`             | Filter by project / assignee / priority / labels / column / limit.                |
+| `list_tasks`             | Filter by project / assignee / priority / labels / column / deadline / limit.     |
 | `get_task`               | Fetch a task (+ description) by human key.                                        |
-| `create_task`            | Create a task. Defaults to the first non-done column if `column` is omitted.      |
-| `update_task`            | Partial update — omitted fields are untouched.                                    |
+| `create_task`            | Create a task. Defaults to the first non-done column; `due_at` sets the deadline. |
+| `update_task`            | Partial update — omitted fields are untouched; unknown arguments are refused.     |
 | `move_task`              | Move to a column, with `"top"` / `"bottom"` / explicit `position`.                |
 | `delete_task`            | Delete by human key.                                                              |
 | `list_views`             | List saved views, optionally scoped to a project.                                 |
