@@ -39,6 +39,7 @@ import { TimeInColumn, formatDuration } from "./TimeInColumn";
 import { LinkedPRBadge } from "@/components/integrations/LinkedPRBadge";
 import { UserAvatar } from "@/components/UserAvatar";
 import { useBetsQuery } from "@/hooks/use-bets";
+import { useLabelsQuery } from "@/hooks/use-labels";
 import { useCreateTask, useUpdateTask, useDeleteTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import { apiFetch } from "@/lib/api";
@@ -56,7 +57,6 @@ import type {
   Project,
   Task,
   Priority,
-  Label as LabelType,
   RecurringTaskTemplate,
   StateTransition,
 } from "@/lib/types";
@@ -168,6 +168,7 @@ export function TaskPanel(props: Props) {
   const [labelIds, setLabelIds] = useState<number[]>(
     seed?.labels.map((l) => l.id) ?? [],
   );
+  const allLabels = useLabelsQuery().data ?? [];
   // Bet link (Cyt OS) — tasks only; recurring templates don't carry bets.
   const [betId, setBetId] = useState<number | null>(task?.bet?.id ?? null);
   // Reviewer (TAS-064) — tasks only; recurring templates don't carry a
@@ -210,11 +211,16 @@ export function TaskPanel(props: Props) {
       selectedProject?.columns.find((c) => c.id === columnId) ?? null;
     const currentColName = currentCol?.name ?? task?.column?.name;
     setColumnId(pickDefaultColumn(selectedProject, currentColName));
-    // Keep global labels (project=null), drop project-scoped ones from the old project
+    // Drop labels scoped to another project. This also runs on mount, before
+    // the labels query resolves — a label we can't resolve yet is kept, never
+    // dropped, or opening and saving a task would wipe its labels (TAS-077).
+    const knownLabels = new Map(
+      [...(seed?.labels ?? []), ...allLabels].map((l) => [l.id, l]),
+    );
     setLabelIds((prev) =>
       prev.filter((id) => {
-        const label = availableLabels.find((l) => l.id === id);
-        return label && !label.project; // keep only global labels
+        const scope = knownLabels.get(id)?.project;
+        return scope == null || scope === selectedProject?.id;
       }),
     );
     // Bets are strictly project-scoped — a project switch always unlinks
@@ -238,17 +244,10 @@ export function TaskPanel(props: Props) {
         },
   );
 
-  // Fetch labels for the selected project (or global labels when in the Inbox)
-  const labelsQuery = useQuery({
-    queryKey: ["labels", selectedProject?.id ?? "global"],
-    queryFn: () =>
-      selectedProject
-        ? apiFetch<LabelType[]>(`/api/projects/${selectedProject.id}/labels/`)
-        : apiFetch<{ results: LabelType[] }>("/api/labels/").then((r) =>
-            r.results.filter((l) => l.project == null),
-          ),
-  });
-  const availableLabels = labelsQuery.data ?? [];
+  // Selectable labels: global ones plus the selected project's (Inbox: global only).
+  const availableLabels = allLabels.filter(
+    (l) => l.project == null || l.project === selectedProject?.id,
+  );
 
   // Current-period bets for the selected project. The task's own bet stays
   // selectable even when it belongs to an older period.
