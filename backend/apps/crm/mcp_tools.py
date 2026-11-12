@@ -108,7 +108,7 @@ def _scope(ref: str | int | None) -> int | None:
 
 
 def _stage(value: str) -> str:
-    stage = str(value).strip().lower()
+    stage = str(value).strip().lower().replace(" ", "_")
     if stage not in LeadStage.values:
         raise ValueError(f"stage must be one of {', '.join(LeadStage.values)}.")
     return stage

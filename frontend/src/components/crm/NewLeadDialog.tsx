@@ -67,7 +67,7 @@ function Body({
   const [title, setTitle] = useState("");
   const [company, setCompany] = useState(defaults.company?.name ?? "");
   const [project, setProject] = useState(defaults.project ? String(defaults.project) : "");
-  const [stage, setStage] = useState<LeadStage>(defaults.stage ?? "new");
+  const [stage, setStage] = useState<LeadStage>(defaults.stage ?? "potential");
   const pending = create.isPending || createCompany.isPending;
 
   const submit = async () => {

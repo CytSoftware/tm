@@ -21,7 +21,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import type { LeadStage, UpdateKind } from "@/hooks/use-crm";
+import type { LeadStage, LostReason, UpdateKind } from "@/hooks/use-crm";
 import { ApiError } from "@/lib/api";
 
 /** The CRM's sections, in order — rendered as sub-items under CRM in the
@@ -46,15 +46,24 @@ export function crmSectionHref(
   return query ? `/crm?${query}` : "/crm";
 }
 
-/** Board columns, in order (mirrors ``LeadStage`` in apps/crm/models.py). */
+/** Board columns, in order (mirrors ``LeadStage`` in apps/crm/models.py).
+ * Each is named after what happened, not a win probability. */
 export const STAGES: { id: LeadStage; label: string; dot: string }[] = [
-  { id: "new", label: "New", dot: "bg-muted-foreground/50" },
-  { id: "discovery", label: "Discovery", dot: "bg-sky-500" },
-  { id: "demo", label: "Demo", dot: "bg-sky-500" },
-  { id: "pilot", label: "Pilot", dot: "bg-sky-500" },
-  { id: "proposal", label: "Proposal", dot: "bg-sky-500" },
+  { id: "potential", label: "Potential", dot: "bg-muted-foreground/50" },
+  { id: "outreach", label: "Outreach", dot: "bg-sky-500" },
+  { id: "in_talks", label: "In talks", dot: "bg-sky-500" },
+  { id: "offer", label: "Pilot / Proposal", dot: "bg-sky-500" },
   { id: "won", label: "Won", dot: "bg-emerald-500" },
   { id: "lost", label: "Lost", dot: "bg-muted-foreground/40" },
+];
+
+/** Mirrors ``LostReason`` in apps/crm/models.py. */
+export const LOST_REASONS: { id: LostReason; label: string }[] = [
+  { id: "not_now", label: "Not now" },
+  { id: "no_response", label: "No response" },
+  { id: "no_fit", label: "No fit" },
+  { id: "chose_other", label: "Chose another tool" },
+  { id: "no_budget", label: "No budget" },
 ];
 
 export const stageLabel = (id: LeadStage) => STAGES.find((s) => s.id === id)?.label ?? id;

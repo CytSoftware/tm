@@ -1968,7 +1968,7 @@ async def search_leads(
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     """Leads in board order, each with its next step and last update date.
-    ``stage``: new, discovery, demo, pilot, proposal, won, lost. ``status``:
+    ``stage``: potential, outreach, in_talks, offer, won, lost. ``status``:
     open, won, lost, closed. ``contact`` matches the company, a person tagged
     on the lead, or a person's employer. ``project`` (e.g. ``MOW``) scopes to
     one business."""
@@ -2001,10 +2001,15 @@ async def upsert_lead(
     """Open a lead, or edit one by passing its key as ``lead``. Only what you
     pass changes. ``company`` is a company name or id (created if new);
     ``project`` is which of our businesses it's for (prefix, e.g. ``MOW``) —
-    next steps are filed there. ``stage`` (default new): new, discovery, demo,
-    pilot, proposal, won, lost; won/lost stamps ``closed_at``. ``notes`` is
-    standing context — what happened goes in
-    ``post_update``."""
+    next steps are filed there. ``stage`` (default potential) is named after
+    what happened — move it only when an update records that event:
+    potential (decided to pursue, not contacted), outreach (we reached out, no
+    real conversation yet), in_talks (a real call, meeting or demo happened),
+    offer (a pilot is running or a quote/contract was sent), won (signed),
+    lost. Won/lost stamps ``closed_at``. A lost lead takes ``lost_reason``:
+    not_now, no_response, no_fit, chose_other, no_budget — "not now" is how a
+    lead is parked (no paused stage). ``notes`` is standing context — what
+    happened goes in ``post_update``."""
     from apps.crm import mcp_tools
 
     return await _async(mcp_tools.upsert_lead)(

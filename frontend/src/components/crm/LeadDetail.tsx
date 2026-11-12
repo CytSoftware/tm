@@ -14,6 +14,7 @@ import {
   type LeadDetail as Detail,
   type LeadStage,
   type LeadWrite,
+  type LostReason,
   useContacts,
   useDeleteLead,
   useLead,
@@ -21,6 +22,7 @@ import {
 } from "@/hooks/use-crm";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import {
+  LOST_REASONS,
   STAGES,
   errorMessage,
   shortDate,
@@ -188,12 +190,25 @@ function Body({
         </div>
 
         {l.stage === "lost" && (
-          <input
-            defaultValue={l.lost_reason}
-            onBlur={(e) => e.target.value !== l.lost_reason && save({ lost_reason: e.target.value })}
-            placeholder="Why was it lost?"
-            className="mt-2 h-7 w-full rounded-md border border-border bg-transparent px-2 text-[12px] outline-none focus-visible:border-ring"
-          />
+          <select
+            aria-label="Why was it lost?"
+            value={l.lost_reason}
+            onChange={(e) => save({ lost_reason: e.target.value as LostReason })}
+            className={cn(
+              controlCls,
+              "mt-2 h-7",
+              !l.lost_reason && "border-amber-500/60 text-amber-700 dark:text-amber-400",
+            )}
+          >
+            <option value="" disabled>
+              Why was it lost?
+            </option>
+            {LOST_REASONS.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.label}
+              </option>
+            ))}
+          </select>
         )}
 
         {/* Pinned: what's owed stays in view while the thread scrolls. */}

@@ -28,18 +28,30 @@ from .id_generation import generate_lead_key
 
 
 class LeadStage(models.TextChoices):
-    """The board's columns, in order. Code reads ``CLOSED_STAGES``, never names."""
+    """The board's columns, in order. Each is named after what happened, not
+    a win probability: a lead moves when an update records the event that
+    defines the next stage. Code reads ``CLOSED_STAGES``, never names."""
 
-    NEW = "new", "New"
-    DISCOVERY = "discovery", "Discovery"
-    DEMO = "demo", "Demo"
-    PILOT = "pilot", "Pilot"
-    PROPOSAL = "proposal", "Proposal"
+    POTENTIAL = "potential", "Potential"  # decided to pursue, not contacted yet
+    OUTREACH = "outreach", "Outreach"  # we reached out, no real conversation yet
+    IN_TALKS = "in_talks", "In talks"  # a real call, meeting or demo happened
+    OFFER = "offer", "Pilot / Proposal"  # a trial is running or a quote was sent
     WON = "won", "Won"
     LOST = "lost", "Lost"
 
 
 CLOSED_STAGES = (LeadStage.WON, LeadStage.LOST)
+
+
+class LostReason(models.TextChoices):
+    """Why a lead was lost. "Not now" is how a lead is parked: there is no
+    paused stage, so a later call-back is a next step on the lost lead."""
+
+    NOT_NOW = "not_now", "Not now"
+    NO_RESPONSE = "no_response", "No response"
+    NO_FIT = "no_fit", "No fit"
+    CHOSE_OTHER = "chose_other", "Chose another tool"
+    NO_BUDGET = "no_budget", "No budget"
 
 
 class Lead(TimestampedModel):
@@ -62,10 +74,10 @@ class Lead(TimestampedModel):
         help_text="Which of our businesses this lead is for (Mowafeq, Cyt…).",
     )
     stage = models.CharField(
-        max_length=16, choices=LeadStage.choices, default=LeadStage.NEW, db_index=True
+        max_length=16, choices=LeadStage.choices, default=LeadStage.POTENTIAL, db_index=True
     )
     notes = models.TextField(blank=True, default="", help_text="Standing context; what happened goes in updates.")
-    lost_reason = models.CharField(max_length=300, blank=True, default="")
+    lost_reason = models.CharField(max_length=16, choices=LostReason.choices, blank=True, default="")
     position = models.FloatField(default=0)
     closed_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(

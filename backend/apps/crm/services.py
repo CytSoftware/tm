@@ -31,7 +31,7 @@ from apps.tasks.notifications import notify_task_event
 from apps.tasks.transitions import record_transition
 
 from .broadcast import broadcast_crm_event
-from .models import CLOSED_STAGES, Lead, LeadStage, Update
+from .models import CLOSED_STAGES, Lead, LeadStage, LostReason, Update
 
 DEFAULT_TZ = "Asia/Qatar"
 #: A next step is due at this local time on its day.
@@ -407,6 +407,10 @@ def _check_lead(lead: Lead) -> None:
         raise CrmError("A lead needs a title.")
     if lead.stage not in LeadStage.values:
         raise CrmError(f"Unknown stage {lead.stage!r}; use one of: {', '.join(LeadStage.values)}.")
+    if lead.lost_reason and lead.lost_reason not in LostReason.values:
+        raise CrmError(
+            f"Unknown lost reason {lead.lost_reason!r}; use one of: {', '.join(LostReason.values)}."
+        )
     if lead.company is not None and lead.company.kind != EntityKind.COMPANY:
         raise CrmError(f"{lead.company.name} is a person, not a company.")
 
@@ -415,8 +419,9 @@ def _sync_closed(lead: Lead, previous_stage: str | None) -> None:
     now_closed = lead.stage in CLOSED_STAGES
     if now_closed and previous_stage not in CLOSED_STAGES:
         lead.closed_at = timezone.now()
-    elif not now_closed:
+    if not now_closed:
         lead.closed_at = None
+    if lead.stage != LeadStage.LOST:
         lead.lost_reason = ""
 
 
@@ -440,13 +445,13 @@ def _position_in(stage: str, index: int | None, *, exclude: int | None = None) -
 @transaction.atomic
 def create_lead(data: dict[str, Any], *, user) -> Lead:
     lead = Lead(
-        stage=data.get("stage") or LeadStage.NEW,
+        stage=data.get("stage") or LeadStage.POTENTIAL,
         created_by=user if getattr(user, "is_authenticated", False) else None,
         **{f: data[f] for f in LEAD_FIELDS if data.get(f) is not None},
     )
+    _sync_closed(lead, None)
     _check_lead(lead)
     lead.position = _position_in(lead.stage, None)
-    _sync_closed(lead, None)
     lead.save()
     broadcast_crm_event("lead.created", {"key": lead.key})
     return lead
@@ -461,8 +466,8 @@ def update_lead(lead: Lead, data: dict[str, Any]) -> Lead:
     if data.get("stage") and data["stage"] != lead.stage:
         lead.stage = data["stage"]
         lead.position = _position_in(lead.stage, None, exclude=lead.pk)
-    _check_lead(lead)
     _sync_closed(lead, previous_stage)
+    _check_lead(lead)
     lead.save()
     broadcast_crm_event("lead.updated", {"key": lead.key})
     return lead

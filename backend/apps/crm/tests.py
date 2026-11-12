@@ -108,17 +108,24 @@ class LeadTests(CrmTestCase):
     def test_closing_stamps_and_reopening_clears(self):
         lead = self.lead()
         self.assertIsNone(lead.closed_at)
-        services.update_lead(lead, {"stage": LeadStage.LOST, "lost_reason": "Went with Aconex"})
+        services.update_lead(lead, {"stage": LeadStage.LOST, "lost_reason": "chose_other"})
         self.assertIsNotNone(lead.closed_at)
-        self.assertEqual(lead.lost_reason, "Went with Aconex")
-        services.move_lead(lead, LeadStage.DEMO)
+        self.assertEqual(lead.lost_reason, "chose_other")
+        services.move_lead(lead, LeadStage.IN_TALKS)
         self.assertIsNone(lead.closed_at)
+        self.assertEqual(lead.lost_reason, "")
+
+    def test_lost_reason_is_a_fixed_choice(self):
+        lead = self.lead()
+        with self.assertRaises(services.CrmError):
+            services.update_lead(lead, {"stage": LeadStage.LOST, "lost_reason": "too pricey"})
+        services.update_lead(lead, {"stage": LeadStage.WON})
         self.assertEqual(lead.lost_reason, "")
 
     def test_move_places_between_siblings(self):
         a, b, c = self.lead(title="a"), self.lead(title="b"), self.lead(title="c")
-        services.move_lead(c, LeadStage.NEW, index=1)
-        order = list(filter_leads({"stage": "new"}).values_list("title", flat=True))
+        services.move_lead(c, LeadStage.POTENTIAL, index=1)
+        order = list(filter_leads({"stage": "potential"}).values_list("title", flat=True))
         self.assertEqual(order, ["a", "c", "b"])
 
     def test_person_matches_their_employers_leads(self):

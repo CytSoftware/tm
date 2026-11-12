@@ -44,7 +44,9 @@ export type EntityRef = {
 /** One of our businesses (a TM project) — what the CRM is scoped by. */
 export type ProjectRef = { id: number; prefix: string; name: string; color: string };
 
-export type LeadStage = "new" | "discovery" | "demo" | "pilot" | "proposal" | "won" | "lost";
+export type LeadStage = "potential" | "outreach" | "in_talks" | "offer" | "won" | "lost";
+
+export type LostReason = "not_now" | "no_response" | "no_fit" | "chose_other" | "no_budget";
 
 export type UpdateKind = "note" | "message" | "call" | "email" | "meeting";
 
@@ -75,7 +77,7 @@ export type Lead = {
   company: EntityRef | null;
   project: ProjectRef | null;
   notes: string;
-  lost_reason: string;
+  lost_reason: LostReason | "";
   position: number;
   closed_at: string | null;
   /** Soonest open task its updates filed. */
@@ -258,7 +260,7 @@ export type LeadWrite = Partial<{
   company: number | null;
   project: number | null;
   notes: string;
-  lost_reason: string;
+  lost_reason: LostReason | "";
 }>;
 
 export function useCreateLead() {
