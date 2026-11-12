@@ -18,9 +18,17 @@ relationship/owner/projects) — see "Why v2" below.
 | Update | `crm.Update` | `lead` (optional), `kind` (note / message / call / email / meeting), `body` (what happened), `occurred_at`, `people` (their side), `users` (our side, default the author), `meeting` (a linked recording), `task` (what they need next). |
 | Next step | `tasks.Task` via `Update.task` | Filed by the update, in the lead's project; board, `/focus`, notifications apply. |
 
-**Stages are fixed** (`LeadStage`): New → Discovery → Demo → Pilot →
-Proposal → Won · Lost. Won/Lost stamp `closed_at`; reopening clears it and
-`lost_reason`. Mirror: `STAGES` in `frontend/src/lib/crm-meta.ts`.
+**Stages are fixed and named after what happened** (`LeadStage`), not a win
+probability: Potential (decided to pursue, not contacted) → Outreach (we
+reached out, no real conversation) → In talks (a real call, meeting or demo) →
+Pilot / Proposal (a trial running or a quote sent) → Won · Lost. A lead moves
+only when an update records the event. Lost carries a `LostReason` (not now,
+no response, no fit, chose another tool, no budget); "not now" is how a lead
+is parked, so there is no paused stage. A company becomes a lead only once
+someone decides to pursue it; until then it is just a contact. Won/Lost stamp
+`closed_at`; leaving Lost clears the reason. Mirror: `STAGES` / `LOST_REASONS`
+in `frontend/src/lib/crm-meta.ts`. (Replaced New → Discovery → Demo → Pilot →
+Proposal on 2026-11-12.)
 
 ## Decisions
 

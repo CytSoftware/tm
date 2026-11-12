@@ -8,7 +8,7 @@ from apps.meetings.serializers import AwareDateTimeField
 from apps.tasks.models import Project, Task
 from apps.tasks.serializers import UserSerializer
 
-from .models import Lead, LeadStage, Update, UpdateKind
+from .models import Lead, LeadStage, LostReason, Update, UpdateKind
 from .query import CLOSED_COLUMN_KINDS
 
 User = get_user_model()
@@ -225,7 +225,7 @@ class LeadWriteSerializer(serializers.Serializer):
         queryset=Project.objects.all(), required=False, allow_null=True
     )
     notes = serializers.CharField(required=False, allow_blank=True)
-    lost_reason = serializers.CharField(max_length=300, required=False, allow_blank=True)
+    lost_reason = serializers.ChoiceField(choices=LostReason.choices, required=False, allow_blank=True)
 
 
 class UpdateInputSerializer(serializers.Serializer):
