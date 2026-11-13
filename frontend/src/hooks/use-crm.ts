@@ -44,9 +44,9 @@ export type EntityRef = {
 /** One of our businesses (a TM project) — what the CRM is scoped by. */
 export type ProjectRef = { id: number; prefix: string; name: string; color: string };
 
-export type LeadStage = "potential" | "outreach" | "in_talks" | "offer" | "won" | "lost";
+export type LeadStage = "potential" | "outreach" | "in_talks" | "offer" | "later" | "won" | "lost";
 
-export type LostReason = "not_now" | "no_response" | "no_fit" | "chose_other" | "no_budget";
+export type LostReason = "no_response" | "no_fit" | "chose_other" | "no_budget";
 
 export type UpdateKind = "note" | "message" | "call" | "email" | "meeting";
 

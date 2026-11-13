@@ -1968,7 +1968,7 @@ async def search_leads(
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     """Leads in board order, each with its next step and last update date.
-    ``stage``: potential, outreach, in_talks, offer, won, lost. ``status``:
+    ``stage``: potential, outreach, in_talks, offer, later, won, lost. ``status``:
     open, won, lost, closed. ``contact`` matches the company, a person tagged
     on the lead, or a person's employer. ``project`` (e.g. ``MOW``) scopes to
     one business."""
@@ -2005,10 +2005,11 @@ async def upsert_lead(
     what happened — move it only when an update records that event:
     potential (decided to pursue, not contacted), outreach (we reached out, no
     real conversation yet), in_talks (a real call, meeting or demo happened),
-    offer (a pilot is running or a quote/contract was sent), won (signed),
-    lost. Won/lost stamps ``closed_at``. A lost lead takes ``lost_reason``:
-    not_now, no_response, no_fit, chose_other, no_budget — "not now" is how a
-    lead is parked (no paused stage). ``notes`` is standing context — what
+    offer (a pilot is running or a quote/contract was sent), later (they said
+    "not now" — also file a dated call-back with ``post_update(next_step=…,
+    next_due=…)`` so it comes back), won (signed), lost (a real no). Won/lost
+    stamps ``closed_at``. A lost lead takes ``lost_reason``: no_response,
+    no_fit, chose_other, no_budget. ``notes`` is standing context — what
     happened goes in ``post_update``."""
     from apps.crm import mcp_tools
 

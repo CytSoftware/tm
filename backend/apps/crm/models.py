@@ -36,6 +36,7 @@ class LeadStage(models.TextChoices):
     OUTREACH = "outreach", "Outreach"  # we reached out, no real conversation yet
     IN_TALKS = "in_talks", "In talks"  # a real call, meeting or demo happened
     OFFER = "offer", "Pilot / Proposal"  # a trial is running or a quote was sent
+    LATER = "later", "Later"  # they said not now; comes back via a dated next step
     WON = "won", "Won"
     LOST = "lost", "Lost"
 
@@ -44,10 +45,8 @@ CLOSED_STAGES = (LeadStage.WON, LeadStage.LOST)
 
 
 class LostReason(models.TextChoices):
-    """Why a lead was lost. "Not now" is how a lead is parked: there is no
-    paused stage, so a later call-back is a next step on the lost lead."""
+    """Why a lead was lost: a real no. "Not now" is not lost, it is ``LATER``."""
 
-    NOT_NOW = "not_now", "Not now"
     NO_RESPONSE = "no_response", "No response"
     NO_FIT = "no_fit", "No fit"
     CHOSE_OTHER = "chose_other", "Chose another tool"
