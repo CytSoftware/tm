@@ -53,13 +53,13 @@ export const STAGES: { id: LeadStage; label: string; dot: string }[] = [
   { id: "outreach", label: "Outreach", dot: "bg-sky-500" },
   { id: "in_talks", label: "In talks", dot: "bg-sky-500" },
   { id: "offer", label: "Pilot / Proposal", dot: "bg-sky-500" },
+  { id: "later", label: "Later", dot: "bg-amber-500" },
   { id: "won", label: "Won", dot: "bg-emerald-500" },
   { id: "lost", label: "Lost", dot: "bg-muted-foreground/40" },
 ];
 
 /** Mirrors ``LostReason`` in apps/crm/models.py. */
 export const LOST_REASONS: { id: LostReason; label: string }[] = [
-  { id: "not_now", label: "Not now" },
   { id: "no_response", label: "No response" },
   { id: "no_fit", label: "No fit" },
   { id: "chose_other", label: "Chose another tool" },

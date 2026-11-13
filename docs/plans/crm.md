@@ -21,10 +21,12 @@ relationship/owner/projects) — see "Why v2" below.
 **Stages are fixed and named after what happened** (`LeadStage`), not a win
 probability: Potential (decided to pursue, not contacted) → Outreach (we
 reached out, no real conversation) → In talks (a real call, meeting or demo) →
-Pilot / Proposal (a trial running or a quote sent) → Won · Lost. A lead moves
-only when an update records the event. Lost carries a `LostReason` (not now,
-no response, no fit, chose another tool, no budget); "not now" is how a lead
-is parked, so there is no paused stage. A company becomes a lead only once
+Pilot / Proposal (a trial running or a quote sent) → Later → Won · Lost. A
+lead moves only when an update records the event. Later means they said "not
+now": it carries a dated call-back next step, so it comes back on its own
+(added 2026-11-13). Lost is a real no and carries a `LostReason` (no
+response, no fit, chose another tool, no budget). There is no waiting stage:
+waiting on them is a state of every stage, tracked by the next step. A company becomes a lead only once
 someone decides to pursue it; until then it is just a contact. Won/Lost stamp
 `closed_at`; leaving Lost clears the reason. Mirror: `STAGES` / `LOST_REASONS`
 in `frontend/src/lib/crm-meta.ts`. (Replaced New → Discovery → Demo → Pilot →
