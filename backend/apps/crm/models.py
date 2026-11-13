@@ -177,3 +177,78 @@ class Update(TimestampedModel):
 
     def __str__(self) -> str:  # pragma: no cover - admin helper
         return f"{self.kind} {self.occurred_at:%Y-%m-%d}: {self.body[:40]}"
+
+
+class PaymentType(models.TextChoices):
+    """Why the money is owed. Renewals are tracked on ``Licence``, not here."""
+
+    LICENCE = "licence", "Licence"
+    RETAINER = "retainer", "Retainer"
+    DOWN_PAYMENT = "down_payment", "Down payment"
+    INSTALMENT = "instalment", "Instalment"
+    ONE_OFF = "one_off", "One-off"
+
+
+
+class Licence(TimestampedModel):
+    """What a customer is entitled to, and for which period — separate from
+    the money (``Payment``), whose dates rarely match. A renewal is a new
+    licence with the next period, so history stays. Status is derived (see
+    ``query.filter_licences``): upcoming, active, expiring, ended — plus
+    ``renewed`` when a later licence exists for the same company and title."""
+
+    title = models.CharField(max_length=200, help_text="The product, e.g. Mowafeq Workspace.")
+    company = models.ForeignKey(
+        "meetings.Entity",
+        on_delete=models.PROTECT,
+        related_name="licences",
+        limit_choices_to={"kind": "company"},
+    )
+    project = models.ForeignKey(
+        "tasks.Project", on_delete=models.SET_NULL, null=True, blank=True, related_name="crm_licences"
+    )
+    starts_on = models.DateField()
+    ends_on = models.DateField(db_index=True)
+    lead = models.ForeignKey(
+        Lead, on_delete=models.SET_NULL, null=True, blank=True, related_name="licences"
+    )
+
+    class Meta:
+        ordering = ["ends_on", "id"]
+
+    def __str__(self) -> str:  # pragma: no cover - admin helper
+        return f"{self.title} {self.starts_on}–{self.ends_on}"
+
+
+class Payment(TimestampedModel):
+    """One amount a customer owes us. Status is derived, never stored: paid
+    once ``paid_on`` is set, overdue once ``due_on`` has passed, else
+    upcoming (see ``query.payment_status``). Amounts are QAR."""
+
+    title = models.CharField(max_length=200, help_text="What was sold, e.g. Mowafeq Workspace.")
+    company = models.ForeignKey(
+        "meetings.Entity",
+        on_delete=models.PROTECT,
+        related_name="payments",
+        limit_choices_to={"kind": "company"},
+    )
+    project = models.ForeignKey(
+        "tasks.Project", on_delete=models.SET_NULL, null=True, blank=True, related_name="crm_payments"
+    )
+    type = models.CharField(max_length=16, choices=PaymentType.choices)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    due_on = models.DateField(db_index=True)
+    paid_on = models.DateField(null=True, blank=True)
+    lead = models.ForeignKey(
+        Lead, on_delete=models.SET_NULL, null=True, blank=True, related_name="payments"
+    )
+    licence = models.ForeignKey(
+        Licence, on_delete=models.SET_NULL, null=True, blank=True, related_name="payments",
+        help_text="The licence period this pays for, if any.",
+    )
+
+    class Meta:
+        ordering = ["due_on", "id"]
+
+    def __str__(self) -> str:  # pragma: no cover - admin helper
+        return f"{self.title} {self.amount} due {self.due_on}"

@@ -97,6 +97,16 @@ WhatsApp and project tags; headline becomes position. Dropped data: deal
 owner/currency/expected close/contacts, touchpoint direction/source/external
 id, the follow-up links (the tasks themselves stay in the FUP project).
 
+## Payments and licences (2026-11-13)
+
+Payments track the money; licences track the entitlement — their dates rarely
+match (Changda paid on 26 Oct for a period starting 2 Nov). A payment may pay
+for a licence and then inherits its product, company, project and lead. All
+status is derived from dates. Renewing creates the next licence with last
+period's plan shifted a year. Tabs: Billing (overdue / upcoming / paid this
+year) and Licences (expiring not renewed / active / lapsed), both filtered by
+project and company. Left out on purpose: invoices, tax, reminders, seats.
+
 ## Deferred
 
 - Gmail/Calendar ingest (v1 planned `external_id` dedup; dropped until a

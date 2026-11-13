@@ -242,3 +242,115 @@ class McpTests(CrmTestCase):
     def test_unknown_stage_is_refused(self):
         with self.assertRaises(ValueError):
             mcp_tools.upsert_lead(title="x", stage="closing", mcp_user=self.user)
+
+
+class PaymentTests(CrmTestCase):
+    def payment(self, **data):
+        from decimal import Decimal
+
+        return services.save_payment(
+            None,
+            {"title": "Mowafeq Workspace", "company": self.ecg, "type": "instalment",
+             "amount": Decimal("10000"), "due_on": timezone.localdate(), **data},
+        )
+
+    def test_status_is_derived_from_the_dates(self):
+        from .query import filter_payments
+
+        today = timezone.localdate()
+        self.payment(due_on=today - timedelta(days=1))
+        self.payment(due_on=today - timedelta(days=5), paid_on=today - timedelta(days=6))
+        self.payment(due_on=today)
+        statuses = list(filter_payments().values_list("status", flat=True))
+        self.assertEqual(statuses, ["paid", "overdue", "upcoming"])
+        self.assertEqual(filter_payments({"status": "overdue"}).count(), 1)
+
+    def test_a_lead_fills_in_company_and_project(self):
+        lead = self.lead()
+        payment = self.payment(company=None, lead=lead)
+        self.assertEqual((payment.company, payment.project), (self.ecg, self.mow))
+
+    def test_merge_carries_payments(self):
+        dup = meeting_services.resolve_entity(EntityKind.COMPANY, "ECG Engineering")
+        payment = self.payment(company=dup)
+        meeting_services.merge_entities(dup, self.ecg)
+        payment.refresh_from_db()
+        self.assertEqual(payment.company, self.ecg)
+
+    def test_mcp_marks_paid_and_refuses_unknown_companies(self):
+        out = mcp_tools.record_payment(
+            title="Mowafeq licence", company="ECG", type="licence", amount=60000, due_on="2026-11-02"
+        )
+        self.assertEqual(out["status"], "overdue" if timezone.localdate().isoformat() > "2026-11-02" else "upcoming")
+        paid = mcp_tools.record_payment(payment_id=out["id"], paid_on="2026-10-26")
+        self.assertEqual((paid["status"], paid["paid_on"]), ("paid", "2026-10-26"))
+        with self.assertRaises(ValueError):
+            mcp_tools.record_payment(title="x", company="Nobody Inc", type="one_off", amount=1, due_on="2026-01-01")
+
+
+class LicenceTests(CrmTestCase):
+    def licence(self, start, end, **data):
+        return services.save_licence(
+            None, {"title": "Mowafeq licence", "company": self.ecg, "starts_on": start, "ends_on": end, **data}
+        )
+
+    def test_status_renewal_and_paid_totals(self):
+        from decimal import Decimal
+
+        from .query import filter_licences
+
+        today = timezone.localdate()
+        old = self.licence(today - timedelta(days=400), today - timedelta(days=35))
+        current = self.licence(today - timedelta(days=34), today + timedelta(days=20))
+        lapsed = self.licence(today - timedelta(days=300), today - timedelta(days=1), title="Workspace")
+        for paid in (today, None):
+            services.save_payment(None, {"title": "Mowafeq licence", "company": self.ecg, "type": "licence",
+                                         "amount": Decimal("1000"), "due_on": today, "paid_on": paid,
+                                         "licence": current})
+        rows = {lc.pk: lc for lc in filter_licences()}
+        self.assertEqual((rows[old.pk].status, rows[old.pk].renewed), ("ended", True))
+        self.assertEqual((rows[current.pk].status, rows[current.pk].renewed), ("expiring", False))
+        self.assertEqual((rows[lapsed.pk].status, rows[lapsed.pk].renewed), ("ended", False))
+        self.assertEqual((rows[current.pk].paid, rows[current.pk].total), (Decimal("1000"), Decimal("2000")))
+
+    def test_payments_inherit_from_their_licence(self):
+        from decimal import Decimal
+
+        today = timezone.localdate()
+        lead = self.lead()
+        other, _ = services.create_contact({"kind": "company", "name": "Other Co"})
+        lc = self.licence(today, today + timedelta(days=365), lead=lead, project=self.mow)
+        # Whatever is typed, a licence payment carries the licence's fields.
+        p = services.save_payment(None, {"title": "typo", "company": other, "type": "licence",
+                                         "amount": Decimal("1"), "due_on": today, "licence": lc})
+        self.assertEqual((p.title, p.company, p.project, p.lead), (lc.title, self.ecg, self.mow, lead))
+        # Editing the licence keeps its payments in step.
+        services.save_licence(lc, {"title": "Mowafeq Workspace"})
+        p.refresh_from_db()
+        self.assertEqual(p.title, "Mowafeq Workspace")
+
+    def test_plan_creates_payments_with_the_licence(self):
+        from decimal import Decimal
+
+        today = timezone.localdate()
+        lc = services.save_licence(
+            None,
+            {"title": "Mowafeq Workspace", "company": self.ecg, "starts_on": today,
+             "ends_on": today + timedelta(days=364)},
+            plan=[{"type": "down_payment", "amount": Decimal("10000"), "due_on": today, "paid_on": today},
+                  {"type": "instalment", "amount": Decimal("5000"), "due_on": today + timedelta(days=30)}],
+        )
+        self.assertEqual(lc.payments.count(), 2)
+        self.assertEqual(set(lc.payments.values_list("company_id", flat=True)), {self.ecg.pk})
+        with self.assertRaises(services.CrmError):  # a bad row rolls the whole licence back
+            services.save_licence(
+                None,
+                {"title": "Broken", "company": self.ecg, "starts_on": today, "ends_on": today},
+                plan=[{"type": "nope", "amount": Decimal("1"), "due_on": today}],
+            )
+        self.assertFalse(services.Licence.objects.filter(title="Broken").exists())
+
+    def test_end_before_start_is_refused(self):
+        today = timezone.localdate()
+        with self.assertRaises(services.CrmError):
+            self.licence(today, today - timedelta(days=1))

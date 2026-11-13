@@ -18,6 +18,7 @@ import {
   useContacts,
   useDeleteLead,
   useLead,
+  usePayments,
   useUpdateLead,
 } from "@/hooks/use-crm";
 import { useProjectsQuery } from "@/hooks/use-projects";
@@ -25,14 +26,18 @@ import {
   LOST_REASONS,
   STAGES,
   errorMessage,
+  money,
   shortDate,
 } from "@/lib/crm-meta";
 import { cn } from "@/lib/utils";
 
+import { PaymentRow } from "./BillingView";
+import { LicencesBlock } from "./LicencesView";
+import { PaymentDialog, type PaymentDraft } from "./PaymentDialog";
 import { StepRow } from "./StepRow";
 import { UpdateComposer } from "./UpdateComposer";
 import { UpdateFeed } from "./UpdateFeed";
-import { controlCls } from "./shared";
+import { SectionHeader, controlCls, ghostBtnCls } from "./shared";
 
 export function LeadDetail({
   leadKey,
@@ -229,6 +234,13 @@ function Body({
       </header>
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        {(l.stage === "won" || l.stage === "offer") && (
+          <LicencesBlock
+            filters={{ lead: l.key }}
+            defaults={{ title: l.title, company: l.company, project: l.project?.id ?? null, lead: l.key }}
+          />
+        )}
+        <LeadPayments lead={l} />
         <textarea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
@@ -257,5 +269,52 @@ function Body({
         />
       </div>
     </div>
+  );
+}
+
+/** The money side of a lead: its payments and how much of it is in. Shown
+ *  once there is an offer, a win, or any payment already linked. */
+function LeadPayments({ lead: l }: { lead: Detail }) {
+  const payments = usePayments({ lead: l.key });
+  const [draft, setDraft] = useState<PaymentDraft | null>(null);
+  const rows = payments.data ?? [];
+  if (!rows.length && l.stage !== "won" && l.stage !== "offer") return null;
+  const total = rows.reduce((n, p) => n + p.amount, 0);
+  const paid = rows.filter((p) => p.status === "paid").reduce((n, p) => n + p.amount, 0);
+
+  return (
+    <section className="border-b border-border/60 pb-2">
+      <SectionHeader
+        title="Payments"
+        count={rows.length || undefined}
+        action={
+          <button
+            type="button"
+            className={ghostBtnCls}
+            onClick={() =>
+              setDraft({
+                title: l.title,
+                company: l.company,
+                project: l.project?.id ?? null,
+                lead: l.key,
+              })
+            }
+          >
+            + Payment
+          </button>
+        }
+      />
+      {rows.length > 0 && (
+        <div className="px-4">
+          <p className="pb-1 text-[12px] tabular-nums text-muted-foreground">
+            {money(paid)} of {money(total)} paid
+          </p>
+          {rows.map((p) => (
+            <PaymentRow key={p.id} p={p} compact onEdit={(payment) => setDraft({ payment })} />
+          ))}
+        </div>
+      )}
+      <PaymentDialog draft={draft} onClose={() => setDraft(null)} />
+    </section>
   );
 }

@@ -423,3 +423,153 @@ def list_crm_activity(
 ) -> list[dict[str, Any]]:
     rows = filter_updates({"days": max(1, days), "project": _scope(project)})
     return [_update(u) for u in rows[: max(1, min(limit, MAX_LIST_LIMIT))]]
+
+
+# ---------------------------------------------------------------------------
+# Payments
+# ---------------------------------------------------------------------------
+
+
+def _date(value: str | None, field: str):
+    from django.utils.dateparse import parse_date
+
+    if value in (None, ""):
+        return None
+    parsed = parse_date(str(value).strip()[:10])
+    if parsed is None:
+        raise ValueError(f"{field}: can't read {value!r} as a date (use 2026-12-05).")
+    return parsed
+
+
+def list_payments(
+    status: str | None = None,
+    type: str | None = None,
+    project: str | None = None,
+    company: str | int | None = None,
+    lead: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    from .query import filter_payments
+    from .serializers import payment_dict
+
+    filters: dict[str, Any] = {"status": status, "type": type, "project": _scope(project), "lead": lead}
+    if company not in (None, ""):
+        filters["company"] = _entity(company, EntityKind.COMPANY).pk
+    rows = filter_payments(filters)[: max(1, min(limit, MAX_LIST_LIMIT))]
+    return [_json(payment_dict(p)) for p in rows]
+
+
+def record_payment(
+    payment_id: int | None = None,
+    title: str | None = None,
+    company: str | int | None = None,
+    project: str | None = None,
+    type: str | None = None,
+    amount: float | None = None,
+    due_on: str | None = None,
+    paid_on: str | None = None,
+    lead: str | None = None,
+    licence: int | None = None,
+) -> dict[str, Any]:
+    from decimal import Decimal
+
+    from .models import Payment
+    from .query import filter_payments
+    from .serializers import payment_dict
+
+    data: dict[str, Any] = {}
+    if title is not None:
+        data["title"] = title
+    if company not in (None, ""):
+        # Existing companies only: a typo must not create a debtor.
+        data["company"] = _entity(company, EntityKind.COMPANY)
+    if project is not None:
+        data["project"] = _guard(services.resolve_project, project) if project != "" else None
+    if type is not None:
+        data["type"] = type.strip().lower().replace(" ", "_").replace("-", "_")
+    if amount is not None:
+        data["amount"] = Decimal(str(amount))
+    if due_on is not None:
+        data["due_on"] = _date(due_on, "due_on")
+    if paid_on is not None:
+        data["paid_on"] = _date(paid_on, "paid_on")
+    if lead is not None:
+        data["lead"] = _lead(lead) if lead != "" else None
+    if licence is not None:
+        data["licence"] = _licence(licence) if licence else None
+    target = None
+    if payment_id is not None:
+        target = Payment.objects.filter(pk=payment_id).first()
+        if target is None:
+            raise ValueError(f"No payment with id {payment_id}.")
+    saved = _guard(services.save_payment, target, data)
+    return _json(payment_dict(filter_payments().get(pk=saved.pk)))
+
+
+def _licence(ref: int):
+    from .models import Licence
+
+    row = Licence.objects.filter(pk=ref).first()
+    if row is None:
+        raise ValueError(f"No licence with id {ref}.")
+    return row
+
+
+def list_licences(
+    status: str | None = None,
+    project: str | None = None,
+    company: str | int | None = None,
+    lead: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    from .query import filter_licences
+    from .serializers import licence_dict
+
+    filters: dict[str, Any] = {"status": status, "project": _scope(project), "lead": lead}
+    if company not in (None, ""):
+        filters["company"] = _entity(company, EntityKind.COMPANY).pk
+    rows = filter_licences(filters)[: max(1, min(limit, MAX_LIST_LIMIT))]
+    return [_json(licence_dict(lc)) for lc in rows]
+
+
+def upsert_licence(
+    licence_id: int | None = None,
+    title: str | None = None,
+    company: str | int | None = None,
+    project: str | None = None,
+    starts_on: str | None = None,
+    ends_on: str | None = None,
+    lead: str | None = None,
+    payments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    from decimal import Decimal
+
+    from .query import filter_licences
+    from .serializers import licence_dict
+
+    data: dict[str, Any] = {}
+    if title is not None:
+        data["title"] = title
+    if company not in (None, ""):
+        data["company"] = _entity(company, EntityKind.COMPANY)
+    if project is not None:
+        data["project"] = _guard(services.resolve_project, project) if project != "" else None
+    if starts_on is not None:
+        data["starts_on"] = _date(starts_on, "starts_on")
+    if ends_on is not None:
+        data["ends_on"] = _date(ends_on, "ends_on")
+    if lead is not None:
+        data["lead"] = _lead(lead) if lead != "" else None
+    target = _licence(licence_id) if licence_id is not None else None
+    plan = []
+    for row in payments or []:
+        if target is not None:
+            raise ValueError("`payments` only applies when creating a licence; use record_payment(licence=…).")
+        plan.append({
+            "type": str(row.get("type", "")).strip().lower().replace(" ", "_").replace("-", "_"),
+            "amount": Decimal(str(row.get("amount"))),
+            "due_on": _date(row.get("due_on"), "due_on"),
+            "paid_on": _date(row.get("paid_on"), "paid_on"),
+        })
+    saved = _guard(services.save_licence, target, data, plan=plan)
+    return _json(licence_dict(filter_licences().get(pk=saved.pk)))

@@ -8,7 +8,7 @@ from apps.meetings.serializers import AwareDateTimeField
 from apps.tasks.models import Project, Task
 from apps.tasks.serializers import UserSerializer
 
-from .models import Lead, LeadStage, LostReason, Update, UpdateKind
+from .models import Lead, LeadStage, Licence, LostReason, Payment, PaymentType, Update, UpdateKind
 from .query import CLOSED_COLUMN_KINDS
 
 User = get_user_model()
@@ -237,6 +237,9 @@ class UpdateInputSerializer(serializers.Serializer):
     lead = serializers.SlugRelatedField(
         slug_field="key", queryset=Lead.objects.all(), required=False, allow_null=True
     )
+    licence = serializers.PrimaryKeyRelatedField(
+        queryset=Licence.objects.all(), required=False, allow_null=True
+    )
     people = serializers.PrimaryKeyRelatedField(
         queryset=Entity.objects.all(), many=True, required=False
     )
@@ -253,3 +256,93 @@ class UpdateInputSerializer(serializers.Serializer):
         queryset=User.objects.all(), required=False, allow_null=True
     )
     tz = serializers.CharField(required=False, allow_blank=True)
+
+
+# ---------------------------------------------------------------------------
+# Payments
+# ---------------------------------------------------------------------------
+
+
+def payment_dict(p: Payment) -> dict:
+    """Expects a row from ``query.filter_payments`` (carries ``status``)."""
+    return {
+        "id": p.id,
+        "title": p.title,
+        "company": entity_ref(p.company),
+        "project": project_ref(p.project),
+        "type": p.type,
+        "amount": float(p.amount),
+        "due_on": p.due_on.isoformat(),
+        "paid_on": p.paid_on.isoformat() if p.paid_on else None,
+        "status": p.status,
+        "lead": {"key": p.lead.key, "title": p.lead.title} if p.lead_id else None,
+        "licence": (
+            {"id": p.licence.id, "title": p.licence.title, "starts_on": p.licence.starts_on.isoformat(),
+             "ends_on": p.licence.ends_on.isoformat()}
+            if p.licence_id
+            else None
+        ),
+    }
+
+
+class PaymentWriteSerializer(serializers.Serializer):
+    """Create (``POST``) and edit (``PATCH``, ``partial=True``) a payment.
+    ``title`` / ``company`` may be left out when ``licence`` is set."""
+
+    title = serializers.CharField(max_length=200, required=False)
+    company = serializers.PrimaryKeyRelatedField(
+        queryset=Entity.objects.filter(kind=EntityKind.COMPANY), required=False
+    )
+    project = serializers.PrimaryKeyRelatedField(
+        queryset=Project.objects.all(), required=False, allow_null=True
+    )
+    type = serializers.ChoiceField(choices=PaymentType.choices)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
+    due_on = serializers.DateField()
+    paid_on = serializers.DateField(required=False, allow_null=True)
+    lead = serializers.SlugRelatedField(
+        slug_field="key", queryset=Lead.objects.all(), required=False, allow_null=True
+    )
+
+
+def licence_dict(lc: Licence) -> dict:
+    """Expects a row from ``query.filter_licences`` (carries status/renewed/totals)."""
+    return {
+        "id": lc.id,
+        "title": lc.title,
+        "company": entity_ref(lc.company),
+        "project": project_ref(lc.project),
+        "starts_on": lc.starts_on.isoformat(),
+        "ends_on": lc.ends_on.isoformat(),
+        "status": lc.status,
+        "renewed": lc.renewed,
+        "total": float(lc.total),
+        "paid": float(lc.paid),
+        "lead": {"key": lc.lead.key, "title": lc.lead.title} if lc.lead_id else None,
+    }
+
+
+class PlannedPaymentSerializer(serializers.Serializer):
+    """One row of a licence's payment plan; the rest comes from the licence."""
+
+    type = serializers.ChoiceField(choices=PaymentType.choices)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
+    due_on = serializers.DateField()
+    paid_on = serializers.DateField(required=False, allow_null=True)
+
+
+class LicenceWriteSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=200)
+    company = serializers.PrimaryKeyRelatedField(
+        queryset=Entity.objects.filter(kind=EntityKind.COMPANY), required=False
+    )
+    project = serializers.PrimaryKeyRelatedField(
+        queryset=Project.objects.all(), required=False, allow_null=True
+    )
+    starts_on = serializers.DateField()
+    ends_on = serializers.DateField()
+    lead = serializers.SlugRelatedField(
+        slug_field="key", queryset=Lead.objects.all(), required=False, allow_null=True
+    )
+    #: Create only: the payments to file with the new licence.
+    payments = PlannedPaymentSerializer(many=True, required=False)

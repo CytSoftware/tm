@@ -15,13 +15,21 @@ from datetime import timedelta
 from typing import Any
 
 from django.db.models import (
+    BooleanField,
+    Case,
+    CharField,
     Count,
+    DecimalField,
+    Exists,
     F,
     IntegerField,
     OuterRef,
     Q,
     QuerySet,
     Subquery,
+    Sum,
+    Value,
+    When,
 )
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -29,7 +37,7 @@ from django.utils import timezone
 from apps.meetings.models import Entity
 from apps.tasks.models import ColumnKind, Project, Task
 
-from .models import CLOSED_STAGES, Lead, Update
+from .models import CLOSED_STAGES, Lead, Licence, Payment, Update
 
 #: Task columns that mean a next step is no longer owed.
 CLOSED_COLUMN_KINDS = (ColumnKind.DONE, ColumnKind.CANCELLED)
@@ -243,3 +251,99 @@ def lead_people(lead: Lead) -> QuerySet[Entity]:
         .distinct()
         .order_by("name")
     )
+
+
+# ---------------------------------------------------------------------------
+# Payments
+# ---------------------------------------------------------------------------
+
+
+def payment_status() -> Case:
+    """paid / overdue / upcoming — computed from the dates, never stored."""
+    return Case(
+        When(paid_on__isnull=False, then=Value("paid")),
+        When(due_on__lt=timezone.localdate(), then=Value("overdue")),
+        default=Value("upcoming"),
+        output_field=CharField(),
+    )
+
+
+def filter_payments(filters: dict[str, Any] | None = None) -> QuerySet[Payment]:
+    """``{status, type, project, company, lead}``. ``lead`` is a key,
+    ``company`` an entity id. Soonest due first."""
+    filters = filters or {}
+    qs = Payment.objects.select_related("company", "project", "lead", "licence").annotate(
+        status=payment_status()
+    )
+    if filters.get("status"):
+        qs = qs.filter(status=filters["status"])
+    if filters.get("type"):
+        qs = qs.filter(type=filters["type"])
+    pid = project_id(filters.get("project"))
+    if pid is not None:
+        qs = qs.filter(project_id=pid)
+    company = _id(filters.get("company"))
+    if company is not None:
+        qs = qs.filter(company_id=company)
+    if filters.get("lead"):
+        qs = qs.filter(lead__key__iexact=str(filters["lead"]))
+    licence = _id(filters.get("licence"))
+    if licence is not None:
+        qs = qs.filter(licence_id=licence)
+    return qs.order_by("due_on", "id")
+
+
+# ---------------------------------------------------------------------------
+# Licences
+# ---------------------------------------------------------------------------
+
+#: A licence ending within this many days is "expiring".
+EXPIRING_DAYS = 60
+
+
+def filter_licences(filters: dict[str, Any] | None = None) -> QuerySet[Licence]:
+    """``{status, project, company, lead}``. Every row carries the derived
+    ``status`` (upcoming / active / expiring / ended), ``renewed`` (a later
+    licence exists for the same company and title — so an ended one isn't
+    lapsed) and the totals of its linked payments."""
+    filters = filters or {}
+    today = timezone.localdate()
+    later = Licence.objects.filter(
+        company_id=OuterRef("company_id"), title__iexact=OuterRef("title"), starts_on__gt=OuterRef("starts_on")
+    )
+    money = DecimalField(max_digits=14, decimal_places=2)
+    qs = Licence.objects.select_related("company", "project", "lead").annotate(
+        status=Case(
+            When(starts_on__gt=today, then=Value("upcoming")),
+            When(ends_on__lt=today, then=Value("ended")),
+            When(ends_on__lte=today + timedelta(days=EXPIRING_DAYS), then=Value("expiring")),
+            default=Value("active"),
+            output_field=CharField(),
+        ),
+        renewed=Exists(later, output_field=BooleanField()),
+        total=Coalesce(
+            Subquery(
+                Payment.objects.filter(licence_id=OuterRef("pk")).values("licence_id")
+                .annotate(s=Sum("amount")).values("s")[:1], output_field=money,
+            ),
+            Value(0, output_field=money),
+        ),
+        paid=Coalesce(
+            Subquery(
+                Payment.objects.filter(licence_id=OuterRef("pk"), paid_on__isnull=False).values("licence_id")
+                .annotate(s=Sum("amount")).values("s")[:1], output_field=money,
+            ),
+            Value(0, output_field=money),
+        ),
+    )
+    if filters.get("status"):
+        qs = qs.filter(status=filters["status"])
+    pid = project_id(filters.get("project"))
+    if pid is not None:
+        qs = qs.filter(project_id=pid)
+    company = _id(filters.get("company"))
+    if company is not None:
+        qs = qs.filter(company_id=company)
+    if filters.get("lead"):
+        qs = qs.filter(lead__key__iexact=str(filters["lead"]))
+    return qs.order_by("ends_on", "id")

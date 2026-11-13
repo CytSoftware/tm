@@ -7,11 +7,14 @@ import {
   differenceInCalendarDays,
   format,
   isThisYear,
+  parseISO,
 } from "date-fns";
 import {
   AudioLines,
+  Banknote,
   Building2,
   History,
+  KeyRound,
   Kanban,
   Mail,
   MessageCircle,
@@ -21,7 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import type { LeadStage, LostReason, UpdateKind } from "@/hooks/use-crm";
+import type { LeadStage, Licence, LostReason, PaymentStatus, PaymentType, UpdateKind } from "@/hooks/use-crm";
 import { ApiError } from "@/lib/api";
 
 /** The CRM's sections, in order — rendered as sub-items under CRM in the
@@ -31,6 +34,8 @@ export const CRM_SECTIONS = [
   { id: "activity", label: "Activity", icon: History },
   { id: "people", label: "People", icon: Users },
   { id: "companies", label: "Companies", icon: Building2 },
+  { id: "billing", label: "Billing", icon: Banknote },
+  { id: "licences", label: "Licences", icon: KeyRound },
 ] as const satisfies readonly { id: string; label: string; icon: LucideIcon }[];
 
 export type CrmSection = (typeof CRM_SECTIONS)[number]["id"];
@@ -163,4 +168,45 @@ export function companyDomain(website?: string | null, emails: string[] = []): s
  *  placeholder globe, which `CompanyLogo` treats as "no logo". */
 export function logoUrl(domain: string, px = 64): string {
   return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${px}`;
+}
+
+/** Mirrors ``PaymentType`` in apps/crm/models.py. */
+export const PAYMENT_TYPES: { id: PaymentType; label: string }[] = [
+  { id: "licence", label: "Licence" },
+  { id: "retainer", label: "Retainer" },
+  { id: "down_payment", label: "Down payment" },
+  { id: "instalment", label: "Instalment" },
+  { id: "one_off", label: "One-off" },
+];
+
+export const paymentTypeLabel = (id: PaymentType) =>
+  PAYMENT_TYPES.find((t) => t.id === id)?.label ?? id;
+
+
+export const PAYMENT_STATUS: Record<PaymentStatus, { label: string; cls: string }> = {
+  paid: { label: "Paid", cls: "text-emerald-700 dark:text-emerald-400" },
+  overdue: { label: "Overdue", cls: "text-destructive" },
+  upcoming: { label: "Upcoming", cls: "text-muted-foreground" },
+};
+
+/** "QAR 60,000" — every amount is QAR. */
+export const money = (n: number) => `QAR ${Math.round(n).toLocaleString("en-US")}`;
+
+/** A `yyyy-MM-dd` day (not a timestamp) read in local time, "Dec 5" style. */
+export const shortDay = (day: string | null) => (day ? shortDate(parseISO(day).toISOString()) : "—");
+
+/** Calendar days from today to a `yyyy-MM-dd` day (negative = past). */
+export const daysUntil = (day: string) => differenceInCalendarDays(parseISO(day), new Date());
+
+/** How a licence reads in a list: lapsed = ended and nobody renewed it. */
+export function licenceState(l: Licence): { label: string; cls: string } {
+  const days = daysUntil(l.ends_on);
+  if (l.status === "upcoming") return { label: `Starts ${shortDay(l.starts_on)}`, cls: "text-muted-foreground" };
+  if (l.status === "ended")
+    return l.renewed
+      ? { label: `Renewed · ended ${shortDay(l.ends_on)}`, cls: "text-muted-foreground" }
+      : { label: `Lapsed ${shortDay(l.ends_on)}`, cls: "text-destructive" };
+  if (l.status === "expiring" && !l.renewed)
+    return { label: `Ends in ${days}d`, cls: "text-amber-700 dark:text-amber-400" };
+  return { label: `Active · until ${shortDay(l.ends_on)}`, cls: "text-emerald-700 dark:text-emerald-400" };
 }

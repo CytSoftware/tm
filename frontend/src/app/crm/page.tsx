@@ -20,16 +20,27 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Plus, Search, X } from "lucide-react";
 
+import { BillingView } from "@/components/crm/BillingView";
 import { CompaniesView } from "@/components/crm/CompaniesView";
+import { LicenceDialog, type LicenceDraft, LicencesView } from "@/components/crm/LicencesView";
 import { ContactDetail } from "@/components/crm/ContactDetail";
 import { ContactEditDialog } from "@/components/crm/ContactEditDialog";
 import { ContactsView } from "@/components/crm/ContactsView";
 import { LeadDetail } from "@/components/crm/LeadDetail";
 import { LeadsBoard } from "@/components/crm/LeadsBoard";
 import { NewLeadDialog, type NewLeadDefaults } from "@/components/crm/NewLeadDialog";
+import { PaymentDialog, type PaymentDraft } from "@/components/crm/PaymentDialog";
 import { UpdateFeed } from "@/components/crm/UpdateFeed";
-import { Chip, Empty, primaryBtnCls } from "@/components/crm/shared";
-import { useContacts, useCrmActivity, useCrmProjects, useLeads } from "@/hooks/use-crm";
+import { Chip, Empty, controlCls, primaryBtnCls } from "@/components/crm/shared";
+import {
+  useContacts,
+  useCrmActivity,
+  useCrmProjects,
+  useLeads,
+  type ProjectRef,
+  useLicences,
+  usePayments,
+} from "@/hooks/use-crm";
 import { useUrlParams, useUrlSearch } from "@/hooks/use-url-params";
 import { connectCrmSocket } from "@/lib/crm-ws";
 import { CRM_SECTIONS, type CrmSection } from "@/lib/crm-meta";
@@ -82,6 +93,39 @@ function Crm() {
   const leads = useLeads(scope, tab === "leads");
   const days = Number(params.get("days")) || 30;
   const activity = useCrmActivity(days, scope, tab === "activity");
+  // Billing and Licences load every row and filter here, so the Project and
+  // Company pickers keep all their options. Project is the same `p` param as
+  // the scope switcher; company is `co`.
+  const moneyTab = tab === "billing" || tab === "licences";
+  const payments = usePayments({}, tab === "billing");
+  const licences = useLicences({}, tab === "licences");
+  const [paymentDraft, setPaymentDraft] = useState<PaymentDraft | null>(null);
+  const [licenceDraft, setLicenceDraft] = useState<LicenceDraft | null>(null);
+  const filterCompany = params.get("co") ?? "";
+  const rows: { project: ProjectRef | null; company: { id: number; name: string } }[] =
+    (tab === "billing" ? payments.data : tab === "licences" ? licences.data : undefined) ?? [];
+  const rowProjects = [
+    ...new Map(rows.flatMap((r) => (r.project ? [[r.project.prefix, r.project] as const] : []))).values(),
+  ].sort((a, b) => a.name.localeCompare(b.name));
+  const inScope = <T extends { project: ProjectRef | null; company: { id: number } }>(list: T[]) =>
+    list.filter(
+      (r) =>
+        (!scope || r.project?.prefix.toLowerCase() === scope.toLowerCase()) &&
+        (!filterCompany || String(r.company.id) === filterCompany),
+    );
+  const rowCompanies = [
+    ...new Map(
+      rows
+        .filter((r) => !scope || r.project?.prefix.toLowerCase() === scope.toLowerCase())
+        .map((r) => [String(r.company.id), r.company.name]),
+    ),
+  ].sort((a, b) => a[1].localeCompare(b[1]));
+  const filterProject = rowProjects.find((x) => x.prefix.toLowerCase() === scope.toLowerCase());
+  const selectedCompany = rowCompanies.find(([id]) => id === filterCompany);
+  const draftScope = {
+    project: filterProject?.id ?? null,
+    company: selectedCompany ? { id: Number(selectedCompany[0]), name: selectedCompany[1] } : null,
+  };
 
   const [newContact, setNewContact] = useState(false);
   const [newLead, setNewLead] = useState<NewLeadDefaults | null>(null);
@@ -98,7 +142,7 @@ function Crm() {
             <span className="truncate font-medium">{section.label}</span>
           </h1>
 
-          {(crmProjects.data?.length ?? 0) > 0 && (
+          {!moneyTab && (crmProjects.data?.length ?? 0) > 0 && (
             // Own line on phones so the section title isn't squeezed out.
             <nav
               aria-label="Project"
@@ -131,6 +175,20 @@ function Crm() {
                 <Plus className="size-3.5" />
                 <span className="max-sm:hidden">{tab === "companies" ? "Company" : "Person"}</span>
               </button>
+            ) : tab === "billing" ? (
+              <button
+                type="button"
+                className={primaryBtnCls}
+                onClick={() => setPaymentDraft(draftScope)}
+              >
+                <Plus className="size-3.5" />
+                <span className="max-sm:hidden">Payment</span>
+              </button>
+            ) : tab === "licences" ? (
+              <button type="button" className={primaryBtnCls} onClick={() => setLicenceDraft(draftScope)}>
+                <Plus className="size-3.5" />
+                <span className="max-sm:hidden">Licence</span>
+              </button>
             ) : (
               <button
                 type="button"
@@ -160,6 +218,46 @@ function Crm() {
                 </button>
               )}
             </label>
+          </div>
+        )}
+        {moneyTab && rows.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2">
+            <select
+              aria-label="Project"
+              value={filterProject?.prefix ?? ""}
+              onChange={(e) => setParams({ p: e.target.value || null, co: null })}
+              className={controlCls}
+            >
+              <option value="">All projects</option>
+              {rowProjects.map((x) => (
+                <option key={x.prefix} value={x.prefix}>
+                  {x.name}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Company"
+              value={filterCompany}
+              onChange={(e) => setParams({ co: e.target.value || null })}
+              className={controlCls}
+            >
+              <option value="">All companies</option>
+              {rowCompanies.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            {(filterCompany || scope) && (
+              <button
+                type="button"
+                aria-label="Clear filters"
+                onClick={() => setParams({ co: null, p: null })}
+                className="tap-target grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
           </div>
         )}
         {tab === "activity" && (
@@ -193,6 +291,31 @@ function Crm() {
                 project={scope}
                 onOpen={openLead}
                 onNewLead={(stage) => setNewLead({ stage, project: scopeProject?.id })}
+              />
+            )
+          ) : tab === "billing" ? (
+            payments.isLoading ? (
+              <Empty>Loading…</Empty>
+            ) : payments.isError ? (
+              <Empty tone="error">Couldn’t load payments.</Empty>
+            ) : (
+              <BillingView
+                payments={inScope(payments.data ?? [])}
+                onEdit={(payment) => setPaymentDraft({ payment })}
+                onOpenLead={openLead}
+                onOpenLicence={(id) => setLicenceDraft({ licenceId: id })}
+              />
+            )
+          ) : tab === "licences" ? (
+            licences.isLoading ? (
+              <Empty>Loading…</Empty>
+            ) : licences.isError ? (
+              <Empty tone="error">Couldn’t load licences.</Empty>
+            ) : (
+              <LicencesView
+                licences={inScope(licences.data ?? [])}
+                onEdit={(licence) => setLicenceDraft({ licenceId: licence.id })}
+                onOpenLead={openLead}
               />
             )
           ) : tab === "activity" ? (
@@ -277,6 +400,8 @@ function Crm() {
         onCreated={openContact}
       />
       <NewLeadDialog defaults={newLead} onClose={() => setNewLead(null)} onCreated={openLead} />
+      <PaymentDialog draft={paymentDraft} onClose={() => setPaymentDraft(null)} />
+      <LicenceDialog draft={licenceDraft} onClose={() => setLicenceDraft(null)} />
     </div>
   );
 }

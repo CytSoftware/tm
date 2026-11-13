@@ -172,6 +172,8 @@ READ_ONLY_TOOLS = frozenset({
     "get_contact",
     "get_lead",
     "list_crm_activity",
+    "list_licences",
+    "list_payments",
     "search_contacts",
     "search_leads",
     # Reports
@@ -2124,6 +2126,106 @@ async def delete_update(update_id: int) -> dict[str, Any]:
     from apps.crm import mcp_tools
 
     return await _async(mcp_tools.delete_update)(update_id)
+
+
+@mcp.tool()
+async def list_payments(
+    status: str | None = None,
+    type: str | None = None,
+    project: str | None = None,
+    company: str | int | None = None,
+    lead: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """What customers owe us, soonest due first. ``status`` is derived from
+    the dates: paid (``paid_on`` set), overdue (``due_on`` passed, unpaid),
+    upcoming. ``type``: licence, retainer, down_payment, instalment, one_off —
+    an upcoming licence/retainer payment is the renewal reminder. Filter by
+    ``project`` (``MOW``), ``company`` (name or id) or ``lead`` (key). Amounts
+    are QAR."""
+    from apps.crm import mcp_tools
+
+    return await _async(mcp_tools.list_payments)(
+        status=status, type=type, project=project, company=company, lead=lead, limit=limit
+    )
+
+
+@mcp.tool()
+async def record_payment(
+    payment_id: int | None = None,
+    title: str | None = None,
+    company: str | int | None = None,
+    project: str | None = None,
+    type: str | None = None,
+    amount: float | None = None,
+    due_on: str | None = None,
+    paid_on: str | None = None,
+    lead: str | None = None,
+    licence: int | None = None,
+) -> dict[str, Any]:
+    """Add a payment a customer owes, or edit one by ``payment_id`` (only what
+    you pass changes). Mark it paid with ``paid_on`` (``2026-12-05``); pass
+    ``paid_on=""`` to unmark. A new payment needs ``title`` (what was sold, e.g.
+    ``Mowafeq Workspace`` — not the company), ``type`` (licence, retainer,
+    down_payment, instalment, one_off), ``amount`` (QAR), ``due_on`` and a
+    ``company`` that already exists — or a ``lead`` key, which fills in the
+    company and project. ``licence`` (an id from ``list_licences``) says which
+    licence period it pays for and also fills in company and project."""
+    from apps.crm import mcp_tools
+
+    return await _async(mcp_tools.record_payment)(
+        payment_id=payment_id, title=title, company=company, project=project, type=type,
+        amount=amount, due_on=due_on, paid_on=paid_on, lead=lead, licence=licence,
+    )
+
+
+@mcp.tool()
+async def list_licences(
+    status: str | None = None,
+    project: str | None = None,
+    company: str | int | None = None,
+    lead: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Who is licensed for what, until when — soonest ending first. ``status``
+    is derived: upcoming (starts later), active, expiring (ends within 60
+    days), ended. ``renewed`` is true when a later licence exists for the same
+    company and title; an ended licence that isn't renewed has lapsed. Each
+    row has ``paid`` / ``total`` from its linked payments (QAR)."""
+    from apps.crm import mcp_tools
+
+    return await _async(mcp_tools.list_licences)(
+        status=status, project=project, company=company, lead=lead, limit=limit
+    )
+
+
+@mcp.tool()
+async def upsert_licence(
+    licence_id: int | None = None,
+    title: str | None = None,
+    company: str | int | None = None,
+    project: str | None = None,
+    starts_on: str | None = None,
+    ends_on: str | None = None,
+    lead: str | None = None,
+    payments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Add a licence, or edit one by ``licence_id`` (only what you pass
+    changes). ``title`` is the product (``Mowafeq Workspace``), ``company``
+    must already exist (or pass a ``lead`` key, which fills company and
+    project), ``starts_on`` / ``ends_on`` like ``2026-11-07``. A renewal is a
+    NEW licence with the next period — never move an old one's dates.
+    ``payments`` (create only) files its payment plan in the same call:
+    ``[{"type": "down_payment", "amount": 10000, "due_on": "2026-11-07",
+    "paid_on": "2026-11-07"}, …]``; each payment inherits product, company,
+    project and lead from the licence. Later payments:
+    ``record_payment(licence=…)``."""
+    from apps.crm import mcp_tools
+
+    return await _async(mcp_tools.upsert_licence)(
+        licence_id=licence_id, title=title, company=company, project=project,
+        starts_on=starts_on, ends_on=ends_on, lead=lead, payments=payments,
+    )
 
 
 @mcp.tool()

@@ -161,3 +161,5 @@ export const crmLeadKey = (key: string) => ["crm", "lead", key] as const;
 export const crmActivityKey = (days: number, project = "") =>
   ["crm", "activity", days, project] as const;
 export const crmProjectsKey = () => ["crm", "projects"] as const;
+export const crmPaymentsKey = (filtersKey = "") => ["crm", "payments", filtersKey] as const;
+export const crmLicencesKey = (filtersKey = "") => ["crm", "licences", filtersKey] as const;

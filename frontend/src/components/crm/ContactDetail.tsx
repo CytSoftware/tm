@@ -33,6 +33,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { ContactEditDialog } from "./ContactEditDialog";
+import { LicencesBlock } from "./LicencesView";
 import { UpdateComposer } from "./UpdateComposer";
 import { UpdateFeed } from "./UpdateFeed";
 import {
@@ -183,6 +184,15 @@ export function ContactDetail({
           </ul>
         ) : (
           <p className="px-4 text-[12px] text-muted-foreground">No leads.</p>
+        )}
+
+        {c.kind === "company" && (
+          <div className="mt-2">
+            <LicencesBlock
+              filters={{ company: String(c.id) }}
+              defaults={{ company: { id: c.id, name: c.name }, project: c.leads[0]?.project?.id ?? null }}
+            />
+          </div>
         )}
 
         {c.kind === "company" && (

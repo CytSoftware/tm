@@ -194,12 +194,14 @@ def merge_entities(source: Entity, target: Entity) -> Entity:
 
 
 def _repoint_crm_links(source: Entity, target: Entity) -> None:
-    """Move the CRM rows that point at ``source`` (leads, updates) onto
+    """Move the CRM rows that point at ``source`` (leads, updates, payments, licences) onto
     ``target`` before ``source`` is deleted — otherwise the SET_NULL / M2M
     cascade would silently drop a contact's history."""
-    from apps.crm.models import Lead, Update
+    from apps.crm.models import Lead, Licence, Payment, Update
 
     Lead.objects.filter(company=source).update(company=target)
+    Payment.objects.filter(company=source).update(company=target)
+    Licence.objects.filter(company=source).update(company=target)
     for update in Update.objects.filter(people=source):
         update.people.remove(source)
         update.people.add(target)

@@ -19,12 +19,14 @@ from django.shortcuts import get_object_or_404
 from apps.tasks.models import Project, Task
 
 from . import services
-from .models import Lead, Update
+from .models import Lead, Licence, Payment, Update
 from .query import (
     base_contact_queryset,
     base_lead_queryset,
     filter_contacts,
     filter_leads,
+    filter_licences,
+    filter_payments,
     filter_updates,
     lead_people,
     open_steps,
@@ -34,14 +36,20 @@ from .serializers import (
     ContactWriteSerializer,
     LeadSerializer,
     LeadWriteSerializer,
+    LicenceWriteSerializer,
+    PaymentWriteSerializer,
     UpdateInputSerializer,
     entity_ref,
+    licence_dict,
+    payment_dict,
     step_dict,
     update_dict,
 )
 
 CONTACT_FILTER_KEYS = ("kind", "company", "search", "project", "all")
 LEAD_FILTER_KEYS = ("stage", "status", "entity", "project", "search")
+PAYMENT_FILTER_KEYS = ("status", "type", "project", "company", "lead", "licence")
+LICENCE_FILTER_KEYS = ("status", "project", "company", "lead")
 THREAD_LIMIT = 200
 
 
@@ -261,3 +269,76 @@ class CrmProjectsView(APIView):
         return Response(
             [{"id": p.id, "prefix": p.prefix, "name": p.name, "color": p.color} for p in projects]
         )
+
+
+# ---------------------------------------------------------------------------
+# Payments
+# ---------------------------------------------------------------------------
+
+
+class PaymentViewSet(viewsets.GenericViewSet):
+    """``/api/crm/payments/`` — what customers owe us. List takes
+    ``?status=paid|overdue|upcoming&type=&project=&company=&lead=``; status is
+    derived from the dates."""
+
+    queryset = Payment.objects.all()
+
+    def _respond(self, payment, status_code=status.HTTP_200_OK):
+        return Response(payment_dict(filter_payments().get(pk=payment.pk)), status=status_code)
+
+    def list(self, request):
+        rows = filter_payments(_filters(request, PAYMENT_FILTER_KEYS))
+        return Response([payment_dict(p) for p in rows])
+
+    def create(self, request):
+        payload = PaymentWriteSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        payment = _guard(services.save_payment, None, payload.validated_data)
+        return self._respond(payment, status.HTTP_201_CREATED)
+
+    def partial_update(self, request, pk=None):
+        payment = self.get_object()
+        payload = PaymentWriteSerializer(data=request.data, partial=True)
+        payload.is_valid(raise_exception=True)
+        _guard(services.save_payment, payment, payload.validated_data)
+        return self._respond(payment)
+
+    def destroy(self, request, pk=None):
+        services.delete_payment(self.get_object())
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class LicenceViewSet(viewsets.GenericViewSet):
+    """``/api/crm/licences/`` — who is licensed for what, until when. Each row
+    carries the derived status (upcoming / active / expiring / ended),
+    ``renewed`` and the paid/total of its linked payments."""
+
+    queryset = Licence.objects.all()
+
+    def _respond(self, licence, status_code=status.HTTP_200_OK):
+        return Response(licence_dict(filter_licences().get(pk=licence.pk)), status=status_code)
+
+    def list(self, request):
+        rows = filter_licences(_filters(request, LICENCE_FILTER_KEYS))
+        return Response([licence_dict(lc) for lc in rows])
+
+    def create(self, request):
+        payload = LicenceWriteSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        plan = data.pop("payments", [])
+        licence = _guard(services.save_licence, None, data, plan=plan)
+        return self._respond(licence, status.HTTP_201_CREATED)
+
+    def partial_update(self, request, pk=None):
+        licence = self.get_object()
+        payload = LicenceWriteSerializer(data=request.data, partial=True)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        data.pop("payments", None)
+        _guard(services.save_licence, licence, data)
+        return self._respond(licence)
+
+    def destroy(self, request, pk=None):
+        services.delete_licence(self.get_object())
+        return Response(status=status.HTTP_204_NO_CONTENT)

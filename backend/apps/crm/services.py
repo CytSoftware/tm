@@ -31,7 +31,7 @@ from apps.tasks.notifications import notify_task_event
 from apps.tasks.transitions import record_transition
 
 from .broadcast import broadcast_crm_event
-from .models import CLOSED_STAGES, Lead, LeadStage, LostReason, Update
+from .models import CLOSED_STAGES, Lead, LeadStage, Licence, LostReason, Payment, PaymentType, Update
 
 DEFAULT_TZ = "Asia/Qatar"
 #: A next step is due at this local time on its day.
@@ -491,3 +491,117 @@ def delete_lead(lead: Lead) -> None:
     key = lead.key
     lead.delete()
     broadcast_crm_event("lead.deleted", {"key": key})
+
+
+# ---------------------------------------------------------------------------
+# Payments
+# ---------------------------------------------------------------------------
+
+PAYMENT_FIELDS = ("title", "company", "project", "type", "amount", "due_on", "paid_on", "lead", "licence")
+
+
+def _check_payment(payment: Payment) -> None:
+    if not (payment.title or "").strip():
+        raise CrmError("A payment needs a title (what was sold, e.g. Mowafeq Workspace).")
+    if payment.type not in PaymentType.values:
+        raise CrmError(f"Unknown payment type {payment.type!r}; use one of: {', '.join(PaymentType.values)}.")
+    if payment.amount is None or payment.amount <= 0:
+        raise CrmError("A payment needs a positive amount.")
+    if payment.due_on is None:
+        raise CrmError("A payment needs a due date.")
+    if payment.company_id is None:
+        raise CrmError("A payment needs the company that owes it.")
+    if payment.company.kind != EntityKind.COMPANY:
+        raise CrmError(f"{payment.company.name} is a person, not a company.")
+
+
+def _inherit_from_licence(payment: Payment) -> None:
+    """A payment for a licence carries the licence's product, company, project
+    and lead — copied, never typed twice, so the two can't disagree."""
+    lc = payment.licence
+    payment.title, payment.company_id, payment.project_id, payment.lead_id = (
+        lc.title, lc.company_id, lc.project_id, lc.lead_id,
+    )
+
+
+def save_payment(payment: Payment | None, data: dict[str, Any]) -> Payment:
+    """Create (``payment=None``) or edit. A licence supplies title, company,
+    project and lead; otherwise a linked lead fills in a missing company and
+    project, so "this payment is for LEAD-026" is enough."""
+    created = payment is None
+    payment = payment or Payment()
+    for field in PAYMENT_FIELDS:
+        if field in data:
+            setattr(payment, field, data[field])
+    if payment.licence_id:
+        _inherit_from_licence(payment)
+    elif payment.lead_id:
+        if payment.company_id is None:
+            payment.company_id = payment.lead.company_id
+        if payment.project_id is None:
+            payment.project_id = payment.lead.project_id
+    _check_payment(payment)
+    payment.save()
+    broadcast_crm_event("payment.created" if created else "payment.updated", {"id": payment.id})
+    return payment
+
+
+def delete_payment(payment: Payment) -> None:
+    payment_id = payment.id
+    payment.delete()
+    broadcast_crm_event("payment.deleted", {"id": payment_id})
+
+
+# ---------------------------------------------------------------------------
+# Licences
+# ---------------------------------------------------------------------------
+
+LICENCE_FIELDS = ("title", "company", "project", "starts_on", "ends_on", "lead")
+
+
+@transaction.atomic
+def save_licence(
+    licence: Licence | None, data: dict[str, Any], *, plan: Iterable[dict[str, Any]] = ()
+) -> Licence:
+    """Create (``licence=None``) or edit. A linked lead fills in a missing
+    company and project. ``plan`` creates the licence's payments in the same
+    go — ``{type, amount, due_on, paid_on?}`` each; the rest comes from the
+    licence. Editing a licence updates its payments' inherited fields. A
+    renewal is a new licence (with its own plan), not an edit."""
+    created = licence is None
+    licence = licence or Licence()
+    for field in LICENCE_FIELDS:
+        if field in data:
+            setattr(licence, field, data[field])
+    if licence.lead_id:
+        if licence.company_id is None:
+            licence.company_id = licence.lead.company_id
+        if licence.project_id is None:
+            licence.project_id = licence.lead.project_id
+    if not (licence.title or "").strip():
+        raise CrmError("A licence needs a title (the product, e.g. Mowafeq Workspace).")
+    if licence.company_id is None:
+        raise CrmError("A licence needs the company that holds it.")
+    if licence.company.kind != EntityKind.COMPANY:
+        raise CrmError(f"{licence.company.name} is a person, not a company.")
+    if not (licence.starts_on and licence.ends_on):
+        raise CrmError("A licence needs a start and an end date.")
+    if licence.ends_on < licence.starts_on:
+        raise CrmError("A licence can't end before it starts.")
+    licence.save()
+    if not created:
+        licence.payments.update(
+            title=licence.title, company_id=licence.company_id,
+            project_id=licence.project_id, lead_id=licence.lead_id,
+        )
+    for row in plan:
+        save_payment(None, {**row, "licence": licence})
+    broadcast_crm_event("licence.created" if created else "licence.updated", {"id": licence.id})
+    return licence
+
+
+def delete_licence(licence: Licence) -> None:
+    """Its payments stay, unlinked."""
+    licence_id = licence.id
+    licence.delete()
+    broadcast_crm_event("licence.deleted", {"id": licence_id})

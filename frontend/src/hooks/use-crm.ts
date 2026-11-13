@@ -27,6 +27,8 @@ import {
   crmContactsKey,
   crmLeadKey,
   crmLeadsKey,
+  crmLicencesKey,
+  crmPaymentsKey,
   crmProjectsKey,
 } from "@/lib/query-keys";
 import type { User } from "@/lib/types";
@@ -350,4 +352,117 @@ export function useSetStepDone() {
       apiFetch<Step>(`/api/crm/steps/${key}/`, { method: "POST", body: { done } }),
     { tasks: true },
   );
+}
+
+// ── Payments ────────────────────────────────────────────────────────────────
+
+export type PaymentType = "licence" | "retainer" | "down_payment" | "instalment" | "one_off";
+/** Derived server-side from the dates — never stored. */
+export type PaymentStatus = "paid" | "overdue" | "upcoming";
+
+export type Payment = {
+  id: number;
+  /** What was sold, e.g. "Mowafeq Workspace" — the company is separate. */
+  title: string;
+  company: EntityRef;
+  project: ProjectRef | null;
+  type: PaymentType;
+  /** QAR. */
+  amount: number;
+  due_on: string;
+  paid_on: string | null;
+  status: PaymentStatus;
+  lead: { key: string; title: string } | null;
+  licence: { id: number; title: string; starts_on: string; ends_on: string } | null;
+};
+
+export type PaymentFilters = { project?: string; lead?: string; company?: string; status?: string; licence?: string };
+
+export function usePayments(filters: PaymentFilters, enabled = true) {
+  return useQuery({
+    queryKey: crmPaymentsKey(stableKey(filters)),
+    queryFn: () => apiFetch<Payment[]>("/api/crm/payments/", { query: filters }),
+    enabled,
+  });
+}
+
+export type PaymentWrite = Partial<{
+  title: string;
+  company: number;
+  project: number | null;
+  type: PaymentType;
+  amount: number;
+  due_on: string;
+  paid_on: string | null;
+  lead: string | null;
+  licence: number | null;
+}>;
+
+export function useSavePayment() {
+  return useCrmWrite(({ id, ...body }: PaymentWrite & { id?: number }) =>
+    id
+      ? apiFetch<Payment>(`/api/crm/payments/${id}/`, { method: "PATCH", body })
+      : apiFetch<Payment>("/api/crm/payments/", { method: "POST", body }),
+  );
+}
+
+export function useDeletePayment() {
+  return useCrmWrite((id: number) => apiFetch(`/api/crm/payments/${id}/`, { method: "DELETE" }));
+}
+
+// ── Licences ────────────────────────────────────────────────────────────────
+
+/** Derived server-side from the period. */
+export type LicenceStatus = "upcoming" | "active" | "expiring" | "ended";
+
+export type Licence = {
+  id: number;
+  /** The product, e.g. "Mowafeq Workspace". */
+  title: string;
+  company: EntityRef;
+  project: ProjectRef | null;
+  starts_on: string;
+  ends_on: string;
+  status: LicenceStatus;
+  /** A later licence exists for the same company and product. */
+  renewed: boolean;
+  /** QAR, from the payments linked to this licence. */
+  total: number;
+  paid: number;
+  lead: { key: string; title: string } | null;
+};
+
+export type LicenceFilters = { project?: string; lead?: string; company?: string };
+
+export function useLicences(filters: LicenceFilters, enabled = true) {
+  return useQuery({
+    queryKey: crmLicencesKey(stableKey(filters)),
+    queryFn: () => apiFetch<Licence[]>("/api/crm/licences/", { query: filters }),
+    enabled,
+  });
+}
+
+export type PlannedPayment = { type: PaymentType; amount: number; due_on: string; paid_on?: string | null };
+
+export type LicenceWrite = Partial<{
+  title: string;
+  company: number;
+  project: number | null;
+  starts_on: string;
+  ends_on: string;
+  lead: string | null;
+  /** Create only: the payment plan, filed with the licence in one go. */
+  payments: PlannedPayment[];
+}>;
+
+export function useSaveLicence() {
+  return useCrmWrite(({ id, ...body }: LicenceWrite & { id?: number }) =>
+    id
+      ? apiFetch<Licence>(`/api/crm/licences/${id}/`, { method: "PATCH", body })
+      : apiFetch<Licence>("/api/crm/licences/", { method: "POST", body }),
+  );
+}
+
+export function useDeleteLicence() {
+  return useCrmWrite((id: number) => apiFetch(`/api/crm/licences/${id}/`, { method: "DELETE" }));
 }
