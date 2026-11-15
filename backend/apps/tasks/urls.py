@@ -7,6 +7,7 @@ from drf_spectacular.views import (
 )
 from rest_framework.routers import DefaultRouter
 
+from .external import ExternalTaskView
 from .focus import FocusItemView, FocusListView
 from .views import (
     BetViewSet,
@@ -23,7 +24,7 @@ from .views import (
     StalenessSettingsView,
     TaskViewSet,
     ThroughputView,
-    UploadImageView,
+    UploadView,
     UserViewSet,
     ViewViewSet,
     WeeklyCompletionsView,
@@ -55,7 +56,8 @@ urlpatterns = [
         FocusItemView.as_view(),
         name="focus-item",
     ),
-    path("uploads/", UploadImageView.as_view(), name="upload-image"),
+    path("uploads/", UploadView.as_view(), name="upload-image"),
+    path("external/tasks/", ExternalTaskView.as_view(), name="external-task-create"),
     path("internal/broadcast/", internal_broadcast, name="internal-broadcast"),
     path(
         "settings/staleness/",

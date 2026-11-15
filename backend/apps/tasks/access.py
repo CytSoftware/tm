@@ -30,6 +30,10 @@ NON_STAFF_API: tuple[tuple[str, frozenset[str] | None], ...] = (
     ("/api/users/", SAFE),
     ("/api/notifications/", None),
     ("/api/uploads/", None),
+    # Create-only, answers just the new key, and resolves the project through
+    # the caller's memberships. Lets the Mowafeq feedback bot be a plain
+    # member of MOW instead of staff.
+    ("/api/external/tasks/", frozenset({"POST"})),
     ("/api/wiki-docs/", None),
     ("/api/drive/", None),
     ("/api/knowledge/", SAFE),

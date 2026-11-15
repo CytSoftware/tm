@@ -6,6 +6,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import LinkExtension from "@tiptap/extension-link";
 import ImageExtension from "@tiptap/extension-image";
+import { mergeAttributes } from "@tiptap/core";
 import { Markdown, type MarkdownStorage } from "tiptap-markdown";
 
 declare module "@tiptap/core" {
@@ -24,11 +25,98 @@ import {
   Code,
   Undo,
   Redo,
-  ImageIcon,
+  Paperclip,
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { uploadImage } from "@/lib/api";
+import { uploadFile } from "@/lib/api";
+
+const VIDEO_SRC = /\.(mp4|webm|mov|m4v|ogv)$/i;
+
+/** True when the URL path (ignoring query and hash) names a video file. */
+function isVideoSrc(src: unknown): boolean {
+  return typeof src === "string" && VIDEO_SRC.test(src.split(/[?#]/)[0]);
+}
+
+type MarkdownState = {
+  write: (text: string) => void;
+  esc: (text: string) => string;
+  closeBlock: (node: unknown) => void;
+};
+
+// Markdown has no video syntax and tiptap-markdown runs with `html: false`,
+// so a video is stored as image markdown (`![name.webm](url)`) and only
+// rendered as a player. It stays an "image" node, so the markdown is the same
+// for both and Mowafeq (or anyone) can write it.
+const MediaExtension = ImageExtension.extend({
+  addStorage() {
+    return {
+      ...this.parent?.(),
+      markdown: {
+        // tiptap-markdown's default writes images as inline text, so two
+        // block images (or an image and the next paragraph) were glued onto
+        // one line on save. Close the block: one `![alt](src)` per line.
+        serialize(state: MarkdownState, node: { attrs: Record<string, string | null> }) {
+          const { alt, src, title } = node.attrs;
+          const dest = (src ?? "").replace(/[()]/g, "\\$&");
+          const suffix = title ? ` "${title.replace(/"/g, '\\"')}"` : "";
+          state.write(`![${state.esc(alt ?? "")}](${dest}${suffix})`);
+          state.closeBlock(node);
+        },
+      },
+    };
+  },
+  parseHTML() {
+    return [...(this.parent?.() ?? []), { tag: "video[src]" }];
+  },
+  renderHTML({ node, HTMLAttributes }) {
+    if (isVideoSrc(node.attrs.src)) {
+      return [
+        "video",
+        mergeAttributes({
+          src: node.attrs.src,
+          controls: "true",
+          preload: "metadata",
+          class: "max-w-full rounded",
+          "aria-label": node.attrs.alt ?? undefined,
+        }),
+      ];
+    }
+    return this.parent?.({ node, HTMLAttributes }) ?? ["img", HTMLAttributes];
+  },
+  addNodeView() {
+    const parentView = this.parent?.();
+    const baseAttributes = this.options.HTMLAttributes;
+    return (props) => {
+      if (!isVideoSrc(props.node.attrs.src)) {
+        return parentView
+          ? parentView(props)
+          : renderStatic(mergeAttributes(baseAttributes, props.HTMLAttributes));
+      }
+      const video = document.createElement("video");
+      video.src = props.node.attrs.src;
+      video.controls = true;
+      video.preload = "metadata";
+      video.className = "max-w-full rounded";
+      if (props.node.attrs.alt) video.setAttribute("aria-label", props.node.attrs.alt);
+      return {
+        dom: video,
+        // Hand pointer and keyboard events on the player to the browser, so
+        // play, scrub and volume work instead of starting a node drag.
+        stopEvent: () => true,
+        ignoreMutation: () => true,
+      };
+    };
+  },
+});
+
+function renderStatic(attrs: Record<string, unknown>) {
+  const img = document.createElement("img");
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value != null) img.setAttribute(key, String(value));
+  }
+  return { dom: img };
+}
 
 type Props = {
   value: string;
@@ -45,7 +133,7 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
   // Held in a ref so the editor's paste/drop callbacks (captured once on
   // mount) always see the latest uploader without re-instantiating the
   // editor on every render.
-  const insertImagesRef = useRef<((files: File[]) => Promise<void>) | null>(
+  const insertFilesRef = useRef<((files: File[]) => Promise<void>) | null>(
     null,
   );
   const onSubmitRef = useRef<typeof onSubmit>(onSubmit);
@@ -56,7 +144,7 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
       StarterKit,
       LinkExtension.configure({ openOnClick: false }),
       Placeholder.configure({ placeholder: "Write details..." }),
-      ImageExtension.configure({
+      MediaExtension.configure({
         inline: false,
         allowBase64: true,
         HTMLAttributes: {
@@ -86,7 +174,7 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
         const files = filesFromClipboard(event.clipboardData);
         if (files.length === 0) return false;
         event.preventDefault();
-        void insertImagesRef.current?.(files);
+        void insertFilesRef.current?.(files);
         return true;
       },
       handleDrop: (_view, event) => {
@@ -95,7 +183,7 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
         );
         if (files.length === 0) return false;
         event.preventDefault();
-        void insertImagesRef.current?.(files);
+        void insertFilesRef.current?.(files);
         return true;
       },
       handleKeyDown: (_view, event) => {
@@ -112,7 +200,7 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
         return false;
       },
       handleDoubleClickOn: (_view, _pos, node) => {
-        if (node.type.name === "image") {
+        if (node.type.name === "image" && !isVideoSrc(node.attrs.src)) {
           const src = node.attrs.src as string | undefined;
           if (src) window.open(src, "_blank", "noopener,noreferrer");
           return true;
@@ -124,10 +212,10 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
 
   useEffect(() => {
     if (!editor) {
-      insertImagesRef.current = null;
+      insertFilesRef.current = null;
       return;
     }
-    insertImagesRef.current = (files) => uploadAndInsert(editor, files);
+    insertFilesRef.current = (files) => uploadAndInsert(editor, files);
   }, [editor]);
 
   async function uploadAndInsert(ed: Editor, files: File[]) {
@@ -135,8 +223,24 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
     setUploading(true);
     try {
       for (const file of files) {
-        const { url } = await uploadImage(file);
-        ed.chain().focus().setImage({ src: url, alt: file.name }).run();
+        const { url, name, content_type } = await uploadFile(file);
+        const content =
+          isVideoSrc(url) || content_type.startsWith("image/")
+            ? { type: "image", attrs: { src: url, alt: name } }
+            : {
+                type: "paragraph",
+                content: [
+                  { type: "text", text: name, marks: [{ type: "link", attrs: { href: url } }] },
+                ],
+              };
+        // An inserted image is left selected; inserting over that selection
+        // would replace it, so the next file of a multi-file drop goes after.
+        const { selection } = ed.state;
+        if ("node" in selection) {
+          ed.chain().focus().insertContentAt(selection.to, content).run();
+        } else {
+          ed.chain().focus().insertContent(content).run();
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Upload failed.";
@@ -251,18 +355,17 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
         <ToolbarButton
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          title="Upload image (or paste / drop into editor)"
+          title="Upload file (or paste / drop into editor)"
         >
           {uploading ? (
             <Loader2 className="size-3.5 animate-spin" />
           ) : (
-            <ImageIcon className="size-3.5" />
+            <Paperclip className="size-3.5" />
           )}
         </ToolbarButton>
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
           multiple
           className="hidden"
           onChange={onPickFile}
@@ -307,7 +410,7 @@ function filesFromClipboard(data: DataTransfer | null): File[] {
   if (!data) return [];
   const out: File[] = [];
   for (const item of Array.from(data.items)) {
-    if (item.kind === "file" && item.type.startsWith("image/")) {
+    if (item.kind === "file") {
       const file = item.getAsFile();
       if (file) out.push(file);
     }
@@ -317,7 +420,7 @@ function filesFromClipboard(data: DataTransfer | null): File[] {
 
 function filesFromDataTransfer(data: DataTransfer | null): File[] {
   if (!data) return [];
-  return Array.from(data.files).filter((f) => f.type.startsWith("image/"));
+  return Array.from(data.files);
 }
 
 function ToolbarButton({

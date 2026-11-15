@@ -105,13 +105,18 @@ export async function ensureCsrfCookie(): Promise<void> {
   await apiFetch<{ csrfToken: string }>("/api/auth/csrf/");
 }
 
-export type UploadedImage = { url: string; name: string; size: number };
+export type UploadedFile = {
+  url: string;
+  name: string;
+  size: number;
+  content_type: string;
+};
 
-/** Upload a single image file to the server and get back an absolute URL. */
-export async function uploadImage(file: File): Promise<UploadedImage> {
+/** Upload a single file (any type) and get back its absolute URL. */
+export async function uploadFile(file: File): Promise<UploadedFile> {
   const form = new FormData();
   form.append("file", file);
-  return apiFetch<UploadedImage>("/api/uploads/", {
+  return apiFetch<UploadedFile>("/api/uploads/", {
     method: "POST",
     body: form,
   });

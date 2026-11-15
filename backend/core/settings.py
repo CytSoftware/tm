@@ -207,6 +207,11 @@ REST_FRAMEWORK = {
 # ~10 MB guard the MCP tools already apply to inline payloads.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 
+# Cap for /api/uploads/ (task description attachments, Mowafeq feedback
+# recordings). Those uploads stream to a temp file, so the in-memory cap above
+# does not apply to them.
+UPLOAD_MAX_BYTES = int(_os_early.environ.get("UPLOAD_MAX_MB", "2048")) * 1024 * 1024
+
 SPECTACULAR_SETTINGS = {
     "TITLE": "Cyt Task Tracker API",
     "DESCRIPTION": "Phase 1 of the Cyt internal infrastructure app.",
