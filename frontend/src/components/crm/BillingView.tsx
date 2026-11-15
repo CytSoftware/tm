@@ -4,7 +4,7 @@
  * Billing — what customers owe us. Every row is a payment; its status
  * (paid / overdue / upcoming) comes from the server, derived from the dates.
  *
- * Sections: Overdue · Upcoming · Paid this year. Renewals live on the
+ * Sections: Overdue · Upcoming · Paid (all time, newest first). Renewals live on the
  * Licences tab. The strip on
  * top totals what's late, what's due in the next 30 days and what came in.
  */
@@ -44,8 +44,9 @@ export function BillingView({
   const overdue = payments.filter((p) => p.status === "overdue");
   const upcoming = payments.filter((p) => p.status === "upcoming");
   const paid = payments
-    .filter((p) => p.status === "paid" && p.paid_on!.startsWith(year))
+    .filter((p) => p.status === "paid")
     .sort((a, b) => b.paid_on!.localeCompare(a.paid_on!));
+  const paidThisYear = paid.filter((p) => p.paid_on!.startsWith(year));
   const next30 = upcoming.filter((p) => daysUntil(p.due_on) <= 30);
 
   const row = (p: Payment) => (
@@ -58,7 +59,7 @@ export function BillingView({
         <div className="grid grid-cols-3 gap-2 px-4 pt-4 max-sm:grid-cols-1">
           <Stat label="Overdue" value={sum(overdue)} count={overdue.length} tone={overdue.length ? "danger" : undefined} />
           <Stat label="Due in the next 30 days" value={sum(next30)} count={next30.length} />
-          <Stat label={`Collected in ${year}`} value={sum(paid)} count={paid.length} tone="good" />
+          <Stat label={`Collected in ${year}`} value={sum(paidThisYear)} count={paidThisYear.length} tone="good" />
         </div>
 
         {payments.length === 0 && (
@@ -80,7 +81,7 @@ export function BillingView({
         )}
         {paid.length > 0 && (
           <>
-            <SectionHeader title={`Paid in ${year}`} count={paid.length} />
+            <SectionHeader title="Paid" count={paid.length} />
             {paid.map(row)}
           </>
         )}
