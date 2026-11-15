@@ -4,16 +4,16 @@
  * Licences — who is entitled to what, until when. Separate from Billing
  * (the money): a licence's period rarely lines up with its payments.
  *
- * Status comes from the server, derived from the period. The tab shows what
- * needs attention: expiring without a renewal, active, and lapsed (ended and
- * nobody renewed it). Ended-but-renewed licences are history; they show on
- * the company and lead panes, not here.
+ * Status comes from the server, derived from the period. Sections: expiring
+ * without a renewal, active, lapsed (ended and nobody renewed it), and ended
+ * but renewed (history). "Hide ended" drops the last two.
  */
 
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -67,6 +67,10 @@ export function LicencesView({
     (l) => l.status === "active" || l.status === "upcoming" || (l.status === "expiring" && l.renewed),
   );
   const lapsed = licences.filter((l) => l.status === "ended" && !l.renewed);
+  const endedRenewed = licences
+    .filter((l) => l.status === "ended" && l.renewed)
+    .sort((a, b) => b.ends_on.localeCompare(a.ends_on));
+  const [hideEnded, setHideEnded] = useState(false);
   const row = (l: Licence) => <LicenceRow key={l.id} l={l} onEdit={onEdit} onOpenLead={onOpenLead} />;
 
   return (
@@ -77,6 +81,10 @@ export function LicencesView({
           <Stat label="Expiring in 60 days" count={expiring.length} tone={expiring.length ? "warn" : undefined} />
           <Stat label="Lapsed" count={lapsed.length} tone={lapsed.length ? "danger" : undefined} />
         </div>
+        <label className="flex cursor-pointer items-center justify-end gap-2 px-4 pt-3 text-[12px] text-muted-foreground">
+          <Checkbox checked={hideEnded} onCheckedChange={(v) => setHideEnded(v === true)} />
+          Hide ended
+        </label>
         {licences.length === 0 && (
           <p className="px-4 pt-10 text-center text-[13px] text-muted-foreground">
             No licences yet. Add one with “Licence”, or from a won lead.
@@ -94,10 +102,16 @@ export function LicencesView({
             {active.map(row)}
           </>
         )}
-        {lapsed.length > 0 && (
+        {!hideEnded && lapsed.length > 0 && (
           <>
             <SectionHeader title="Lapsed" count={lapsed.length} tone="danger" />
             {lapsed.map(row)}
+          </>
+        )}
+        {!hideEnded && endedRenewed.length > 0 && (
+          <>
+            <SectionHeader title="Ended — renewed" count={endedRenewed.length} />
+            {endedRenewed.map(row)}
           </>
         )}
       </div>
