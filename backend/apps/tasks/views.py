@@ -14,7 +14,9 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.authentication import SessionAuthentication
+from rest_framework.exceptions import APIException, NotFound, ValidationError
+from rest_framework.parsers import FileUploadParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -71,6 +73,8 @@ from .serializers import (
 )
 from .transitions import get_stale_thresholds
 from drf_spectacular.utils import extend_schema
+
+from apps.mcp_server.rest_auth import PatAuthentication
 
 User = get_user_model()
 
@@ -521,7 +525,7 @@ class MeView(APIView):
 
 
 # ---------------------------------------------------------------------------
-# Image upload endpoint (task description images, etc.)
+# Avatar image validation
 # ---------------------------------------------------------------------------
 
 _UPLOAD_MAX_BYTES = 10 * 1024 * 1024
@@ -540,15 +544,44 @@ def _validate_uploaded_image(file_obj) -> None:
         raise ValidationError({"file": f"Unsupported file extension: .{ext}"})
 
 
-class UploadImageView(APIView):
-    """Accept a single image file, persist to MEDIA_ROOT, return its URL.
+# ---------------------------------------------------------------------------
+# File upload endpoint (task description attachments)
+# ---------------------------------------------------------------------------
 
-    The description editor posts here when the user picks a file, pastes an
-    image, or drops one onto the editor. Tasks don't get a dedicated
-    Attachment model in Phase 1 — the returned URL is embedded directly in
-    the task description's TipTap JSON.
+_SAFE_EXT = re.compile(r"[a-z0-9]{1,10}")
+
+
+class PayloadTooLarge(APIException):
+    status_code = 413
+    default_detail = "File is too large."
+    default_code = "too_large"
+
+
+def _upload_too_large() -> PayloadTooLarge:
+    return PayloadTooLarge(
+        f"File must be at most {settings.UPLOAD_MAX_BYTES // (1024 * 1024)} MB."
+    )
+
+
+def _stored_extension(filename: str) -> str:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return ext if _SAFE_EXT.fullmatch(ext) else "bin"
+
+
+class UploadView(APIView):
+    """Store one file under MEDIA_ROOT and return its public URL.
+
+    The description editor posts multipart (``file`` field). Server-to-server
+    callers (Mowafeq feedback) send the file as the raw body with a
+    ``Content-Disposition: attachment; filename=…`` header, which
+    ``FileUploadParser`` streams through Django's upload handlers to a temp
+    file, so a large recording never sits in memory and
+    ``DATA_UPLOAD_MAX_MEMORY_SIZE`` does not apply. Any type is accepted: the
+    media view (``core/media.py``) decides what may render inline.
     """
 
+    authentication_classes = [PatAuthentication, SessionAuthentication]
+    parser_classes = [MultiPartParser, FileUploadParser]
     serializer_class = None
 
     @extend_schema(
@@ -559,7 +592,8 @@ class UploadImageView(APIView):
                     "file": {"type": "string", "format": "binary"},
                 },
                 "required": ["file"],
-            }
+            },
+            "*/*": {"type": "string", "format": "binary"},
         },
         responses={
             201: {
@@ -568,36 +602,55 @@ class UploadImageView(APIView):
                     "url": {"type": "string"},
                     "name": {"type": "string"},
                     "size": {"type": "integer"},
+                    "content_type": {"type": "string"},
                 },
             }
         },
     )
     def post(self, request):
-        file_obj = request.FILES.get("file")
-        if file_obj is None:
-            raise ValidationError({"file": "No file provided."})
-        _validate_uploaded_image(file_obj)
-
-        import os
+        import mimetypes
         import uuid
 
-        from django.conf import settings
         from django.core.files.storage import default_storage
 
-        ext = file_obj.name.rsplit(".", 1)[-1].lower()
-        rel_path = os.path.join(
-            "uploads", str(request.user.id), f"{uuid.uuid4().hex}.{ext}"
-        )
+        from core.oauth_meta import public_base_url
+
+        # Refuse before the body is read, so an oversized upload is not
+        # spooled to disk first. The multipart envelope adds a little, hence
+        # the slack; the exact check on the file size follows below.
+        try:
+            declared = int(request.META.get("CONTENT_LENGTH") or 0)
+        except ValueError:
+            declared = 0
+        if declared > settings.UPLOAD_MAX_BYTES + 64 * 1024:
+            raise _upload_too_large()
+
+        file_obj = request.FILES.get("file") or request.data.get("file")
+        if file_obj is None or isinstance(file_obj, str):
+            raise ValidationError({"file": "No file provided."})
+        if not file_obj.size:
+            raise ValidationError({"file": "The file is empty."})
+        if file_obj.size > settings.UPLOAD_MAX_BYTES:
+            raise _upload_too_large()
+
+        original_name = file_obj.name or "file"
+        content_type = (file_obj.content_type or "").split(";", 1)[0].strip().lower()
+        if not content_type or content_type == "application/octet-stream":
+            content_type = (
+                mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+            )
+
+        rel_path = f"uploads/{request.user.id}/{uuid.uuid4().hex}.{_stored_extension(original_name)}"
         saved_path = default_storage.save(rel_path, file_obj)
-        # default_storage.url() returns a relative /media/... path. The
-        # frontend is on a different origin, so hand back an absolute URL.
-        rel_url = default_storage.url(saved_path)
-        absolute = request.build_absolute_uri(rel_url)
+        # The frontend lives on another origin and Mowafeq embeds the link in
+        # a task, so the URL must be absolute and name the public API host.
+        url = public_base_url(request) + default_storage.url(saved_path)
         return Response(
             {
-                "url": absolute,
-                "name": file_obj.name,
+                "url": url,
+                "name": original_name,
                 "size": file_obj.size,
+                "content_type": content_type,
             },
             status=status.HTTP_201_CREATED,
         )

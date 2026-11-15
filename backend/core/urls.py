@@ -286,16 +286,13 @@ urlpatterns = [
 ]
 
 # Serve MEDIA_ROOT through Daphne in both dev and prod. These uploads are
-# low-volume, so they are not worth standing up a
-# separate static-file proxy. If that changes, move this to Traefik/nginx.
-from django.conf import settings as _settings
+# low-volume, so they are not worth standing up a separate static-file proxy.
+# ``core.media.serve_media`` adds Range support and the inline/attachment rule;
+# if this moves to Traefik/nginx, both have to move with it.
 from django.urls import re_path as _re_path
-from django.views.static import serve as _serve_static
+
+from core.media import serve_media as _serve_media
 
 urlpatterns += [
-    _re_path(
-        r"^media/(?P<path>.*)$",
-        _serve_static,
-        {"document_root": _settings.MEDIA_ROOT},
-    ),
+    _re_path(r"^media/(?P<path>.*)$", _serve_media),
 ]

@@ -166,6 +166,8 @@ docker compose up --build
 | `CYT_BROADCAST_SECRET`                 | Shared secret for the cross-process broadcast bridge                                                          | `dev-broadcast-secret…`       |
 | `CYT_BROADCAST_URL`                    | URL the stdio MCP process POSTs broadcasts to                                                                 | `http://127.0.0.1:8000/api/internal/broadcast/` |
 | `DB_DIR`                               | Override SQLite directory (Docker volume mount)                                                               | `backend/`                    |
+| `MEDIA_DIR`                            | Override `MEDIA_ROOT`, the upload directory (Docker volume mount)                                             | `backend/media`               |
+| `UPLOAD_MAX_MB`                        | Size cap for one `/api/uploads/` file, in MB. Uploads stream to a temp file, not memory                       | `2048`                        |
 | `DJANGO_SUPERUSER_USERNAME` / `EMAIL`  | Idempotent superuser creation in `entrypoint.sh`                                                              | unset                         |
 
 ### Frontend environment variables
@@ -234,6 +236,23 @@ Resources (all standard DRF CRUD):
 /api/integrations/events/                     # list and update event workflow status
 /api/integrations/events/summary/             # status counts for the event inbox
 ```
+
+Endpoints that also accept a personal access token
+(`Authorization: Bearer cyt_mcp_…`, `write` scope) instead of the session, for
+server-to-server callers such as Mowafeq's in-app feedback:
+
+```
+POST /api/uploads/          # one file, any type: multipart `file`, or the raw body with
+                            # Content-Disposition: attachment; filename="…"
+                            # → 201 {url, name, size, content_type}
+POST /api/external/tasks/   # {project, title, description?, column?, labels?, assignees?, priority?}
+                            # unknown labels are created; bad references → 400 {detail}
+                            # → 201 {key, id, url}
+```
+
+Uploaded files are served from `/media/` with HTTP Range support. Only images,
+video and audio render inline (SVG with `Content-Security-Policy: sandbox`);
+every other type is sent as a download.
 
 Inbound source URLs accept public JSON POSTs at
 `/api/integrations/event-sources/<token>/ingest/`. The unguessable token is

@@ -34,7 +34,7 @@ import {
   Underline,
 } from "lucide-react";
 
-import { uploadImage } from "@/lib/api";
+import { uploadFile } from "@/lib/api";
 
 function ToolbarButton({
   title,
@@ -77,7 +77,7 @@ export function WikiToolbar() {
       const file = input.files?.[0];
       if (!file) return;
       try {
-        const { url } = await uploadImage(file);
+        const { url } = await uploadFile(file);
         insertImage(editor, url);
       } catch {
         // upload failed — ignore for v1
