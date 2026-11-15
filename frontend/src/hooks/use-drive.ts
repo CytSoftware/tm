@@ -62,6 +62,12 @@ export function useUploadFile() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ file, folder }: { file: File; folder: string }) => {
+      // Cloud placeholders (iCloud, OneDrive, Dropbox online-only) and some
+      // drag sources hand over a 0-byte File; uploading it makes a file that
+      // never opens.
+      if (file.size === 0) {
+        throw new Error("File is empty (0 bytes). If it lives in iCloud or OneDrive, download it first.");
+      }
       const dest = folder + file.name;
       const contentType = file.type || "application/octet-stream";
       // 1. ask our API for a presigned PUT URL

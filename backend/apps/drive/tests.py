@@ -13,6 +13,7 @@ from django.test import TestCase
 from apps.mcp_server import tools
 from apps.tasks.models import Project
 
+from . import b2
 from .layout import check_folder, drive_path, is_hidden
 from .models import DriveFile
 
@@ -82,6 +83,21 @@ class DriveLayoutTests(TestCase):
                 tools.drive_finalize_upload("mowafeq/sales/other.pdf")
             with self.assertRaises(ValueError):
                 tools.drive_finalize_upload("sources/x.pdf")
+
+    def test_empty_uploads_are_refused(self):
+        # A 0-byte object looks like a file but never opens.
+        with mock.patch("apps.drive.b2.client") as client:
+            with self.assertRaisesMessage(b2.B2Error, "empty"):
+                tools.drive_upload("stamp.png", content_type="image/png")
+            with self.assertRaisesMessage(b2.B2Error, "empty"):
+                tools.drive_upload("stamp.png", content_base64="")
+            client.return_value.put_object.assert_not_called()
+        empty = {"key": "to-be-organized/x.pdf", "size": 0}
+        with mock.patch("apps.drive.b2.head", return_value=empty), \
+                mock.patch("apps.drive.b2.delete") as delete:
+            with self.assertRaisesMessage(ValueError, "empty"):
+                tools.drive_finalize_upload(empty["key"])
+            delete.assert_called_once_with(empty["key"])
 
     def test_mcp_large_upload_employee_reserves_a_reachable_key(self):
         emp = User.objects.create_user("emp", password="x")

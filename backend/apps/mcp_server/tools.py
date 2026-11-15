@@ -2010,6 +2010,14 @@ def drive_finalize_upload(key: str, mcp_user=None) -> dict[str, Any]:
             f"Nothing uploaded at {rel!r} yet — PUT the bytes to the "
             "`upload_url` from drive_request_upload first (the URL expires)."
         )
+    if not meta.get("size"):
+        # An empty PUT means the bytes never arrived; drop it rather than leave
+        # a file that won't open.
+        b2.delete(rel)
+        raise ValueError(
+            f"The upload at {rel!r} is empty (0 bytes) and was removed. Re-run "
+            "drive_request_upload and PUT the file's bytes (curl --upload-file)."
+        )
     _log_drive_write("drive_finalize_upload", mcp_user, meta["key"], meta.get("size", 0))
     return {"key": meta["key"], "size": meta.get("size", 0),
             "content_type": meta.get("content_type")}

@@ -264,6 +264,8 @@ def put_bytes(rel: str, data: bytes,
     key = full_key(rel)
     if not key or key.endswith("/"):
         raise B2Error("A file name is required.")
+    if not data:
+        raise B2Error("Refusing to write an empty file.")
     try:
         client().put_object(Bucket=_bucket(), Key=key, Body=data,
                             ContentType=content_type)
