@@ -2071,11 +2071,12 @@ You maintain a SHARED markdown knowledge base. Pages are nested; the slug IS a
 directory path. Put every page in the right directory — never at the root.
 
 Directory taxonomy (slug prefix):
-- entities/people/<name>       individuals (clients, prospects, contacts)
-- entities/companies/<name>    companies (clients, prospects, vendors, competitors)
+- entities/people/<name>       individuals (clients, leads, contacts)
+- entities/companies/<name>    companies (clients, leads, vendors, competitors)
 - entities/products/<name>     third-party products/services we use or evaluate
-- concepts/<name>              ideas, methods, frameworks, market observations
-- projects/<name>              Cyt Software projects/products/initiatives
+- projects/<name>              anything Cyt is doing: our products, client
+                               engagements, applications (YC, QSTP), pitches
+- concepts/<name>              ideas and playbooks that outlive one project
 - decisions/<name>             ADR-style decisions
 - sources/<name>               one summary page per ingested source document
 
@@ -2089,12 +2090,44 @@ created: YYYY-MM-DD
 updated: YYYY-MM-DD
 tags: [..]
 ---
-Person pages also add: company, role, relationship, last_contact, next_followup.
-Company pages add: relationship, status. Project pages add: status, owner.
-Source pages add: source (the drive key), ingested.
+Person pages add: company, role, relationship.
+Company pages add: relationship, status (active|dormant|lost).
+Project pages add: status (active|paused|shipped|abandoned|archived), owner.
+Source pages add: source (URL, drive key or MTG key), ingested.
+relationship is one of: client, lead, partner, vendor, competitor, investor,
+program, team, other (a lead whose deal is won becomes client). status is ONE
+word; the detail goes in Current state.
 
-Cross-references: use [[entities/people/john-smith]] wikilinks for EVERY mention
-of another entity/concept — they render as clickable links.
+ONE HOME PER FACT. Deal stage, next step, follow-up dates, phone numbers and
+emails live in the CRM (search_contacts / get_lead). What was said in a meeting
+lives in Meetings. The wiki holds the why, the background and the story, and
+quotes the rest with an "as of" date. Do not keep next_followup, last_contact or
+a person's phone/email on a page whose person or company is on a CRM lead.
+
+Entity and project pages have this shape:
+  # Title, then 2-3 sentences: who/what it is and why it matters to Cyt
+  ## Current state (as of YYYY-MM-DD)   what is true today, each line with its
+                                        source (CRM key, MTG key or [[source]])
+  ## ... stable sections (Background, People, Fit, ...)
+  ## Timeline                           one line per event, newest first, each
+                                        with its source
+New information REWRITES Current state and adds ONE Timeline line. Never append
+a dated "## 2026-11-04: ..." section — that turns the page into a log with a
+stale summary on top.
+
+NAMES. Before writing about a person or company, look them up
+(search_contacts(query=...), knowledge_list) and reuse the existing spelling and
+page. A name that is close but not the same (AEB vs ABE, Mohamad vs Mohamed) is
+a DIFFERENT entity unless a shared meeting or a person says otherwise. If you
+cannot tell who is meant, write the name as said under "## Unresolved" on the
+source page and attach the fact to no entity page.
+
+NUMBERS. Revenue, customer counts and prices live in the "Key numbers (as of
+DATE)" section of the product's project page. Elsewhere, link to it, or state
+the number with its date and source.
+
+Cross-references: use full-path wikilinks, [[entities/people/john-smith]], for
+every mention of another entity/concept — they render as clickable links.
 
 Auto-maintained BY THE SERVER (do NOT write or edit these yourself):
 - index   the catalog — regenerated on every write/delete
@@ -2102,7 +2135,9 @@ Auto-maintained BY THE SERVER (do NOT write or edit these yourself):
 Just write your content pages; the index and log update themselves.
 
 Before writing: knowledge_read the page if it may exist and UPDATE it in place
-(don't duplicate). Never file secrets/credentials/tokens, or personal content.
+(don't duplicate). Never file secrets/credentials/tokens, personal phone numbers
+or emails, health or family matters, pay, criticism of named people at a
+client, or personal (non-business) content.
 """
 
 
