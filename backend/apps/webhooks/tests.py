@@ -391,6 +391,7 @@ class DeliveryHeaderTests(WebhookTestBase):
             hmac.new(ep.secret.encode(), req.data, hashlib.sha256).hexdigest(),
         )
         self.assertEqual(req.get_header("X-request-id"), str(d.id))
+        self.assertEqual(req.get_header("User-agent"), "Cyt-Webhooks/1.0")
 
 
 class BackoffTests(WebhookTestBase):

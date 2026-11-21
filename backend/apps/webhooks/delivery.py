@@ -195,6 +195,9 @@ def _attempt_delivery(delivery_id: UUID | str) -> None:
         data=body,
         headers={
             "Content-Type": "application/json",
+            # Cloudflare answers urllib's default "Python-urllib/x.y" with
+            # 403 (error 1010), so receivers behind it never see the event.
+            "User-Agent": "Cyt-Webhooks/1.0",
             "X-Cyt-Webhook-Id": str(delivery.id),
             "X-Cyt-Timestamp": str(ts),
             "X-Cyt-Signature": sign_payload(endpoint.secret, body, ts),
