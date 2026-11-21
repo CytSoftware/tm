@@ -258,7 +258,7 @@ function Body({
         />
       </div>
 
-      <div className="shrink-0 border-t border-border p-3 pb-safe">
+      <div className="shrink-0 border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <UpdateComposer
           key={l.key}
           lead={l.key}
