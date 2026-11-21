@@ -537,10 +537,10 @@ export function TaskPanel(props: Props) {
         }}
       />
 
-      {/* Panel — bottom-anchored */}
+      {/* Panel — bottom-anchored, floating 1rem above the edge on desktop */}
       <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
       <div
-        className="pointer-events-auto w-full max-w-5xl h-[88dvh] flex flex-col rounded-t-xl border border-b-0 border-border bg-card shadow-2xl animate-in slide-in-from-bottom duration-300 max-lg:h-dvh max-lg:rounded-none max-lg:border-0"
+        className="pointer-events-auto w-full max-w-5xl h-[88dvh] lg:mb-4 flex flex-col rounded-xl border border-border bg-card shadow-2xl animate-in slide-in-from-bottom duration-300 max-lg:h-dvh max-lg:rounded-none max-lg:border-0"
         onPointerDownCapture={clickThroughGuard}
         onMouseDownCapture={clickThroughGuard}
         onClickCapture={clickThroughGuard}
@@ -961,7 +961,7 @@ export function TaskPanel(props: Props) {
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 px-6 py-3 pb-safe border-t border-border/60 flex items-center justify-end gap-2 max-lg:px-4">
+        <div className="shrink-0 px-6 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-border/60 flex items-center justify-end gap-2 max-lg:px-4">
           <Button variant="outline" size="sm" onClick={onClose}>
             Cancel
           </Button>
