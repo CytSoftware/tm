@@ -385,6 +385,12 @@ class DeliveryHeaderTests(WebhookTestBase):
             sign_payload(ep.secret, req.data, ts),
         )
         self.assertEqual(json.loads(req.data)["id"], str(d.id))
+        # Hermes' generic receiver scheme.
+        self.assertEqual(
+            req.get_header("X-webhook-signature"),
+            hmac.new(ep.secret.encode(), req.data, hashlib.sha256).hexdigest(),
+        )
+        self.assertEqual(req.get_header("X-request-id"), str(d.id))
 
 
 class BackoffTests(WebhookTestBase):

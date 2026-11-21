@@ -199,6 +199,12 @@ def _attempt_delivery(delivery_id: UUID | str) -> None:
             "X-Cyt-Timestamp": str(ts),
             "X-Cyt-Signature": sign_payload(endpoint.secret, body, ts),
             "X-Cyt-Event": delivery.event,
+            # Hermes' native webhook receiver only knows its generic scheme
+            # (hex HMAC of the bare body) and dedupes on X-Request-ID.
+            "X-Webhook-Signature": hmac.new(
+                endpoint.secret.encode(), body, hashlib.sha256
+            ).hexdigest(),
+            "X-Request-ID": str(delivery.id),
         },
         method="POST",
     )
