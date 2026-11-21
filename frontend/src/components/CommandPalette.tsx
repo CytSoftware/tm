@@ -158,7 +158,7 @@ export function CommandPalette({ open, onClose }: Props) {
     queryKey: ["global-search", "tasks", debounced],
     queryFn: () =>
       apiFetch<TaskListResponse>(
-        `/api/tasks/?search=${encodeURIComponent(debounced)}&limit=10`,
+        `/api/tasks/?search=${encodeURIComponent(debounced)}&sort_field=relevance&limit=10`,
       ),
     enabled: open && debounced.length >= 1,
     staleTime: 10_000,

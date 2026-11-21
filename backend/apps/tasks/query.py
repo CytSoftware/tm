@@ -91,6 +91,9 @@ SORTABLE_FIELDS = {
     # column) sort last regardless of direction thanks to NULL handling.
     "staleness",
     "current_column_since",
+    # "relevance" ranks free-text search hits: key match, then title, then
+    # description. Needs a ``search`` filter; ignored without one.
+    "relevance",
 }
 
 
@@ -229,6 +232,23 @@ def _key_search_variants(word: str) -> list[str]:
     # Drop the variant identical (case-insensitively) to what was typed; it
     # adds nothing beyond the existing raw ``key__icontains=word`` clause.
     return [v for v in variants if v.lower() != word.lower()]
+
+
+def _search_key_condition(word: str) -> Q:
+    """The key-matching half of free-text search for one search word."""
+    if word.isdigit():
+        # Bare number → the task numbered N. Anchor to the key's "-NNN"
+        # suffix (zero-padded) so "85" finds MOW-085 but not the noise of
+        # MOW-185 / MOW-850 that a loose substring hits.
+        number = int(word)
+        return Q(key__iendswith=f"-{number:03d}") | Q(key__iendswith=f"-{number}")
+    # Keys are stored zero-padded (e.g. ``MOW-042``), so a raw substring match
+    # on an unpadded token like ``MOW-42`` misses. Add the zero-padded variant
+    # so users can type the natural, unpadded number.
+    cond = Q(key__icontains=word)
+    for variant in _key_search_variants(word):
+        cond |= Q(key__icontains=variant)
+    return cond
 
 
 def apply_task_filters(
@@ -389,24 +409,8 @@ def apply_task_filters(
     if search := filters.get("search"):
         if isinstance(search, str) and (stripped := search.strip()):
             for word in stripped.split():
-                if word.isdigit():
-                    # Bare number → the task numbered N. Anchor to the key's
-                    # "-NNN" suffix (zero-padded) so "85" finds MOW-085 but not
-                    # the noise of MOW-185 / MOW-850 that a loose substring hits.
-                    number = int(word)
-                    key_cond = Q(key__iendswith=f"-{number:03d}") | Q(
-                        key__iendswith=f"-{number}"
-                    )
-                else:
-                    # Keys are stored zero-padded (e.g. ``MOW-042``), so a raw
-                    # substring match on an unpadded token like ``MOW-42`` misses.
-                    # Add the zero-padded variant so users can type the natural,
-                    # unpadded number.
-                    key_cond = Q(key__icontains=word)
-                    for variant in _key_search_variants(word):
-                        key_cond |= Q(key__icontains=variant)
                 qs = qs.filter(
-                    key_cond
+                    _search_key_condition(word)
                     | Q(title__icontains=word)
                     | Q(description__icontains=word)
                 )
@@ -445,6 +449,7 @@ def apply_task_sort(
     qs: QuerySet[Task],
     sort: list[Mapping[str, str]] | None,
     column: Column | None = None,
+    search: str | None = None,
 ) -> QuerySet[Task]:
     """Apply a saved-view sort spec. Falls back to the default Task ordering.
 
@@ -452,6 +457,9 @@ def apply_task_sort(
     (``is_done``), tasks are ordered by ``current_column_since`` descending —
     most recently completed first, matching Linear's Done column. An explicit
     sort always wins, so a saved view's sort overrides the recency default.
+
+    The ``relevance`` field ranks ``search`` hits (key, then title, then
+    description), so searching "457" lists MOW-457 before tasks that merely mention 457.
     """
     if not sort:
         if column is not None and column.is_done:
@@ -462,6 +470,7 @@ def apply_task_sort(
 
     order_fields: list[str] = []
     needs_priority_rank = False
+    words = search.split() if isinstance(search, str) else []
 
     for entry in sort:
         field = entry.get("field")
@@ -469,7 +478,25 @@ def apply_task_sort(
         if not field or field not in SORTABLE_FIELDS:
             continue
         prefix = "-" if direction == "desc" else ""
-        if field == "priority":
+        if field == "relevance":
+            if not words:
+                continue
+            key_hit = Q()
+            title_hit = Q()
+            for word in words:
+                key_hit |= _search_key_condition(word)
+                title_hit |= Q(title__icontains=word)
+            qs = qs.annotate(
+                _search_rank=Case(
+                    When(key_hit, then=0),
+                    When(title_hit, then=1),
+                    default=2,
+                    output_field=IntegerField(),
+                )
+            )
+            # Best match first regardless of dir.
+            order_fields.append("_search_rank")
+        elif field == "priority":
             needs_priority_rank = True
             order_fields.append(f"{prefix}_priority_rank")
         elif field == "staleness":
@@ -512,5 +539,6 @@ def filter_and_sort_tasks(
     # Only resolve the column when there's no explicit sort — it's the sole
     # case the Done-recency default applies, and resolving costs a query.
     column = _resolve_column_for_sort(filters) if not sort else None
-    qs = apply_task_sort(qs, sort, column=column)
+    search = filters.get("search") if filters else None
+    qs = apply_task_sort(qs, sort, column=column, search=search)
     return qs
