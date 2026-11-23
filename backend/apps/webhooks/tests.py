@@ -217,6 +217,16 @@ class DispatchFilteringTests(WebhookTestBase):
         d = WebhookDelivery.objects.get()
         self.assertEqual(d.payload["recipients"], [{"id": self.dana.id, "username": "dana"}])
 
+    def test_envelope_task_points_agents_at_the_code(self):
+        self.project.github_repo = "CytSoftware/tm"
+        self.project.save(update_fields=["github_repo"])
+        _make_endpoint(self.dana)
+        self.dispatch(actor=self.chris, recipients=[self.dana])
+        task = WebhookDelivery.objects.get().payload["task"]
+        self.assertEqual(task["github_repo"], "CytSoftware/tm")
+        self.assertEqual(task["project_prefix"], "CYT")
+        self.assertTrue(task["url"].endswith(f"/board?task={self.task.key}"))
+
     def test_envelope_recipients_empty_when_no_recipients(self):
         _make_endpoint(self.chris, include_self=True)
         self.dispatch(actor=self.chris, recipients=[])

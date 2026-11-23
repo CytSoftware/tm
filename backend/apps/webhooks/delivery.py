@@ -94,12 +94,14 @@ def build_envelope(
             "title": task.title,
             "project_id": task.project_id,
             "project_name": task.project.name if task.project_id else None,
+            "project_prefix": task.project.prefix if task.project_id else None,
+            # "owner/repo" or null: tells an agent receiver where the code lives.
+            "github_repo": (task.project.github_repo or None) if task.project_id else None,
             "column": task.column.name if task.column_id else None,
             "priority": task.priority,
             "due_at": task.due_at.isoformat() if task.due_at else None,
-            # No per-task deep link exists yet; the board URL matches what
-            # assignment emails send (apps/tasks/emails.py).
-            "url": f"{frontend_url}/board",
+            # Same deep link Web Push uses (apps/tasks/notifications.py).
+            "url": f"{frontend_url}/board?task={task.key}",
         }
 
     return {
