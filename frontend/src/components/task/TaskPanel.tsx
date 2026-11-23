@@ -62,6 +62,7 @@ import type {
 } from "@/lib/types";
 import { PRIORITY_LABELS, PRIORITY_ORDER } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { TaskComments } from "./TaskComments";
 import { TaskSources } from "./TaskSources";
 
 // TAS-057: the panel mounts bottom-anchored directly under wherever the
@@ -957,6 +958,9 @@ export function TaskPanel(props: Props) {
                 }}
               />
             </div>
+            {mode === "edit" && task && (
+              <TaskComments taskKey={task.key} meId={me?.id ?? null} />
+            )}
           </div>
         </div>
 

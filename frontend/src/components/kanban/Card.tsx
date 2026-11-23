@@ -1,7 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { CalendarDays, Check, Repeat, Target, UserPlus } from "lucide-react";
+import {
+  CalendarDays,
+  Check,
+  MessageSquare,
+  Repeat,
+  Target,
+  UserPlus,
+} from "lucide-react";
 
 import {
   Tooltip,
@@ -150,6 +157,7 @@ export function KanbanCard({
     showAssignee ||
     showReviewer ||
     (showPoints && task.story_points != null) ||
+    task.comment_count > 0 ||
     task.current_column_since != null;
 
   return (
@@ -324,6 +332,15 @@ export function KanbanCard({
           {showPoints && task.story_points != null && (
             <span className="font-mono tabular-nums bg-muted/60 px-1.5 py-0.5 rounded text-[10px] text-muted-foreground shrink-0">
               {task.story_points}
+            </span>
+          )}
+          {task.comment_count > 0 && (
+            <span
+              className="inline-flex items-center gap-0.5 shrink-0 tabular-nums text-muted-foreground/80"
+              title={`${task.comment_count} comment${task.comment_count === 1 ? "" : "s"}`}
+            >
+              <MessageSquare className="size-3" />
+              {task.comment_count}
             </span>
           )}
           <div className="flex-1" />

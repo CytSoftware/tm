@@ -26,6 +26,7 @@ from .access import (
     restrict_to_projects,
     visible_project_ids,
 )
+from . import comments as task_comments
 from .broadcast import _broadcast_local, broadcast_task_event
 from .models import (
     Bet,
@@ -39,6 +40,7 @@ from .models import (
     RecurringTaskTemplate,
     StaleThresholdConfig,
     Task,
+    TaskComment,
     TransitionEvent,
     TransitionSource,
     View,
@@ -65,6 +67,7 @@ from .serializers import (
     RecurringTaskTemplateWriteSerializer,
     StalenessSettingsSerializer,
     StateTransitionSerializer,
+    TaskCommentSerializer,
     TaskMoveSerializer,
     TaskReadSerializer,
     TaskWriteSerializer,
@@ -1628,6 +1631,58 @@ class TaskViewSet(viewsets.ModelViewSet):
             .order_by("at", "id")
         )
         return Response(StateTransitionSerializer(qs, many=True).data)
+
+    @action(
+        detail=True,
+        methods=["get", "post"],
+        url_path="comments",
+        serializer_class=TaskCommentSerializer,
+    )
+    def comments(self, request, key=None):
+        """The task's comment thread, oldest first; POST adds one as the caller."""
+        task = self.get_object()
+        if request.method == "POST":
+            payload = TaskCommentSerializer(data=request.data)
+            payload.is_valid(raise_exception=True)
+            comment = task_comments.add_comment(
+                task, request.user, payload.validated_data["body"]
+            )
+            return Response(
+                TaskCommentSerializer(comment, context={"request": request}).data,
+                status=status.HTTP_201_CREATED,
+            )
+        qs = task.comments.select_related("author__profile")
+        return Response(
+            TaskCommentSerializer(qs, many=True, context={"request": request}).data
+        )
+
+    @action(
+        detail=True,
+        methods=["patch", "delete"],
+        url_path=r"comments/(?P<comment_id>\d+)",
+        serializer_class=TaskCommentSerializer,
+    )
+    def comment(self, request, key=None, comment_id=None):
+        """Edit or delete one comment. Only its author may (403 otherwise)."""
+        task = self.get_object()
+        try:
+            comment = task.comments.select_related("author__profile").get(
+                pk=comment_id
+            )
+        except TaskComment.DoesNotExist as e:
+            raise NotFound("Comment not found.") from e
+        if request.method == "DELETE":
+            task_comments.delete_comment(comment, request.user)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        payload = TaskCommentSerializer(comment, data=request.data, partial=True)
+        payload.is_valid(raise_exception=True)
+        if "body" in payload.validated_data:
+            task_comments.edit_comment(
+                comment, request.user, payload.validated_data["body"]
+            )
+        return Response(
+            TaskCommentSerializer(comment, context={"request": request}).data
+        )
 
     @action(detail=True, methods=["post"], serializer_class=TaskMoveSerializer)
     def move(self, request, key=None):

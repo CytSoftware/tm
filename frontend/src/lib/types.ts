@@ -327,6 +327,17 @@ export type Task = {
   linked_prs: LinkedPR[];
   /** Where it came from: a CRM lead (via the update that filed it) or meetings. */
   sources: TaskSource[];
+  comment_count: number;
+};
+
+export type TaskComment = {
+  id: number;
+  author: User;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  /** Set when the body was changed after posting; null otherwise. */
+  edited_at: string | null;
 };
 
 export type TaskSource =
@@ -561,6 +572,7 @@ export type TaskEvent =
   | { type: "task.updated"; key: string; id: number }
   | { type: "task.moved"; key: string; id: number; column_id: number }
   | { type: "task.deleted"; key: string }
+  | { type: "task.commented"; key: string; id: number; comment_id: number }
   | { type: "column.created"; column: Column }
   | { type: "column.updated"; column: Column }
   | { type: "column.deleted"; column_id: number }
@@ -617,7 +629,9 @@ export type NotificationVerb =
   | "moved"
   | "completed"
   | "deleted"
-  | "review_requested";
+  | "review_requested"
+  | "commented"
+  | "mentioned";
 
 /** Minimal actor shape the notification serializer embeds — not the full
  *  `User` (no email/avatar). `null` means a system-generated event (e.g. the
@@ -638,6 +652,9 @@ export type NotificationPayload = {
   changed_fields?: string[];
   from_column?: string | null;
   to_column?: string | null;
+  /** `commented` / `mentioned`: the comment and a one-line preview. */
+  comment_id?: number;
+  excerpt?: string;
 };
 
 export type Notification = {

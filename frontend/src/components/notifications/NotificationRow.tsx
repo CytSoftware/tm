@@ -15,8 +15,10 @@ import { useRouter } from "next/navigation";
 import {
   Bell,
   CheckCircle2,
+  AtSign,
   Eye,
   type LucideIcon,
+  MessageSquare,
   MoveRight,
   Pencil,
   Trash2,
@@ -167,6 +169,24 @@ export function describeNotification(n: Notification): {
             <strong className="font-medium">{actorName}</strong> requested
             your review on {keyEl}
             {n.task_title && <> · {n.task_title}</>}
+          </>
+        ),
+      };
+    case "commented":
+    case "mentioned":
+      return {
+        Icon: n.verb === "mentioned" ? AtSign : MessageSquare,
+        text: (
+          <>
+            <strong className="font-medium">{actorName}</strong>{" "}
+            {n.verb === "mentioned" ? "mentioned you on" : "commented on"}{" "}
+            {keyEl}
+            {n.payload.excerpt && (
+              <span className="text-muted-foreground">
+                {" "}
+                · “{n.payload.excerpt}”
+              </span>
+            )}
           </>
         ),
       };
