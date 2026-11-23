@@ -117,6 +117,8 @@ export function KanbanCard({
     isVisible("linked_pr", visibleFields) && task.linked_prs?.length > 0;
   const showReviewer =
     isVisible("reviewer", visibleFields) && task.reviewer != null;
+  // Meeting pills stay in the task panel only — on the board they were clutter.
+  const leadSources = task.sources?.filter((s) => s.kind !== "meeting") ?? [];
 
   const pri = task.priority ? PRIORITY_BADGE[task.priority] : null;
 
@@ -193,8 +195,8 @@ export function KanbanCard({
       {/* Optional rows — each appears only when it carries data, so cards with
           no metadata stay tight (no empty regions). */}
 
-      {/* Where it came from — a CRM lead or a meeting. */}
-      {task.sources?.length > 0 && <TaskSources sources={task.sources} className="px-3 pb-1.5" />}
+      {/* Where it came from — a CRM lead. */}
+      {leadSources.length > 0 && <TaskSources sources={leadSources} className="px-3 pb-1.5" />}
 
       {/* Linked PRs — chips link out to GitHub. State color encodes open /
           merged / closed / draft without needing the user to hover. */}
