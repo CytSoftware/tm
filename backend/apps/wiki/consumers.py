@@ -48,6 +48,9 @@ class WikiTreeConsumer(AsyncJsonWebsocketConsumer):
         if user is None or user.is_anonymous:
             await self.close(code=4401)
             return
+        if not await sync_to_async(_has_wiki)(user):
+            await self.close(code=4403)
+            return
         self.group_name = WIKI_GROUP_NAME
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
@@ -84,6 +87,12 @@ class _Room:
 
 _ROOMS: dict[str, _Room] = {}
 _ROOMS_LOCK = asyncio.Lock()
+
+
+def _has_wiki(user) -> bool:
+    from apps.tasks.access import has_module
+
+    return has_module(user, "wiki")
 
 
 def _doc_visible_sync(key: str, user) -> bool:
@@ -160,6 +169,9 @@ class WikiDocConsumer(YjsConsumer):
         user = self.scope.get("user")
         if user is None or user.is_anonymous:
             await self.close(code=4401)
+            return
+        if not await sync_to_async(_has_wiki)(user):
+            await self.close(code=4403)
             return
         self._key = self.scope["url_route"]["kwargs"]["key"]
         if not await sync_to_async(_doc_visible_sync)(self._key, user):

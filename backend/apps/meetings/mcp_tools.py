@@ -96,7 +96,7 @@ def _get_meeting(ref: str, mcp_user=None) -> Meeting:
     """Accept the human key (``MTG-014``) or the pipeline's recording stem."""
     ref = (ref or "").strip()
     meeting = (
-        scope_for_caller(base_meeting_queryset(), mcp_user)
+        scope_for_caller(base_meeting_queryset(), mcp_user, "meetings")
         .filter(Q(key__iexact=ref) | Q(stem=ref))
         .first()
     )
@@ -132,12 +132,13 @@ def _get_entity(ref: str | int, kind: str | None = None) -> Entity:
     return found[0]
 
 
-def _require_project_access(project: Any, mcp_user) -> None:
-    """Refuse to file a meeting or task under a project the caller isn't in."""
+def _require_project_access(project: Any, mcp_user, module: str) -> None:
+    """Refuse to file a meeting or task under a project the caller can't see
+    in ``module``."""
     if mcp_user is None:
         return
     proj = services.resolve_project(project)
-    if not can_see_project(mcp_user, proj.id if proj else None):
+    if not can_see_project(mcp_user, proj.id if proj else None, module):
         raise ValueError("Pick a project you have access to.")
 
 
@@ -225,7 +226,7 @@ def _filters(filters: dict[str, Any]) -> dict[str, Any]:
 def list_meetings(limit: int = 50, mcp_user=None, **filters: Any) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), MAX_LIST_LIMIT))
     chosen = _filters(filters)
-    qs = scope_for_caller(filter_meetings(chosen, light=True), mcp_user)
+    qs = scope_for_caller(filter_meetings(chosen, light=True), mcp_user, "meetings")
     return _summaries(qs[:limit])
 
 
@@ -238,7 +239,7 @@ def search_meetings(
     limit = max(1, min(int(limit), MAX_LIST_LIMIT))
     chosen = _filters(filters)
     chosen["search"] = query
-    qs = scope_for_caller(filter_meetings(chosen), mcp_user)
+    qs = scope_for_caller(filter_meetings(chosen), mcp_user, "meetings")
     return _summaries(qs[:limit], search=query)
 
 
@@ -267,7 +268,7 @@ def list_meeting_entities(
 ) -> list[dict[str, Any]]:
     # Same as the REST list: non-staff only see people/companies from meetings
     # they can open, and only those meetings are counted.
-    ids = visible_project_ids(mcp_user) if mcp_user is not None else None
+    ids = visible_project_ids(mcp_user, "meetings") if mcp_user is not None else None
     qs = Entity.objects.select_related("company").annotate(
         meeting_count=Count(
             "meetings",
@@ -346,7 +347,7 @@ def update_meeting(
 ) -> dict[str, Any]:
     target = _get_meeting(meeting, mcp_user)
     if clear_project or fields.get("project") is not None:
-        _require_project_access(None if clear_project else fields["project"], mcp_user)
+        _require_project_access(None if clear_project else fields["project"], mcp_user, "meetings")
     data = _drop_none(
         {
             **fields,
@@ -399,7 +400,9 @@ def create_task_from_meeting_action_item(
     due = parse_due_at(due_at) if due_at is not None else None
 
     target = _get_meeting(meeting, mcp_user)
-    _require_project_access(project if project is not None else target.project, mcp_user)
+    _require_project_access(
+        project if project is not None else target.project, mcp_user, "tasks"
+    )
     task = services.create_task_from_action_item(
         target,
         item_id,
@@ -417,7 +420,7 @@ def link_meeting_task(
 ) -> dict[str, Any]:
     target = _get_meeting(meeting, mcp_user)
     try:
-        task_obj = scope_for_caller(Task.objects.all(), mcp_user).get(key__iexact=task.strip())
+        task_obj = scope_for_caller(Task.objects.all(), mcp_user, "tasks").get(key__iexact=task.strip())
     except Task.DoesNotExist:
         raise ValueError(f"Task {task!r} not found.")
     (services.unlink_task if unlink else services.link_task)(target, task_obj)

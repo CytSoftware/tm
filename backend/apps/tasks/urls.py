@@ -7,6 +7,7 @@ from drf_spectacular.views import (
 )
 from rest_framework.routers import DefaultRouter
 
+from .access_views import AccessMatrixView, AccessUserView
 from .external import ExternalTaskView
 from .focus import FocusItemView, FocusListView
 from .views import (
@@ -50,6 +51,8 @@ urlpatterns = [
     path("auth/login/", LoginView.as_view(), name="login"),
     path("auth/logout/", LogoutView.as_view(), name="logout"),
     path("auth/me/", MeView.as_view(), name="me"),
+    path("access/", AccessMatrixView.as_view(), name="access-matrix"),
+    path("access/users/<int:pk>/", AccessUserView.as_view(), name="access-user"),
     path("me/focus/", FocusListView.as_view(), name="focus-list"),
     path(
         "me/focus/<str:task_key>/",

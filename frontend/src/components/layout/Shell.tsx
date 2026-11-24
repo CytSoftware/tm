@@ -8,10 +8,11 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { GlobalShortcuts } from "@/components/GlobalShortcuts";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { meKey, myTasksKey, toReviewKey } from "@/lib/query-keys";
-import { canOpen, fetchMe, NON_STAFF_HOME } from "@/lib/auth";
+import { canOpen, fetchMe, hasModule, homeFor } from "@/lib/auth";
 import { ensureCsrfCookie } from "@/lib/api";
 import { connectNotificationSocket } from "@/lib/ws";
 import { usePalette } from "@/lib/palette";
+import type { Me } from "@/lib/types";
 import { useSidebar } from "@/lib/sidebar-state";
 import { TaskDialogProvider, useTaskDialog } from "@/lib/task-dialog";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -119,12 +120,13 @@ export function Shell({ children }: { children: ReactNode }) {
     router.replace("/login");
   }, [needsLogin, pathname, router]);
 
-  // Non-staff users only reach wiki/drive/LLM wiki/meetings; anything else
-  // (including Home and the task board) lands on NON_STAFF_HOME.
+  // Non-staff users only reach the modules they were granted; any other page
+  // (including Home without tasks or bets) lands on their first allowed one.
   const blocked = meQuery.data ? !canOpen(meQuery.data, pathname) : false;
+  const home = meQuery.data ? homeFor(meQuery.data) : "/";
   useEffect(() => {
-    if (blocked && !STANDALONE_ROUTES.includes(pathname)) router.replace(NON_STAFF_HOME);
-  }, [blocked, pathname, router]);
+    if (blocked && !STANDALONE_ROUTES.includes(pathname)) router.replace(home);
+  }, [blocked, home, pathname, router]);
 
   // Global notification socket — one per authenticated session, mounted
   // here (not per project view like connectProjectSocket). Keyed on user id
@@ -164,11 +166,12 @@ export function Shell({ children }: { children: ReactNode }) {
   if (needsLogin || !meQuery.data || blocked) return null;
 
   const user = meQuery.data;
+  const tasks = hasModule(user, "tasks");
 
   return (
     <TaskDialogProvider>
-      {/* Both are task tools (quick-add, task search) — staff only. */}
-      {user.is_staff && <GlobalShortcuts />}
+      {/* Both are task tools (quick-add, task search) — tasks module only. */}
+      {tasks && <GlobalShortcuts />}
       <div className="h-dvh flex flex-col lg:flex-row overflow-hidden">
         {/* Inline sidebar — desktop only */}
         <div className="hidden lg:flex shrink-0">
@@ -201,7 +204,7 @@ export function Shell({ children }: { children: ReactNode }) {
             *outside* the provider it returns and can't call the hook
             directly. */}
         <MobileBottomBar
-          staff={user.is_staff}
+          user={user}
           onSearch={() => setPaletteOpen(true)}
           onMenu={() => setMobileOpen(true)}
         />
@@ -223,7 +226,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </SheetContent>
         </Sheet>
       </div>
-      {user.is_staff && (
+      {tasks && (
         <CommandPalette
           open={paletteOpen}
           onClose={() => setPaletteOpen(false)}
@@ -241,18 +244,18 @@ export function Shell({ children }: { children: ReactNode }) {
  * provider it returns.
  */
 function MobileBottomBar({
-  staff,
+  user,
   onSearch,
   onMenu,
 }: {
-  staff: boolean;
+  user: Me;
   onSearch: () => void;
   onMenu: () => void;
 }) {
   const { createTask } = useTaskDialog();
   return (
     <BottomBar
-      staff={staff}
+      user={user}
       onQuickAdd={() => createTask()}
       onSearch={onSearch}
       onMenu={onMenu}

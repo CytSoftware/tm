@@ -9,32 +9,49 @@
  *
  * Five slots: Home, Tasks, a raised center Quick Add, Search, Menu. Home and
  * Tasks are real navigation (usePathname/useRouter); Search/Menu/Quick Add
- * are callbacks so Shell owns the palette/sheet/task-dialog state. Non-staff
- * users have no tasks, so they get Wiki, Drive, Meetings and Menu instead.
+ * are callbacks so Shell owns the palette/sheet/task-dialog state. Users
+ * without the tasks module get up to three of their other pages and Menu.
  */
 
 import {
   AudioLines,
   BookText,
+  ChartColumn,
+  Handshake,
   HardDrive,
   Home,
   LayoutDashboard,
   Menu,
   Plus,
   Search,
+  Sparkles,
+  Target,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
+import { canOpen, hasModule } from "@/lib/auth";
+import type { Me } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+/** Slot candidates for users without tasks, most-opened first. */
+const MODULE_SLOTS = [
+  { href: "/wiki", label: "Wiki", icon: BookText },
+  { href: "/drive", label: "Drive", icon: HardDrive },
+  { href: "/meetings", label: "Meetings", icon: AudioLines },
+  { href: "/crm", label: "CRM", icon: Handshake },
+  { href: "/llm-wiki", label: "LLM Wiki", icon: Sparkles },
+  { href: "/reports", label: "Reports", icon: ChartColumn },
+  { href: "/bets", label: "Bets", icon: Target },
+];
+
 type BottomBarProps = {
-  staff: boolean;
+  user: Me;
   onQuickAdd: () => void;
   onSearch: () => void;
   onMenu: () => void;
 };
 
-export function BottomBar({ staff, onQuickAdd, onSearch, onMenu }: BottomBarProps) {
+export function BottomBar({ user, onQuickAdd, onSearch, onMenu }: BottomBarProps) {
   const router = useRouter();
   const pathname = usePathname();
 
@@ -46,21 +63,19 @@ export function BottomBar({ staff, onQuickAdd, onSearch, onMenu }: BottomBarProp
       className="lg:hidden shrink-0 pb-safe border-t border-border/80 bg-background"
       aria-label="Primary"
     >
-      {!staff ? (
-        <div className="grid grid-cols-4 items-center px-1">
-          {[
-            { href: "/wiki", label: "Wiki", icon: BookText },
-            { href: "/drive", label: "Drive", icon: HardDrive },
-            { href: "/meetings", label: "Meetings", icon: AudioLines },
-          ].map(({ href, label, icon: Icon }) => (
-            <NavSlot
-              key={href}
-              icon={<Icon className="size-5" />}
-              label={label}
-              active={pathname.startsWith(href)}
-              onClick={() => router.push(href)}
-            />
-          ))}
+      {!hasModule(user, "tasks") ? (
+        <div className="grid grid-flow-col auto-cols-fr items-center px-1">
+          {MODULE_SLOTS.filter(({ href }) => canOpen(user, href))
+            .slice(0, 3)
+            .map(({ href, label, icon: Icon }) => (
+              <NavSlot
+                key={href}
+                icon={<Icon className="size-5" />}
+                label={label}
+                active={pathname.startsWith(href)}
+                onClick={() => router.push(href)}
+              />
+            ))}
           <NavSlot icon={<Menu className="size-5" />} label="Menu" onClick={onMenu} />
         </div>
       ) : (

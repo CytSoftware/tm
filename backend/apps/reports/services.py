@@ -37,7 +37,7 @@ def visible_reports(user, *, search: str = "", project=None) -> QuerySet[Report]
     ``user=None`` is a user-less operator credential and sees everything
     (see ``scope_for_caller``).
     """
-    qs = scope_for_caller(Report.objects.select_related("project", "created_by"), user)
+    qs = scope_for_caller(Report.objects.select_related("project", "created_by"), user, "reports")
     if search:
         qs = qs.filter(Q(title__icontains=search) | Q(summary__icontains=search))
     if project not in (None, ""):
@@ -47,7 +47,7 @@ def visible_reports(user, *, search: str = "", project=None) -> QuerySet[Report]
 
 def get_report(user, ref) -> Report:
     pk = pk_from_key(ref)
-    report = scope_for_caller(Report.objects.select_related("project"), user).filter(pk=pk).first()
+    report = scope_for_caller(Report.objects.select_related("project"), user, "reports").filter(pk=pk).first()
     if pk is None or report is None:
         raise ReportError(f"Report {ref!r} not found.")
     return report

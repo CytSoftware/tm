@@ -165,3 +165,6 @@ export const crmActivityKey = (days: number, project = "") =>
 export const crmProjectsKey = () => ["crm", "projects"] as const;
 export const crmPaymentsKey = (filtersKey = "") => ["crm", "payments", filtersKey] as const;
 export const crmLicencesKey = (filtersKey = "") => ["crm", "licences", filtersKey] as const;
+
+/** Settings → Access (staff only): every user's modules and projects. */
+export const accessKey = () => ["access"] as const;

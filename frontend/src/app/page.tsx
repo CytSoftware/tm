@@ -23,11 +23,19 @@ import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import { BetsOverview } from "@/components/dashboard/BetsOverview";
 import { MyTasks } from "@/components/dashboard/MyTasks";
 import { WeekOverview } from "@/components/dashboard/WeekOverview";
+import { useHasModule } from "@/hooks/use-access";
 import { PeriodMasthead } from "@/components/bets/PeriodMasthead";
 import { currentPeriodStart } from "@/lib/periods";
+import { cn } from "@/lib/utils";
 
 export default function DashboardPage() {
   const [period, setPeriod] = useState<string>(() => currentPeriodStart());
+  // Shell only lets you in with tasks or bets; each section needs its own
+  // module (This week reads /api/analytics/), and an unrendered section
+  // fires no request.
+  const tasks = useHasModule("tasks");
+  const bets = useHasModule("bets");
+  const analytics = useHasModule("analytics");
 
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -39,15 +47,19 @@ export default function DashboardPage() {
       <div className="flex-1 min-h-0 overflow-y-auto bg-muted/40 px-4 py-5">
         <PeriodMasthead period={period} onChange={setPeriod} />
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-          <div className="min-w-0">
-            <BetsOverview period={period} />
-          </div>
-          <div className="min-w-0 space-y-5 order-first lg:order-none">
-            <WeekOverview />
-            <MyTasks />
-            <ActivityFeed />
-          </div>
+        <div className={cn("grid grid-cols-1 gap-5 items-start", tasks && bets && "lg:grid-cols-2")}>
+          {bets && (
+            <div className="min-w-0">
+              <BetsOverview period={period} />
+            </div>
+          )}
+          {tasks && (
+            <div className="min-w-0 space-y-5 order-first lg:order-none">
+              {analytics && <WeekOverview />}
+              <MyTasks />
+              <ActivityFeed />
+            </div>
+          )}
         </div>
       </div>
     </div>

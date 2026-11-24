@@ -6,6 +6,8 @@ from django.core.cache import cache
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.tasks.access import restrict_to_projects
+
 from .github import GitHubUnavailable, app_jwt, available_repositories, pages, request
 from .models import ProjectRepository
 from .services import extract_task_keys
@@ -13,7 +15,12 @@ from .services import extract_task_keys
 
 class GitHubPullRequestsView(APIView):
     def get(self, http_request):
-        links = list(ProjectRepository.objects.select_related("project"))
+        # Only repositories of projects whose tasks the caller can see.
+        links = list(
+            restrict_to_projects(
+                ProjectRepository.objects.select_related("project"), http_request.user, "tasks"
+            )
+        )
         if not links:
             return Response({"results": [], "repositories": [], "errors": []})
         refresh = http_request.query_params.get("refresh") == "true"

@@ -18,6 +18,7 @@ from django.utils.dateparse import parse_date
 
 from apps.meetings.models import Entity, EntityEmail, EntityKind
 from apps.meetings.services import entity_slug, resolve_entity
+from apps.tasks.access import can_see_project, has_full_access
 from apps.tasks.broadcast import broadcast_task_event
 from apps.tasks.models import (
     Column,
@@ -47,6 +48,51 @@ UNSET: Any = object()
 
 class CrmError(ValueError):
     """A write was refused for a reason the caller should be told about."""
+
+
+# ---------------------------------------------------------------------------
+# Access
+# ---------------------------------------------------------------------------
+
+
+def check_reach(
+    user,
+    module: str,
+    *,
+    project: Any = UNSET,
+    lead: Lead | None = None,
+    lead_required: bool = False,
+    meeting=None,
+    licence: Licence | None = None,
+    entities: Iterable[Entity | None] = (),
+) -> None:
+    """Refuse a write that names something ``user`` can't see in ``module``.
+
+    Unknown-looking errors on purpose: an id in someone else's project must
+    read as "not found", not confirm that it exists. ``user=None`` (a
+    user-less operator credential) and staff pass.
+    """
+    if user is None or has_full_access(user):
+        return
+    if lead_required and lead is None:
+        raise CrmError("Pick a lead — an update without one is only visible to staff.")
+    if project is not UNSET and not can_see_project(user, getattr(project, "pk", None), module):
+        raise CrmError("Pick a project you have access to.")
+    if lead is not None and not can_see_project(user, lead.project_id, module):
+        raise CrmError(f"Lead {lead.key!r} not found.")
+    if licence is not None and not can_see_project(user, licence.project_id, "billing"):
+        raise CrmError(f"No licence with id {licence.pk}.")
+    if meeting is not None and not can_see_project(user, meeting.project_id, "meetings"):
+        raise CrmError(f"Meeting {meeting.key!r} not found.")
+    wanted = {e.pk for e in entities if e is not None}
+    if wanted:
+        from .query import reachable_entities
+
+        missing = wanted - set(
+            reachable_entities(user).filter(pk__in=wanted).values_list("pk", flat=True)
+        )
+        if missing:
+            raise CrmError(f"No person or company with id {min(missing)}.")
 
 
 # ---------------------------------------------------------------------------
@@ -185,10 +231,11 @@ def update_contact(entity: Entity, data: dict[str, Any]) -> Entity:
 
 
 @transaction.atomic
-def create_contact(data: dict[str, Any]) -> tuple[Entity, bool]:
+def create_contact(data: dict[str, Any], *, viewer=None) -> tuple[Entity, bool]:
     """Find-or-create by name (slug, then aliases — same as meeting ingest, so
     a contact added here is the one the next recording lands on), then apply
-    the fields. Returns ``(entity, created)``."""
+    the fields. Returns ``(entity, created)``. A name that lands on someone
+    only another project's CRM knows is refused for ``viewer``."""
     kind = data.get("kind") or EntityKind.PERSON
     name = (data.get("name") or "").strip()
     if not name:
@@ -196,6 +243,8 @@ def create_contact(data: dict[str, Any]) -> tuple[Entity, bool]:
     before = Entity.objects.filter(kind=kind).count()
     entity = resolve_entity(kind, name)
     created = Entity.objects.filter(kind=kind).count() > before
+    if not created:
+        check_reach(viewer, "crm", entities=[entity])
     fields = {k: v for k, v in data.items() if k not in ("kind", "name")}
     if not created:
         # The name matched someone we already know: blank form fields must
@@ -524,10 +573,15 @@ def _inherit_from_licence(payment: Payment) -> None:
     )
 
 
-def save_payment(payment: Payment | None, data: dict[str, Any]) -> Payment:
+def save_payment(payment: Payment | None, data: dict[str, Any], *, viewer=None) -> Payment:
     """Create (``payment=None``) or edit. A licence supplies title, company,
     project and lead; otherwise a linked lead fills in a missing company and
-    project, so "this payment is for LEAD-026" is enough."""
+    project, so "this payment is for LEAD-026" is enough. ``viewer`` must be
+    able to see what it names and where it ends up (``check_reach``)."""
+    check_reach(
+        viewer, "billing", lead=data.get("lead"), licence=data.get("licence"),
+        entities=[data.get("company")],
+    )
     created = payment is None
     payment = payment or Payment()
     for field in PAYMENT_FIELDS:
@@ -540,6 +594,7 @@ def save_payment(payment: Payment | None, data: dict[str, Any]) -> Payment:
             payment.company_id = payment.lead.company_id
         if payment.project_id is None:
             payment.project_id = payment.lead.project_id
+    check_reach(viewer, "billing", project=payment.project)
     _check_payment(payment)
     payment.save()
     broadcast_crm_event("payment.created" if created else "payment.updated", {"id": payment.id})
@@ -561,13 +616,19 @@ LICENCE_FIELDS = ("title", "company", "project", "starts_on", "ends_on", "lead")
 
 @transaction.atomic
 def save_licence(
-    licence: Licence | None, data: dict[str, Any], *, plan: Iterable[dict[str, Any]] = ()
+    licence: Licence | None,
+    data: dict[str, Any],
+    *,
+    plan: Iterable[dict[str, Any]] = (),
+    viewer=None,
 ) -> Licence:
     """Create (``licence=None``) or edit. A linked lead fills in a missing
     company and project. ``plan`` creates the licence's payments in the same
     go — ``{type, amount, due_on, paid_on?}`` each; the rest comes from the
     licence. Editing a licence updates its payments' inherited fields. A
-    renewal is a new licence (with its own plan), not an edit."""
+    renewal is a new licence (with its own plan), not an edit. ``viewer``
+    as in ``save_payment``."""
+    check_reach(viewer, "billing", lead=data.get("lead"), entities=[data.get("company")])
     created = licence is None
     licence = licence or Licence()
     for field in LICENCE_FIELDS:
@@ -578,6 +639,7 @@ def save_licence(
             licence.company_id = licence.lead.company_id
         if licence.project_id is None:
             licence.project_id = licence.lead.project_id
+    check_reach(viewer, "billing", project=licence.project)
     if not (licence.title or "").strip():
         raise CrmError("A licence needs a title (the product, e.g. Mowafeq Workspace).")
     if licence.company_id is None:

@@ -94,11 +94,28 @@ export type Me = User & {
   /** GitHub login mapped to this user (UserProfile.github_username). Empty
    *  string when unset — PR review requests can't be routed to them. */
   github_username: string;
-  /** Staff see every app and project; everyone else only their projects in
-   *  tasks, wiki, Drive, LLM wiki and meetings. */
+  /** Staff see every module and project; everyone else only the modules
+   *  and projects granted in Settings → Access. */
   is_staff: boolean;
+  /** Every key for staff. */
+  modules: ModuleKey[];
   preferences: MePreferences;
 };
+
+/** An app area a non-staff user can be granted (`MODULES` in
+ *  backend/apps/tasks/access.py). */
+export type ModuleKey =
+  | "tasks"
+  | "bets"
+  | "analytics"
+  | "crm"
+  | "billing"
+  | "meetings"
+  | "reports"
+  | "wiki"
+  | "llm_wiki"
+  | "drive"
+  | "operations";
 
 /** Semantic column kind — a fixed vocabulary independent of the column's
  *  (renameable) display name. Server-derives `is_done` from `kind === "done"`. */

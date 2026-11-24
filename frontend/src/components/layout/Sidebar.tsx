@@ -55,13 +55,13 @@ import { ModeToggle } from "./ModeToggle";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import { meKey } from "@/lib/query-keys";
-import { canOpen, logout as apiLogout } from "@/lib/auth";
+import { canOpen, hasModule, logout as apiLogout } from "@/lib/auth";
 import { useSidebar } from "@/lib/sidebar-state";
 import { useActiveProject } from "@/lib/active-project";
 import { usePullRequestsQuery } from "@/hooks/use-pull-requests";
 import { pullRequestQueues } from "@/lib/pull-request-queues";
 import { useEventSourcesQuery } from "@/hooks/use-events";
-import { CRM_SECTIONS, crmSectionHref } from "@/lib/crm-meta";
+import { crmSectionHref, crmSectionsFor } from "@/lib/crm-meta";
 import { QuickActionIcon } from "@/lib/quick-actions";
 import type { Me, QuickAction, User } from "@/lib/types";
 
@@ -84,8 +84,8 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
 
   const isCollapsed = mobile ? false : collapsed;
 
-  const eventSourcesQuery = useEventSourcesQuery(user.is_staff);
-  const pullRequests = usePullRequestsQuery(user.is_staff);
+  const eventSourcesQuery = useEventSourcesQuery(hasModule(user, "operations"));
+  const pullRequests = usePullRequestsQuery(hasModule(user, "tasks"));
   const reviewQueues = pullRequestQueues(pullRequests.data?.results ?? [], user.github_username);
   const toReviewCount = reviewQueues.mine.length + reviewQueues.unassigned.length;
   const quickActions = user.preferences.quick_actions ?? [];
@@ -116,6 +116,9 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
     onClose?.();
   }
 
+  /** A group renders only when the user can open one of its pages, so no
+   *  empty header is left behind. */
+  const anyOpen = (...hrefs: string[]) => hrefs.some((href) => canOpen(user, href));
   const iconCls = isCollapsed ? "size-4" : "size-3.5 shrink-0 text-muted-foreground";
   function go(href: string) {
     router.push(href);
@@ -263,8 +266,7 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
         )}
         {/* Grouped by job, most-opened first. Every link is hidden per user
             (`canOpen`), so an employee sees e.g. Business as just Meetings
-            and Reports; the all-staff groups are gated as a whole so no empty
-            header is left behind. */}
+            and Reports; a group with nothing to open is dropped (`anyOpen`). */}
         <SidebarGroup collapsed={isCollapsed}>
           {isCollapsed && <NotificationInbox variant="sidebar-collapsed" />}
           {link("/", "Home", Home, { active: pathname === "/" })}
@@ -274,39 +276,51 @@ export function Sidebar({ user, mobile, onClose }: SidebarProps) {
           })}
         </SidebarGroup>
 
-        <SidebarGroup title="Business" collapsed={isCollapsed}>
-          {/* useSearchParams (the active section) needs a Suspense boundary
-              for the static build; the fallback is the plain link. */}
-          {canOpen(user, "/crm") && (
-            <Suspense
-              fallback={<CrmNavLink collapsed={isCollapsed} pathname={pathname} onClose={onClose} />}
-            >
-              <CrmNav collapsed={isCollapsed} pathname={pathname} onClose={onClose} />
-            </Suspense>
-          )}
-          {link("/meetings", "Meetings", AudioLines)}
-          {link("/reports", "Reports", ChartColumn)}
-        </SidebarGroup>
+        {anyOpen("/crm", "/meetings", "/reports") && (
+          <SidebarGroup title="Business" collapsed={isCollapsed}>
+            {/* useSearchParams (the active section) needs a Suspense boundary
+                for the static build; the fallback is the plain link. */}
+            {canOpen(user, "/crm") && (
+              <Suspense
+                fallback={
+                  <CrmNavLink
+                    collapsed={isCollapsed}
+                    pathname={pathname}
+                    href={crmSectionHref(crmSectionsFor(user)[0].id)}
+                    onClose={onClose}
+                  />
+                }
+              >
+                <CrmNav user={user} collapsed={isCollapsed} pathname={pathname} onClose={onClose} />
+              </Suspense>
+            )}
+            {link("/meetings", "Meetings", AudioLines)}
+            {link("/reports", "Reports", ChartColumn)}
+          </SidebarGroup>
+        )}
 
-        <SidebarGroup title="Knowledge" collapsed={isCollapsed}>
-          {link("/wiki", "Wiki", BookText)}
-          {link("/llm-wiki", "LLM Wiki", Sparkles)}
-          {link("/drive", "Drive", HardDrive)}
-        </SidebarGroup>
+        {anyOpen("/wiki", "/llm-wiki", "/drive") && (
+          <SidebarGroup title="Knowledge" collapsed={isCollapsed}>
+            {link("/wiki", "Wiki", BookText)}
+            {link("/llm-wiki", "LLM Wiki", Sparkles)}
+            {link("/drive", "Drive", HardDrive)}
+          </SidebarGroup>
+        )}
 
-        {user.is_staff && (
+        {anyOpen("/bets", "/analytics") && (
           <SidebarGroup title="Strategy" collapsed={isCollapsed}>
             {link("/bets", "Bets", Target)}
             {link("/analytics", "Analytics", BarChart3)}
           </SidebarGroup>
         )}
 
-        {user.is_staff && (
+        {hasModule(user, "operations") && (
           <SidebarGroup
             title="Operations"
             collapsed={isCollapsed}
             action={
               !isCollapsed &&
+              user.is_staff &&
               monitoringSources.length > 0 && (
                 <button
                   type="button"
@@ -442,10 +456,12 @@ function NavLink({
  * that either way for the rest of the session.
  */
 function CrmNav({
+  user,
   collapsed,
   pathname,
   onClose,
 }: {
+  user: Me;
   collapsed: boolean;
   pathname: string;
   onClose?: () => void;
@@ -455,8 +471,10 @@ function CrmNav({
   const inCrm = pathname.startsWith("/crm");
   const [override, setOverride] = useState<boolean | null>(null);
   const open = !collapsed && (override ?? inCrm);
+  // Only the sections this user holds; the page lands on the first of them.
+  const sections = crmSectionsFor(user);
   const current = inCrm
-    ? (CRM_SECTIONS.find((s) => s.id === params.get("tab"))?.id ?? "leads")
+    ? (sections.find((s) => s.id === params.get("tab"))?.id ?? sections[0].id)
     : null;
   // The project scope survives switching sections.
   const keep = inCrm ? { p: params.get("p") } : {};
@@ -466,13 +484,14 @@ function CrmNav({
       <CrmNavLink
         collapsed={collapsed}
         pathname={pathname}
+        href={crmSectionHref(sections[0].id)}
         onClose={onClose}
         open={open}
         onToggle={() => setOverride(!open)}
       />
       {open && (
         <div className="ml-[17px] space-y-0.5 border-l border-sidebar-border pl-1.5">
-          {CRM_SECTIONS.map((s) => (
+          {sections.map((s) => (
             <button
               key={s.id}
               type="button"
@@ -501,12 +520,14 @@ function CrmNav({
 function CrmNavLink({
   collapsed,
   pathname,
+  href,
   onClose,
   open,
   onToggle,
 }: {
   collapsed: boolean;
   pathname: string;
+  href: string;
   onClose?: () => void;
   open?: boolean;
   onToggle?: () => void;
@@ -514,7 +535,7 @@ function CrmNavLink({
   const router = useRouter();
   const inCrm = pathname.startsWith("/crm");
   const go = () => {
-    router.push("/crm");
+    router.push(href);
     onClose?.();
   };
   const icon = (

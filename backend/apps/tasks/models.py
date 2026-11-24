@@ -99,8 +99,9 @@ class Project(TimestampedModel):
         blank=True,
         related_name="member_projects",
         help_text=(
-            "Non-staff users who can see this project's tasks, meetings and "
-            "wiki pages. Staff see every project regardless."
+            "Non-staff users of this project. With a project-scoped module "
+            "(tasks, CRM, billing, meetings, reports, wiki, LLM wiki) they see "
+            "this project's rows in it. Staff see every project regardless."
         ),
     )
     drive_folder = models.SlugField(
@@ -547,6 +548,14 @@ class UserProfile(models.Model):
             "insensitive). Set by hand via the admin in v1 — see "
             "apps.integrations.rules.find_user_by_github_login. No "
             "uniqueness constraint; the lookup warns on duplicates."
+        ),
+    )
+    modules = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Module keys this non-staff user may open (see "
+            "apps.tasks.access.MODULES). Empty = nothing. Staff ignore it."
         ),
     )
 

@@ -93,7 +93,7 @@ def related_meetings(
 
     if user is not None:
         visible = set(
-            restrict_to_projects(Meeting.objects.filter(pk__in=scores), user)
+            restrict_to_projects(Meeting.objects.filter(pk__in=scores), user, "meetings")
             .values_list("pk", flat=True)
         )
         scores = {pk: n for pk, n in scores.items() if pk in visible}
@@ -134,7 +134,7 @@ def build_graph(
     """
     qs = filter_meetings(filters).defer(*BODY_FIELDS)
     if user is not None:
-        qs = restrict_to_projects(qs, user)
+        qs = restrict_to_projects(qs, user, "meetings")
     meetings = list(qs)
     meeting_ids = {m.pk for m in meetings}
     nodes: list[dict[str, Any]] = []

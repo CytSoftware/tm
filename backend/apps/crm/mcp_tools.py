@@ -4,6 +4,10 @@ Same rule as :mod:`apps.meetings.mcp_tools`: **no logic of its own**. Reads go
 through ``query.py``, writes through ``services.py``. What lives here is the
 translation from an agent-friendly flat argument list — people by name, id or
 email; leads by key; users by username — into those modules.
+
+Every tool takes ``mcp_user`` and scopes through the same ``user`` argument as
+REST; a lead, meeting or contact the caller can't see reads as "not found".
+``mcp_user=None`` is a user-less operator credential and sees everything.
 """
 
 from __future__ import annotations
@@ -19,12 +23,14 @@ from django.utils.dateparse import parse_date, parse_datetime
 
 from apps.meetings.mcp_tools import _get_entity
 from apps.meetings.models import Entity, EntityEmail, EntityKind, Meeting
+from apps.tasks.access import can_see_project, scope_for_caller
 from apps.tasks.models import Task, TransitionSource
 
 from . import services
 from .models import Lead, LeadStage, Update, UpdateKind
 from .query import (
     base_contact_queryset,
+    base_update_queryset,
     filter_contacts,
     filter_leads,
     filter_updates,
@@ -85,26 +91,43 @@ def _reporter(mcp_user):
     return _resolve_reporter_for_mcp(mcp_user)
 
 
-def _lead(ref: str) -> Lead:
-    lead = Lead.objects.filter(key__iexact=str(ref).strip()).first()
+def _lead(ref: str, mcp_user, module: str = "crm") -> Lead:
+    lead = (
+        scope_for_caller(Lead.objects.all(), mcp_user, module)
+        .filter(key__iexact=str(ref).strip())
+        .first()
+    )
     if lead is None:
         raise ValueError(f"Lead {ref!r} not found (pass a key like LEAD-003).")
     return lead
 
 
-def _meeting(ref: str) -> Meeting:
-    meeting = Meeting.objects.filter(key__iexact=str(ref).strip()).first()
+def _meeting(ref: str, mcp_user) -> Meeting:
+    meeting = (
+        scope_for_caller(Meeting.objects.all(), mcp_user, "meetings")
+        .filter(key__iexact=str(ref).strip())
+        .first()
+    )
     if meeting is None:
         raise ValueError(f"Meeting {ref!r} not found (pass a key like MTG-064).")
     return meeting
 
 
-def _scope(ref: str | int | None) -> int | None:
+def _scope(ref: str | int | None, mcp_user, module: str = "crm") -> int | None:
     """A project filter for the read tools — unknown names raise, so an agent
-    learns about a typo instead of getting an empty list."""
+    learns about a typo instead of getting an empty list. A project the
+    caller can't see in ``module`` is unknown too."""
     if ref in (None, ""):
         return None
-    return _guard(services.resolve_project, ref).pk
+    project = _guard(services.resolve_project, ref)
+    if mcp_user is not None and not can_see_project(mcp_user, project.pk, module):
+        raise ValueError(f"No project {ref!r}.")
+    return project.pk
+
+
+def _project(ref: str, mcp_user, module: str):
+    """A project to file under, by the same rule as ``_scope``."""
+    return services.Project.objects.get(pk=_scope(ref, mcp_user, module))
 
 
 def _stage(value: str) -> str:
@@ -150,8 +173,8 @@ def _step(task: Task) -> dict:
     return _json({**step_dict(task), "assignees": [u.username for u in task.assignees.all()]})
 
 
-def _update(u: Update) -> dict:
-    data = update_dict(u)
+def _update(u: Update, mcp_user) -> dict:
+    data = update_dict(u, context={"user": mcp_user})
     if u.task_id:
         data["task"] = _step(u.task)
     data["users"] = [x["username"] for x in data["users"]]
@@ -160,19 +183,29 @@ def _update(u: Update) -> dict:
     return _json(data)
 
 
-def _contact(entity: Entity, *, detail: bool = False, limit: int = 30) -> dict:
-    fresh = base_contact_queryset().get(pk=entity.pk)
-    data = dict(ContactSerializer(fresh).data)
+def _visible_contact(entity: Entity, mcp_user) -> Entity:
+    fresh = base_contact_queryset(user=mcp_user).filter(pk=entity.pk).first()
+    if fresh is None:
+        raise ValueError(f"No person or company matches {entity.pk}.")
+    return fresh
+
+
+def _contact(entity: Entity, mcp_user, *, detail: bool = False, limit: int = 30) -> dict:
+    fresh = _visible_contact(entity, mcp_user)
+    data = dict(ContactSerializer(fresh, context={"user": mcp_user}).data)
     data.pop("slug", None)
     tab = "companies" if fresh.kind == EntityKind.COMPANY else "people"
     data["url"] = f"{settings.FRONTEND_URL}/crm?tab={tab}&c={fresh.id}"
     if detail:
         if fresh.kind == EntityKind.COMPANY:
+            people = base_contact_queryset(user=mcp_user).filter(company=fresh)
             data["people"] = [
-                {"id": p.id, "name": p.name, "position": p.position} for p in fresh.people.all()
+                {"id": p.id, "name": p.name, "position": p.position} for p in people
             ]
-        data["leads"] = [_lead_summary(lead) for lead in filter_leads({"entity": fresh.pk})]
-        data["updates"] = [_update(u) for u in filter_updates({"entity": fresh.pk})[:limit]]
+        leads = filter_leads({"entity": fresh.pk}, user=mcp_user)
+        data["leads"] = [_lead_summary(lead) for lead in leads]
+        updates = filter_updates({"entity": fresh.pk}, user=mcp_user)[:limit]
+        data["updates"] = [_update(u, mcp_user) for u in updates]
     return _json(data)
 
 
@@ -187,16 +220,21 @@ def search_contacts(
     company: str | int | None = None,
     project: str | None = None,
     limit: int = 50,
+    mcp_user=None,
 ) -> list[dict[str, Any]]:
-    filters: dict[str, Any] = {"search": query, "kind": kind, "project": _scope(project)}
+    filters: dict[str, Any] = {
+        "search": query, "kind": kind, "project": _scope(project, mcp_user),
+    }
     if company not in (None, ""):
         filters["company"] = _entity(company, EntityKind.COMPANY).pk
-    rows = filter_contacts(filters)[: max(1, min(limit, MAX_LIST_LIMIT))]
-    return [_contact(e) for e in rows]
+    rows = filter_contacts(filters, user=mcp_user)[: max(1, min(limit, MAX_LIST_LIMIT))]
+    return [_contact(e, mcp_user) for e in rows]
 
 
-def get_contact(contact: str | int, kind: str | None = None, limit: int = 30) -> dict:
-    return _contact(_entity(contact, kind), detail=True, limit=limit)
+def get_contact(
+    contact: str | int, kind: str | None = None, limit: int = 30, mcp_user=None
+) -> dict:
+    return _contact(_entity(contact, kind), mcp_user, detail=True, limit=limit)
 
 
 def upsert_contact(
@@ -210,6 +248,7 @@ def upsert_contact(
     website: str | None = None,
     wiki_slug: str | None = None,
     rename_to: str | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
     if kind not in EntityKind.values:
         raise ValueError("kind must be 'person' or 'company'.")
@@ -231,15 +270,20 @@ def upsert_contact(
     if text.isdigit() or "@" in text:
         # An id or address names one entity already; ``kind`` only
         # disambiguates names, so a company id works under the default.
-        entity, created = _entity(text), False
+        entity, created = _visible_contact(_entity(text), mcp_user), False
         _guard(services.update_contact, entity, data)
     else:
-        entity, created = _guard(services.create_contact, {"name": text, "kind": kind, **data})
+        entity, created = _guard(
+            services.create_contact, {"name": text, "kind": kind, **data}, viewer=mcp_user
+        )
     # Rename after resolving: passing the new name to create_contact would
     # look *it* up and create a second entity.
     if rename_to:
         _guard(services.update_contact, entity, {"name": rename_to})
-    return {"created": created, **_contact(entity)}
+    if base_contact_queryset(user=mcp_user).filter(pk=entity.pk).exists():
+        return {"created": created, **_contact(entity, mcp_user)}
+    # Not on one of the caller's leads yet — it shows once it is.
+    return {"created": created, "id": entity.id, "kind": entity.kind, "name": entity.name}
 
 
 # ---------------------------------------------------------------------------
@@ -254,28 +298,30 @@ def search_leads(
     contact: str | int | None = None,
     project: str | None = None,
     limit: int = 50,
+    mcp_user=None,
 ) -> list[dict[str, Any]]:
     filters: dict[str, Any] = {
         "search": query,
         "stage": _stage(stage) if stage else None,
         "status": status,
-        "project": _scope(project),
+        "project": _scope(project, mcp_user),
     }
     if contact not in (None, ""):
         filters["entity"] = _entity(contact).pk
-    rows = filter_leads(filters)[: max(1, min(limit, MAX_LIST_LIMIT))]
+    rows = filter_leads(filters, user=mcp_user)[: max(1, min(limit, MAX_LIST_LIMIT))]
     return [_lead_summary(lead) for lead in rows]
 
 
-def get_lead(lead: str, limit: int = 50) -> dict[str, Any]:
-    target = filter_leads().get(pk=_lead(lead).pk)
+def get_lead(lead: str, limit: int = 50, mcp_user=None) -> dict[str, Any]:
+    target = filter_leads(user=mcp_user).get(pk=_lead(lead, mcp_user).pk)
     data = _lead_summary(target)
     data["people"] = [
         {"id": p.id, "name": p.name, "position": p.position} for p in lead_people(target)
     ]
     steps = open_steps().filter(crm_update__lead=target).select_related("column")
     data["open_steps"] = [_step(t) for t in steps.prefetch_related("assignees")]
-    data["updates"] = [_update(u) for u in filter_updates({"lead": target.key})[:limit]]
+    updates = filter_updates({"lead": target.key}, user=mcp_user)[:limit]
+    data["updates"] = [_update(u, mcp_user) for u in updates]
     return data
 
 
@@ -299,23 +345,29 @@ def upsert_lead(
             _guard(services._resolve_company, company) if company != "" else None
         )
     if project is not None:
-        data["project"] = _guard(services.resolve_project, project) if project != "" else None
+        data["project"] = _project(project, mcp_user, "crm") if project != "" else None
     if notes is not None:
         data["notes"] = notes
     if lost_reason is not None:
         data["lost_reason"] = lost_reason
+    _guard(
+        services.check_reach, mcp_user, "crm",
+        project=data["project"] if "project" in data else services.UNSET,
+        entities=[data.get("company")],
+    )
     if lead:
-        target = _lead(lead)
+        target = _lead(lead, mcp_user)
         _guard(services.update_lead, target, data)
     else:
         if not title:
             raise ValueError("A new lead needs a title (or pass `lead` to edit one).")
+        _guard(services.check_reach, mcp_user, "crm", project=data.get("project"))
         target = _guard(services.create_lead, data, user=_reporter(mcp_user))
-    return _lead_summary(filter_leads().get(pk=target.pk))
+    return _lead_summary(filter_leads(user=mcp_user).get(pk=target.pk))
 
 
-def delete_lead(lead: str) -> dict[str, Any]:
-    target = _lead(lead)
+def delete_lead(lead: str, mcp_user=None) -> dict[str, Any]:
+    target = _lead(lead, mcp_user)
     key = target.key
     services.delete_lead(target)
     return {"ok": True, "key": key}
@@ -354,20 +406,27 @@ def post_update(
     team = [_user(u) for u in users] if users is not None else (
         [reporter] if getattr(reporter, "is_authenticated", False) else []
     )
+    target = _lead(lead, mcp_user) if lead else None
+    tagged = [_person(p) for p in people or []]
+    linked = _meeting(meeting, mcp_user) if meeting else None
+    _guard(
+        services.check_reach, mcp_user, "crm",
+        lead=target, lead_required=True, meeting=linked, entities=tagged,
+    )
     update = _guard(
         services.post_update,
         data,
         user=reporter,
-        lead=_lead(lead) if lead else None,
-        people=[_person(p) for p in people or []],
+        lead=target,
+        people=tagged,
         users=team,
-        meeting=_meeting(meeting) if meeting else None,
+        meeting=linked,
     )
-    return _update(filter_updates().get(pk=update.pk))
+    return _update(filter_updates(user=mcp_user).get(pk=update.pk), mcp_user)
 
 
-def _update_row(update_id: int) -> Update:
-    found = Update.objects.filter(pk=update_id).first()
+def _update_row(update_id: int, mcp_user) -> Update:
+    found = base_update_queryset(user=mcp_user).filter(pk=update_id).first()
     if found is None:
         raise ValueError(f"No update {update_id} (ids are in get_lead / get_contact).")
     return found
@@ -382,25 +441,32 @@ def edit_update(
     people: list[str | int] | None = None,
     users: list[str] | None = None,
     meeting: str | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
-    target = _update_row(update_id)
+    target = _update_row(update_id, mcp_user)
     data = {"body": body, "kind": _kind(kind), "occurred_at": _aware(occurred_at)}
     kwargs: dict[str, Any] = {}
     if lead is not None:
-        kwargs["lead"] = _lead(lead) if lead else None
+        kwargs["lead"] = _lead(lead, mcp_user) if lead else None
     if meeting is not None:
-        kwargs["meeting"] = _meeting(meeting) if meeting else None
+        kwargs["meeting"] = _meeting(meeting, mcp_user) if meeting else None
     if people is not None:
         kwargs["people"] = [_person(p) for p in people]
     if users is not None:
         kwargs["users"] = [_user(u) for u in users]
+    _guard(
+        services.check_reach, mcp_user, "crm",
+        lead=kwargs.get("lead", target.lead), lead_required=True,
+        meeting=kwargs.get("meeting"), entities=kwargs.get("people", []),
+    )
     _guard(services.edit_update, target, data, **kwargs)
-    return _update(filter_updates().get(pk=target.pk))
+    return _update(filter_updates(user=mcp_user).get(pk=target.pk), mcp_user)
 
 
 def complete_next_step(task: str, done: bool = True, mcp_user=None) -> dict[str, Any]:
+    steps = scope_for_caller(Task.objects.all(), mcp_user, "crm", "crm_update__lead__project")
     target = (
-        Task.objects.select_related("column", "project")
+        steps.select_related("column", "project")
         .filter(key__iexact=task.strip(), crm_update__isnull=False)
         .first()
     )
@@ -413,16 +479,18 @@ def complete_next_step(task: str, done: bool = True, mcp_user=None) -> dict[str,
     return _step(target)
 
 
-def delete_update(update_id: int) -> dict[str, Any]:
-    services.delete_update(_update_row(update_id))
+def delete_update(update_id: int, mcp_user=None) -> dict[str, Any]:
+    services.delete_update(_update_row(update_id, mcp_user))
     return {"ok": True, "id": update_id}
 
 
 def list_crm_activity(
-    days: int = 14, limit: int = 100, project: str | None = None
+    days: int = 14, limit: int = 100, project: str | None = None, mcp_user=None
 ) -> list[dict[str, Any]]:
-    rows = filter_updates({"days": max(1, days), "project": _scope(project)})
-    return [_update(u) for u in rows[: max(1, min(limit, MAX_LIST_LIMIT))]]
+    rows = filter_updates(
+        {"days": max(1, days), "project": _scope(project, mcp_user)}, user=mcp_user
+    )
+    return [_update(u, mcp_user) for u in rows[: max(1, min(limit, MAX_LIST_LIMIT))]]
 
 
 # ---------------------------------------------------------------------------
@@ -448,15 +516,19 @@ def list_payments(
     company: str | int | None = None,
     lead: str | None = None,
     limit: int = 100,
+    mcp_user=None,
 ) -> list[dict[str, Any]]:
     from .query import filter_payments
     from .serializers import payment_dict
 
-    filters: dict[str, Any] = {"status": status, "type": type, "project": _scope(project), "lead": lead}
+    filters: dict[str, Any] = {
+        "status": status, "type": type, "project": _scope(project, mcp_user, "billing"),
+        "lead": lead,
+    }
     if company not in (None, ""):
         filters["company"] = _entity(company, EntityKind.COMPANY).pk
-    rows = filter_payments(filters)[: max(1, min(limit, MAX_LIST_LIMIT))]
-    return [_json(payment_dict(p)) for p in rows]
+    rows = filter_payments(filters, user=mcp_user)[: max(1, min(limit, MAX_LIST_LIMIT))]
+    return [_json(payment_dict(p, user=mcp_user)) for p in rows]
 
 
 def record_payment(
@@ -470,10 +542,10 @@ def record_payment(
     paid_on: str | None = None,
     lead: str | None = None,
     licence: int | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
     from decimal import Decimal
 
-    from .models import Payment
     from .query import filter_payments
     from .serializers import payment_dict
 
@@ -484,7 +556,7 @@ def record_payment(
         # Existing companies only: a typo must not create a debtor.
         data["company"] = _entity(company, EntityKind.COMPANY)
     if project is not None:
-        data["project"] = _guard(services.resolve_project, project) if project != "" else None
+        data["project"] = _project(project, mcp_user, "billing") if project != "" else None
     if type is not None:
         data["type"] = type.strip().lower().replace(" ", "_").replace("-", "_")
     if amount is not None:
@@ -494,22 +566,22 @@ def record_payment(
     if paid_on is not None:
         data["paid_on"] = _date(paid_on, "paid_on")
     if lead is not None:
-        data["lead"] = _lead(lead) if lead != "" else None
+        data["lead"] = _lead(lead, mcp_user, "billing") if lead != "" else None
     if licence is not None:
-        data["licence"] = _licence(licence) if licence else None
+        data["licence"] = _licence(licence, mcp_user) if licence else None
     target = None
     if payment_id is not None:
-        target = Payment.objects.filter(pk=payment_id).first()
+        target = filter_payments(user=mcp_user).filter(pk=payment_id).first()
         if target is None:
             raise ValueError(f"No payment with id {payment_id}.")
-    saved = _guard(services.save_payment, target, data)
-    return _json(payment_dict(filter_payments().get(pk=saved.pk)))
+    saved = _guard(services.save_payment, target, data, viewer=mcp_user)
+    return _json(payment_dict(filter_payments(user=mcp_user).get(pk=saved.pk), user=mcp_user))
 
 
-def _licence(ref: int):
+def _licence(ref: int, mcp_user):
     from .models import Licence
 
-    row = Licence.objects.filter(pk=ref).first()
+    row = scope_for_caller(Licence.objects.all(), mcp_user, "billing").filter(pk=ref).first()
     if row is None:
         raise ValueError(f"No licence with id {ref}.")
     return row
@@ -521,15 +593,18 @@ def list_licences(
     company: str | int | None = None,
     lead: str | None = None,
     limit: int = 100,
+    mcp_user=None,
 ) -> list[dict[str, Any]]:
     from .query import filter_licences
     from .serializers import licence_dict
 
-    filters: dict[str, Any] = {"status": status, "project": _scope(project), "lead": lead}
+    filters: dict[str, Any] = {
+        "status": status, "project": _scope(project, mcp_user, "billing"), "lead": lead,
+    }
     if company not in (None, ""):
         filters["company"] = _entity(company, EntityKind.COMPANY).pk
-    rows = filter_licences(filters)[: max(1, min(limit, MAX_LIST_LIMIT))]
-    return [_json(licence_dict(lc)) for lc in rows]
+    rows = filter_licences(filters, user=mcp_user)[: max(1, min(limit, MAX_LIST_LIMIT))]
+    return [_json(licence_dict(lc, user=mcp_user)) for lc in rows]
 
 
 def upsert_licence(
@@ -541,6 +616,7 @@ def upsert_licence(
     ends_on: str | None = None,
     lead: str | None = None,
     payments: list[dict[str, Any]] | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
     from decimal import Decimal
 
@@ -553,14 +629,14 @@ def upsert_licence(
     if company not in (None, ""):
         data["company"] = _entity(company, EntityKind.COMPANY)
     if project is not None:
-        data["project"] = _guard(services.resolve_project, project) if project != "" else None
+        data["project"] = _project(project, mcp_user, "billing") if project != "" else None
     if starts_on is not None:
         data["starts_on"] = _date(starts_on, "starts_on")
     if ends_on is not None:
         data["ends_on"] = _date(ends_on, "ends_on")
     if lead is not None:
-        data["lead"] = _lead(lead) if lead != "" else None
-    target = _licence(licence_id) if licence_id is not None else None
+        data["lead"] = _lead(lead, mcp_user, "billing") if lead != "" else None
+    target = _licence(licence_id, mcp_user) if licence_id is not None else None
     plan = []
     for row in payments or []:
         if target is not None:
@@ -571,5 +647,5 @@ def upsert_licence(
             "due_on": _date(row.get("due_on"), "due_on"),
             "paid_on": _date(row.get("paid_on"), "paid_on"),
         })
-    saved = _guard(services.save_licence, target, data, plan=plan)
-    return _json(licence_dict(filter_licences().get(pk=saved.pk)))
+    saved = _guard(services.save_licence, target, data, plan=plan, viewer=mcp_user)
+    return _json(licence_dict(filter_licences(user=mcp_user).get(pk=saved.pk), user=mcp_user))

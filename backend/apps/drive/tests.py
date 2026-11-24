@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from apps.mcp_server import tools
-from apps.tasks.models import Project
+from apps.tasks.models import Project, UserProfile
 
 from . import b2
 from .layout import check_folder, drive_path, is_hidden
@@ -101,6 +101,7 @@ class DriveLayoutTests(TestCase):
 
     def test_mcp_large_upload_employee_reserves_a_reachable_key(self):
         emp = User.objects.create_user("emp", password="x")
+        UserProfile.objects.update_or_create(user=emp, defaults={"modules": ["drive"]})
         self.mow.members.add(emp)
         DriveFile.objects.create(key="mowafeq/sales/shared/").shared_with.add(emp)
         taken = {"mowafeq/sales/shared/a.pdf": {"key": "mowafeq/sales/shared/a.pdf"}}
@@ -133,6 +134,7 @@ class DriveEndpointTests(TestCase):
         Project.objects.create(name="mowafeq", prefix="MOW")
         self.staff = User.objects.create_user("boss", password="x", is_staff=True)
         self.emp = User.objects.create_user("emp", password="x")
+        UserProfile.objects.update_or_create(user=self.emp, defaults={"modules": ["drive"]})
 
     def test_root_shows_projects_and_inbox_but_not_system(self, _):
         self.client.force_login(self.staff)

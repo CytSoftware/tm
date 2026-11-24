@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps.tasks.models import Project
+from apps.tasks.models import Project, UserProfile
 
 from . import services
 from .models import pk_from_key
@@ -15,6 +15,7 @@ class ReportAccessTests(TestCase):
         User = get_user_model()
         self.staff = User.objects.create_user("boss", is_staff=True)
         self.employee = User.objects.create_user("emp")
+        UserProfile.objects.update_or_create(user=self.employee, defaults={"modules": ["reports"]})
         mine = Project.objects.create(name="Mowafeq", prefix="MOW")
         other = Project.objects.create(name="Other", prefix="OTH")
         mine.members.add(self.employee)

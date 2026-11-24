@@ -129,6 +129,13 @@ def _notify_task_event(
     if verb not in NotificationVerb.values:
         return
 
+    # No row, socket push, email or phone buzz about a task the recipient
+    # couldn't open (no ``tasks`` module, or not their project).
+    from .access import can_see_project
+
+    unique_recipients = [
+        u for u in unique_recipients if can_see_project(u, task.project_id, "tasks")
+    ]
     if not unique_recipients:
         return
 

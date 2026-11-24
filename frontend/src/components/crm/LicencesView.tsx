@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Trash2 } from "lucide-react";
 
+import { useHasModule } from "@/hooks/use-access";
 import {
   type Licence,
   type Payment,
@@ -60,7 +61,8 @@ export function LicencesView({
 }: {
   licences: Licence[];
   onEdit: (l: Licence) => void;
-  onOpenLead: (key: string) => void;
+  /** Omitted without the crm module — leads can't be opened. */
+  onOpenLead?: (key: string) => void;
 }) {
   const expiring = licences.filter((l) => l.status === "expiring" && !l.renewed);
   const active = licences.filter(
@@ -327,7 +329,9 @@ function HeaderFields({
   const companies = useContacts({ kind: "company", all: "1" });
   const projects = useProjectsQuery({ includeArchived: false });
   const prefix = projects.data?.results.find((x) => String(x.id) === h.project)?.prefix ?? "";
-  const leads = useLeads(prefix);
+  // The lead picker needs the crm module; billing-only users file without one.
+  const crm = useHasModule("crm");
+  const leads = useLeads(prefix, crm);
   const companyLeads = (leads.data ?? []).filter(
     (x) => !h.company.trim() || x.company?.name.toLowerCase() === h.company.trim().toLowerCase(),
   );

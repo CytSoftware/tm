@@ -949,14 +949,20 @@ class NonStaffMcpScopeTests(TestCase):
 
         self.mine = Project.objects.create(name="Mowafeq", prefix="MOW")
         self.theirs = Project.objects.create(name="Shelter", prefix="SHE")
+        from apps.tasks.models import UserProfile
+
         self.emp = User.objects.create_user("emp")
+        # What a non-staff account reached before modules (see migration 0036).
+        UserProfile.objects.update_or_create(
+            user=self.emp, defaults={"modules": ["meetings", "reports", "wiki", "llm_wiki", "drive"]}
+        )
         self.boss = User.objects.create_user("boss", is_staff=True)
         self.mine.members.add(self.emp)
         Task.objects.create(project=self.mine, title="ours", reporter=self.boss)
         self.hidden = Task.objects.create(project=self.theirs, title="theirs", reporter=self.boss)
         self.page = Doc.objects.create(title="theirs", project=self.theirs)
 
-    def test_task_tools_are_staff_only(self):
+    def test_task_tools_need_the_tasks_module(self):
         from asgiref.sync import async_to_sync
 
         from .auth import SCOPE_SCOPES_KEY, SCOPE_USER_KEY
@@ -964,9 +970,11 @@ class NonStaffMcpScopeTests(TestCase):
 
         token = fake_request_ctx({SCOPE_USER_KEY: self.emp, SCOPE_SCOPES_KEY: ["read", "write"]})
         try:
-            for name in ("list_tasks", "create_task", "link_meeting_task"):
-                with self.assertRaisesMessage(Exception, "limited to staff"):
+            for name in ("list_tasks", "create_task"):
+                with self.assertRaisesMessage(Exception, "'tasks' module"):
                     async_to_sync(mcp.call_tool)(name, {})
+            with self.assertRaisesMessage(Exception, "limited to staff"):
+                async_to_sync(mcp.call_tool)("create_column", {})
         finally:
             reset_request_ctx(token)
 
@@ -1015,6 +1023,9 @@ class NonStaffMcpScopeTests(TestCase):
         self.assertEqual(full["raw"], text)
 
     def test_every_employee_tool_exists(self):
-        from .server import NON_STAFF_TOOLS, mcp
+        from apps.tasks.access import MODULES
 
-        self.assertEqual(NON_STAFF_TOOLS - set(mcp._tool_manager._tools), set())
+        from .server import TOOL_MODULES, mcp
+
+        self.assertEqual(set(TOOL_MODULES) - set(mcp._tool_manager._tools), set())
+        self.assertLessEqual(set(TOOL_MODULES.values()) - {None}, set(MODULES))

@@ -18,7 +18,7 @@ from django.test import TestCase, override_settings
 
 from apps.meetings import mcp_tools
 from apps.meetings.models import Entity, Meeting, MeetingLink
-from apps.tasks.models import Project, StateTransition, Task
+from apps.tasks.models import Project, StateTransition, Task, UserProfile
 
 from .auth import SCOPE_SCOPES_KEY, SCOPE_USER_KEY
 from .tests import fake_request_ctx, reset_request_ctx
@@ -354,6 +354,7 @@ class McpEntryPointTests(MeetingToolTestCase):
 
     def test_non_staff_account_is_limited_to_employee_tools(self):
         self.user.is_staff = False
+        UserProfile.objects.update_or_create(user=self.user, defaults={"modules": ["meetings"]})
         self._as(self.user, ["read", "write"])
         self.assertEqual(self._call("list_meetings")[1]["result"], [])
         with self.assertRaisesMessage(Exception, "limited to staff"):

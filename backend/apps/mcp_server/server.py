@@ -19,7 +19,7 @@ from asgiref.sync import sync_to_async
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from apps.tasks.access import has_full_access
+from apps.tasks.access import has_full_access, has_module
 
 from . import tools
 
@@ -182,30 +182,93 @@ READ_ONLY_TOOLS = frozenset({
     "list_reports",
 })
 
-#: Tools a non-staff account may call — the MCP mirror of ``NON_STAFF_API``
-#: (``apps/tasks/access.py``). Each one scopes its results to the caller's
-#: projects / shares. Same deliberate shape as ``READ_ONLY_TOOLS``: a tool added
-#: later and forgotten here is staff-only by default.
-NON_STAFF_TOOLS = frozenset({
-    # directory (no tasks — those are staff-only)
-    "list_projects", "list_users",
-    # wiki
-    "list_wiki_docs", "get_wiki_doc", "create_wiki_doc", "update_wiki_doc",
-    "delete_wiki_doc", "set_wiki_content", "append_wiki_content",
-    "insert_wiki_content",
-    # drive
-    "drive_list", "drive_read", "drive_upload", "drive_request_upload",
-    "drive_finalize_upload", "drive_move",
-    # LLM wiki
-    "knowledge_list", "knowledge_read", "knowledge_schema", "knowledge_write",
-    "knowledge_delete",
-    # meetings
-    "list_meetings", "search_meetings", "get_meeting", "get_related_meetings",
-    "list_meeting_entities", "update_meeting", "set_meeting_action_item",
-    "link_meetings",
+#: Tools a non-staff account may call, and the module each needs (``None``:
+#: any signed-in user) — the MCP mirror of ``API_MODULES``
+#: (``apps/tasks/access.py``). Every tool listed scopes its results by the
+#: caller. Same deliberate shape as ``READ_ONLY_TOOLS``: a tool added later
+#: and forgotten here is staff-only by default — as are column writes,
+#: meeting ingest/deletion, entity fixes, report publishing, webhooks and the
+#: LLM-wiki maintenance tools, which are left out on purpose.
+TOOL_MODULES: dict[str, str | None] = {
+    # directory
+    "list_projects": None,
+    "list_users": None,
+    # tasks (comments, labels, views, recurring and focus follow the task)
+    **dict.fromkeys(
+        (
+            "list_tasks", "get_task", "create_task", "update_task", "move_task",
+            "delete_task", "list_comments", "add_comment", "edit_comment",
+            "delete_comment", "list_columns", "list_labels", "create_label",
+            "list_views", "query_view", "create_recurring_task",
+            "list_recurring_tasks", "update_recurring_task", "pause_recurring_task",
+            "resume_recurring_task", "delete_recurring_task", "preview_recurring_task",
+            "list_focus", "add_focus", "remove_focus",
+        ),
+        "tasks",
+    ),
+    # bets
+    **dict.fromkeys(
+        (
+            "list_bets", "get_bet", "create_bet", "update_bet", "delete_bet",
+            "create_metric", "update_metric", "delete_metric", "add_checkin",
+            "update_checkin", "delete_checkin",
+        ),
+        "bets",
+    ),
+    "get_throughput": "analytics",
+    "get_weekly_completions": "analytics",
+    # CRM / billing
+    **dict.fromkeys(
+        (
+            "search_contacts", "get_contact", "upsert_contact", "search_leads",
+            "get_lead", "upsert_lead", "delete_lead", "post_update", "edit_update",
+            "delete_update", "complete_next_step", "list_crm_activity",
+        ),
+        "crm",
+    ),
+    **dict.fromkeys(
+        ("list_payments", "record_payment", "list_licences", "upsert_licence"), "billing"
+    ),
+    # meetings. The two task tools also need ``tasks`` — they resolve the
+    # task / target project through it, so without it nothing is found.
+    **dict.fromkeys(
+        (
+            "list_meetings", "search_meetings", "get_meeting", "get_related_meetings",
+            "list_meeting_entities", "update_meeting", "set_meeting_action_item",
+            "link_meetings", "create_task_from_meeting_action_item", "link_meeting_task",
+        ),
+        "meetings",
+    ),
     # reports (read-only; publishing is staff)
-    "list_reports", "get_report",
-})
+    "list_reports": "reports",
+    "get_report": "reports",
+    # wiki
+    **dict.fromkeys(
+        (
+            "list_wiki_docs", "get_wiki_doc", "create_wiki_doc", "update_wiki_doc",
+            "delete_wiki_doc", "set_wiki_content", "append_wiki_content",
+            "insert_wiki_content",
+        ),
+        "wiki",
+    ),
+    # LLM wiki
+    **dict.fromkeys(
+        ("knowledge_list", "knowledge_read", "knowledge_schema", "knowledge_write",
+         "knowledge_delete"),
+        "llm_wiki",
+    ),
+    # Drive
+    **dict.fromkeys(
+        ("drive_list", "drive_read", "drive_upload", "drive_request_upload",
+         "drive_finalize_upload", "drive_move"),
+        "drive",
+    ),
+    # operations
+    **dict.fromkeys(
+        ("list_routines", "get_routine", "create_routine", "update_routine", "delete_routine"),
+        "operations",
+    ),
+}
 
 
 class _ScopedFastMCP(FastMCP):
@@ -221,8 +284,15 @@ class _ScopedFastMCP(FastMCP):
         # A user-less credential (legacy CYT_MCP_TOKEN, stdio) is the
         # operator's own and stays unrestricted.
         user = _get_mcp_user()
-        if user is not None and not has_full_access(user) and name not in NON_STAFF_TOOLS:
-            raise ValueError(f"{name} is limited to staff accounts.")
+        if user is not None and not has_full_access(user):
+            if name not in TOOL_MODULES:
+                raise ValueError(f"{name} is limited to staff accounts.")
+            module = TOOL_MODULES[name]
+            if module is not None and not await sync_to_async(has_module)(user, module):
+                raise ValueError(
+                    f"{name} needs access to the {module!r} module, which your "
+                    "account doesn't have. Ask a staff member to grant it."
+                )
         if name not in READ_ONLY_TOOLS:
             _require_write_scope(name)
         # FastMCP drops arguments a tool doesn't declare, so a misspelled or
@@ -604,7 +674,9 @@ async def create_label(
     global label that's available across every project. If a label with this
     name already exists in the chosen scope, it is returned as-is — the call
     is idempotent on (project, name)."""
-    return await _async(tools.create_label)(name=name, color=color, project=project)
+    return await _async(tools.create_label)(
+        name=name, color=color, project=project, mcp_user=_get_mcp_user()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -626,7 +698,8 @@ async def list_bets(
     containing period). ``status`` filters by ``active`` / ``won`` / ``lost``.
     """
     return await _async(tools.list_bets)(
-        project=project, period=period, status=status
+        project=project, period=period, status=status,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -639,7 +712,7 @@ async def get_bet(
     Names can repeat across periods — the most recent period wins, so pass
     the id when targeting an older period's bet.
     """
-    return await _async(tools.get_bet)(bet=bet, project=project)
+    return await _async(tools.get_bet)(bet=bet, project=project, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -665,6 +738,7 @@ async def create_bet(
         color=color,
         period=period,
         status=status,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -691,6 +765,7 @@ async def update_bet(
         color=color,
         status=status,
         period=period,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -699,7 +774,7 @@ async def delete_bet(
     bet: str | int, project: str | int | None = None
 ) -> dict[str, Any]:
     """Delete a bet. Linked tasks survive — they're just unlinked."""
-    return await _async(tools.delete_bet)(bet=bet, project=project)
+    return await _async(tools.delete_bet)(bet=bet, project=project, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -717,7 +792,8 @@ async def create_metric(
     notes instead of values.
     """
     return await _async(tools.create_metric)(
-        bet=bet, name=name, target=target, unit=unit, project=project
+        bet=bet, name=name, target=target, unit=unit, project=project,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -860,7 +936,9 @@ async def list_recurring_tasks(
     project: str | int | None = None, active: bool | None = None
 ) -> list[dict[str, Any]]:
     """List recurring templates, optionally filtered by project and active flag."""
-    return await _async(tools.list_recurring_tasks)(project=project, active=active)
+    return await _async(tools.list_recurring_tasks)(
+        project=project, active=active, mcp_user=_get_mcp_user()
+    )
 
 
 @mcp.tool()
@@ -888,31 +966,32 @@ async def update_recurring_task(
         schedule=schedule,
         dtstart=dtstart,
         column=column,
+        mcp_user=_get_mcp_user(),
     )
 
 
 @mcp.tool()
 async def pause_recurring_task(id: int) -> dict[str, Any]:
     """Pause a recurring template so no new instances are generated."""
-    return await _async(tools.pause_recurring_task)(id)
+    return await _async(tools.pause_recurring_task)(id, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
 async def resume_recurring_task(id: int) -> dict[str, Any]:
     """Resume a paused recurring template and recompute its next run time."""
-    return await _async(tools.resume_recurring_task)(id)
+    return await _async(tools.resume_recurring_task)(id, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
 async def delete_recurring_task(id: int) -> dict[str, Any]:
     """Delete a recurring template. Existing generated tasks are preserved."""
-    return await _async(tools.delete_recurring_task)(id)
+    return await _async(tools.delete_recurring_task)(id, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
 async def preview_recurring_task(id: int, count: int = 5) -> dict[str, Any]:
     """Return the next ``count`` scheduled occurrences without creating tasks."""
-    return await _async(tools.preview_recurring_task)(id, count=count)
+    return await _async(tools.preview_recurring_task)(id, count=count, mcp_user=_get_mcp_user())
 
 
 # ---------------------------------------------------------------------------
@@ -1939,7 +2018,8 @@ async def search_contacts(
     from apps.crm import mcp_tools
 
     return await _async(mcp_tools.search_contacts)(
-        query=query, kind=kind, company=company, project=project, limit=limit
+        query=query, kind=kind, company=company, project=project, limit=limit,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -1951,7 +2031,9 @@ async def get_contact(contact: str | int, kind: str | None = None, limit: int = 
     (person/company) disambiguates a shared name."""
     from apps.crm import mcp_tools
 
-    return await _async(mcp_tools.get_contact)(contact, kind=kind, limit=limit)
+    return await _async(mcp_tools.get_contact)(
+        contact, kind=kind, limit=limit, mcp_user=_get_mcp_user()
+    )
 
 
 @mcp.tool()
@@ -1989,6 +2071,7 @@ async def upsert_contact(
         website=website,
         wiki_slug=wiki_slug,
         rename_to=rename_to,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -2009,7 +2092,8 @@ async def search_leads(
     from apps.crm import mcp_tools
 
     return await _async(mcp_tools.search_leads)(
-        query=query, stage=stage, status=status, contact=contact, project=project, limit=limit
+        query=query, stage=stage, status=status, contact=contact, project=project, limit=limit,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -2019,7 +2103,7 @@ async def get_lead(lead: str, limit: int = 50) -> dict[str, Any]:
     update thread, newest first."""
     from apps.crm import mcp_tools
 
-    return await _async(mcp_tools.get_lead)(lead, limit=limit)
+    return await _async(mcp_tools.get_lead)(lead, limit=limit, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -2066,7 +2150,7 @@ async def delete_lead(lead: str) -> dict[str, Any]:
     ``stage`` to won or lost with ``upsert_lead``."""
     from apps.crm import mcp_tools
 
-    return await _async(mcp_tools.delete_lead)(lead)
+    return await _async(mcp_tools.delete_lead)(lead, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -2141,6 +2225,7 @@ async def edit_update(
         people=people,
         users=users,
         meeting=meeting,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -2157,7 +2242,7 @@ async def delete_update(update_id: int) -> dict[str, Any]:
     """Delete an update. A linked meeting is untouched."""
     from apps.crm import mcp_tools
 
-    return await _async(mcp_tools.delete_update)(update_id)
+    return await _async(mcp_tools.delete_update)(update_id, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
@@ -2178,7 +2263,8 @@ async def list_payments(
     from apps.crm import mcp_tools
 
     return await _async(mcp_tools.list_payments)(
-        status=status, type=type, project=project, company=company, lead=lead, limit=limit
+        status=status, type=type, project=project, company=company, lead=lead, limit=limit,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -2208,6 +2294,7 @@ async def record_payment(
     return await _async(mcp_tools.record_payment)(
         payment_id=payment_id, title=title, company=company, project=project, type=type,
         amount=amount, due_on=due_on, paid_on=paid_on, lead=lead, licence=licence,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -2227,7 +2314,8 @@ async def list_licences(
     from apps.crm import mcp_tools
 
     return await _async(mcp_tools.list_licences)(
-        status=status, project=project, company=company, lead=lead, limit=limit
+        status=status, project=project, company=company, lead=lead, limit=limit,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -2257,6 +2345,7 @@ async def upsert_licence(
     return await _async(mcp_tools.upsert_licence)(
         licence_id=licence_id, title=title, company=company, project=project,
         starts_on=starts_on, ends_on=ends_on, lead=lead, payments=payments,
+        mcp_user=_get_mcp_user(),
     )
 
 
@@ -2269,7 +2358,9 @@ async def list_crm_activity(
     ``MOW``) scopes to one business."""
     from apps.crm import mcp_tools
 
-    return await _async(mcp_tools.list_crm_activity)(days=days, limit=limit, project=project)
+    return await _async(mcp_tools.list_crm_activity)(
+        days=days, limit=limit, project=project, mcp_user=_get_mcp_user()
+    )
 
 
 # ---------------------------------------------------------------------------
