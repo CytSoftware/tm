@@ -6,7 +6,7 @@ Core models:
     Column                    — status columns on the Kanban board, per project.
     Label                     — colored labels, per project.
     Task                      — the work unit. Human key like "CYT-001".
-    TaskComment               — a task's comment thread, with @mentions.
+    TaskComment               — a task's comment thread.
     View                      — saved Notion-style filter+sort presets.
     RecurringTaskTemplate     — blueprints that generate Task instances on schedule.
     Bet / Metric / Checkin    — Cyt OS bets: period-scoped, project-specific
@@ -854,7 +854,7 @@ class TaskComment(TimestampedModel):
     """One message in a task's comment thread (oldest first).
 
     Written only through :mod:`apps.tasks.comments`, which owns the author
-    check, @mention notifications and the broadcast.
+    check, the notification and the broadcast.
     """
 
     task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="comments")
@@ -889,7 +889,6 @@ class NotificationVerb(models.TextChoices):
     DELETED = "deleted", "Deleted"
     REVIEW_REQUESTED = "review_requested", "Review requested"
     COMMENTED = "commented", "Commented"
-    MENTIONED = "mentioned", "Mentioned"
 
 
 class Notification(models.Model):

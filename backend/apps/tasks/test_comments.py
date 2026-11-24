@@ -64,27 +64,19 @@ class TaskCommentTests(TestCase):
         self.client.force_login(self.emp)
         self.assertEqual(self.client.get(self.url).status_code, 403)
 
-    def test_mention_notifies_valid_staff_users_only(self):
-        self._post("hey @Chris, and @emp @ghost and @ali. mail chris@x.com")
-        notes = Notification.objects.filter(verb="mentioned")
-        # emp is non-staff (can't open tasks), ghost doesn't exist, ali is the author.
-        self.assertEqual([n.recipient.username for n in notes], ["chris"])
-        self.assertIn("comment_id", notes[0].payload)
+    def test_assignees_get_commented_but_not_the_author(self):
+        self.task.assignees.add(self.ali, self.chris)
+        self._post("hello")
+        note = Notification.objects.get()
+        self.assertEqual((note.verb, note.recipient), ("commented", self.chris))
+        self.assertEqual(note.payload["excerpt"], "hello")
 
-    def test_assignees_get_commented_unless_mentioned(self):
+    def test_edit_and_delete_notify_nobody(self):
         self.task.assignees.add(self.chris)
-        self._post("no mention")
-        self.assertEqual(Notification.objects.get().verb, "commented")
-        Notification.objects.all().delete()
-        self._post("@chris look")
-        self.assertEqual(list(Notification.objects.values_list("verb", flat=True)), ["mentioned"])
-
-    def test_edit_notifies_only_new_mentions(self):
-        cid = self._post("@chris first").json()["id"]
-        self.client.patch(
-            f"{self.url}{cid}/", {"body": "@chris first, fixed"}, content_type="application/json"
-        )
-        self.assertEqual(Notification.objects.filter(verb="mentioned").count(), 1)
+        cid = self._post("first").json()["id"]
+        self.client.patch(f"{self.url}{cid}/", {"body": "fixed"}, content_type="application/json")
+        self.client.delete(f"{self.url}{cid}/")
+        self.assertEqual(Notification.objects.count(), 1)
 
     def test_comment_count_on_task_list(self):
         self._post("a")
@@ -100,10 +92,9 @@ class TaskCommentTests(TestCase):
         self.assertEqual(bc.call_args.args[1], "task.commented")
 
     def test_mcp_tools(self):
-        added = tools.add_comment(self.task.key, "via bot @chris", mcp_user=self.ali)
+        added = tools.add_comment(self.task.key, "via bot", mcp_user=self.ali)
         self.assertEqual(added["author"], "ali")
-        self.assertEqual(Notification.objects.filter(verb="mentioned").count(), 1)
-        self.assertEqual(tools.list_comments(self.task.key, mcp_user=self.ali)[0]["body"], "via bot @chris")
+        self.assertEqual(tools.list_comments(self.task.key, mcp_user=self.ali)[0]["body"], "via bot")
         self.assertEqual(tools.get_task(self.task.key, mcp_user=self.ali)["comment_count"], 1)
 
         with self.assertRaises(PermissionDenied):

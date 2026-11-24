@@ -928,7 +928,12 @@ export function TaskPanel(props: Props) {
             )}
 
             {mode === "edit" && task && (
-              <div className="pt-2 mt-2 border-t border-border/40">
+              <div className="pt-2 mt-2 border-t border-border/40 space-y-1">
+                <TaskComments
+                  taskKey={task.key}
+                  count={task.comment_count}
+                  meId={me?.id ?? null}
+                />
                 <TransitionHistory taskKey={task.key} />
               </div>
             )}
@@ -958,9 +963,6 @@ export function TaskPanel(props: Props) {
                 }}
               />
             </div>
-            {mode === "edit" && task && (
-              <TaskComments taskKey={task.key} meId={me?.id ?? null} />
-            )}
           </div>
         </div>
 

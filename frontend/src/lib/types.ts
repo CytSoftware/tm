@@ -630,8 +630,7 @@ export type NotificationVerb =
   | "completed"
   | "deleted"
   | "review_requested"
-  | "commented"
-  | "mentioned";
+  | "commented";
 
 /** Minimal actor shape the notification serializer embeds — not the full
  *  `User` (no email/avatar). `null` means a system-generated event (e.g. the
@@ -652,7 +651,7 @@ export type NotificationPayload = {
   changed_fields?: string[];
   from_column?: string | null;
   to_column?: string | null;
-  /** `commented` / `mentioned`: the comment and a one-line preview. */
+  /** `commented`: the comment and a one-line preview. */
   comment_id?: number;
   excerpt?: string;
 };

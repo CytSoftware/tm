@@ -1,49 +1,51 @@
 "use client";
 
 /**
- * A task's comment thread, oldest first, with a composer at the bottom.
- * Authors can edit or delete their own comments (the server enforces it too).
- * `@username` mentions are highlighted here; the server parses them and
- * notifies the mentioned users. The project socket's `task.commented` event
- * keeps other open panels in sync (see `lib/ws.ts`).
+ * A task's comment thread as a collapsible section of the panel's left
+ * sidebar, styled like the History section below it. Oldest first, composer
+ * last. Authors can edit or delete their own comments (the server enforces it
+ * too). The project socket's `task.commented` event keeps other open panels in
+ * sync (see `lib/ws.ts`).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, Pencil, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { UserAvatar } from "@/components/UserAvatar";
 import { formatDuration } from "./TimeInColumn";
-import { useUsersQuery } from "@/hooks/use-users";
 import { apiFetch } from "@/lib/api";
 import { taskCommentsKey } from "@/lib/query-keys";
 import type { TaskComment } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// Same shape the backend parses (apps/tasks/comments.py MENTION_RE).
-const MENTION_RE = /(^|[^\w@])@([\w.+-]+)/g;
-
 export function TaskComments({
   taskKey,
+  count,
   meId,
 }: {
   taskKey: string;
+  /** From the task row, so the collapsed header can show it without a fetch. */
+  count: number;
   meId: number | null;
 }) {
+  const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: taskCommentsKey(taskKey),
     queryFn: () =>
       apiFetch<TaskComment[]>(`/api/tasks/${taskKey}/comments/`),
+    enabled: open,
   });
   const comments = query.data ?? [];
+  const shown = query.data ? comments.length : count;
 
   const base = `/api/tasks/${taskKey}/comments/`;
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: taskCommentsKey(taskKey) });
-    // The board card shows the count.
+    // The board card and this header show the count.
     void queryClient.invalidateQueries({ queryKey: ["tasks-infinite"] });
   };
   const add = useMutation({
@@ -62,50 +64,49 @@ export function TaskComments({
     onSuccess: refresh,
   });
 
-  // Keep the newest comment in view when the thread grows.
-  const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [comments.length]);
-
   return (
-    <div className="shrink-0 max-h-[45%] min-h-0 flex flex-col border-t border-border/60 px-6 pt-3 pb-4 max-lg:order-4 max-lg:max-h-none max-lg:px-4">
-      <div className="shrink-0 flex items-center gap-1.5 pb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-        <MessageSquare className="size-3" />
-        Comments
-        {comments.length > 0 && (
-          <span className="tabular-nums normal-case">· {comments.length}</span>
-        )}
-      </div>
-
-      <div
-        ref={listRef}
-        className="min-h-0 overflow-y-auto space-y-3 max-lg:overflow-visible"
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 w-full px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
       >
-        {query.isLoading && (
-          <p className="text-[12px] text-muted-foreground">Loading...</p>
+        {open ? (
+          <ChevronDown className="size-3" />
+        ) : (
+          <ChevronRight className="size-3" />
         )}
-        {comments.map((c) => (
-          <CommentRow
-            key={c.id}
-            comment={c}
-            mine={c.author.id === meId}
-            onEdit={(body) => edit.mutateAsync({ id: c.id, body })}
-            onDelete={() => {
-              if (confirm("Delete this comment?")) remove.mutate(c.id);
-            }}
+        <span className="uppercase tracking-wide">Comments</span>
+        {shown > 0 && (
+          <span className="ml-auto text-[10px] text-muted-foreground/70 tabular-nums">
+            {shown}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="mt-1 pl-5 pr-1 space-y-2.5">
+          {query.isLoading && (
+            <p className="text-[11px] text-muted-foreground">Loading...</p>
+          )}
+          {comments.map((c) => (
+            <CommentRow
+              key={c.id}
+              comment={c}
+              mine={c.author.id === meId}
+              onEdit={(body) => edit.mutateAsync({ id: c.id, body })}
+              onDelete={() => {
+                if (confirm("Delete this comment?")) remove.mutate(c.id);
+              }}
+            />
+          ))}
+          <Composer
+            placeholder="Add a comment…"
+            submitLabel="Comment"
+            pending={add.isPending}
+            onSubmit={(body) => add.mutateAsync(body)}
           />
-        ))}
-      </div>
-
-      <Composer
-        className="shrink-0 mt-3"
-        placeholder="Add a comment… @username to mention"
-        submitLabel="Comment"
-        pending={add.isPending}
-        onSubmit={(body) => add.mutateAsync(body)}
-      />
+        </div>
+      )}
     </div>
   );
 }
@@ -122,92 +123,74 @@ function CommentRow({
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const created = new Date(comment.created_at);
 
   return (
-    <div className="group flex items-start gap-2">
-      <UserAvatar
-        username={comment.author.username}
-        avatarUrl={comment.author.avatar_url}
-        className="mt-0.5"
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <span className="font-medium text-foreground">
-            {comment.author.username}
+    <div className="group text-[11px] leading-tight">
+      <div className="flex items-center gap-1.5 text-muted-foreground">
+        <UserAvatar
+          username={comment.author.username}
+          avatarUrl={comment.author.avatar_url}
+          size="size-4"
+        />
+        <span className="font-medium text-foreground truncate">
+          {comment.author.username}
+        </span>
+        <span
+          className="shrink-0"
+          title={new Date(comment.created_at).toLocaleString()}
+        >
+          {formatDuration(comment.created_at)} ago
+        </span>
+        {comment.edited_at && (
+          <span
+            className="shrink-0"
+            title={`Edited ${new Date(comment.edited_at).toLocaleString()}`}
+          >
+            (edited)
           </span>
-          <span title={created.toLocaleString()}>
-            {formatDuration(comment.created_at)} ago
+        )}
+        {mine && !editing && (
+          <span className="ml-auto flex shrink-0 items-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover-none:opacity-100 transition-opacity">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-5 tap-target"
+              title="Edit"
+              onClick={() => setEditing(true)}
+            >
+              <Pencil className="size-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-5 tap-target text-destructive hover:text-destructive"
+              title="Delete"
+              onClick={onDelete}
+            >
+              <Trash2 className="size-3" />
+            </Button>
           </span>
-          {comment.edited_at && (
-            <span title={`Edited ${new Date(comment.edited_at).toLocaleString()}`}>
-              (edited)
-            </span>
-          )}
-          {mine && !editing && (
-            <span className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover-none:opacity-100 transition-opacity">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-6 tap-target"
-                title="Edit"
-                onClick={() => setEditing(true)}
-              >
-                <Pencil className="size-3" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-6 tap-target text-destructive hover:text-destructive"
-                title="Delete"
-                onClick={onDelete}
-              >
-                <Trash2 className="size-3" />
-              </Button>
-            </span>
-          )}
-        </div>
-        {editing ? (
-          <Composer
-            className="mt-1"
-            initial={comment.body}
-            submitLabel="Save"
-            autoFocus
-            onCancel={() => setEditing(false)}
-            onSubmit={async (body) => {
-              await onEdit(body);
-              setEditing(false);
-            }}
-          />
-        ) : (
-          <p className="mt-0.5 text-[13px] leading-relaxed whitespace-pre-wrap break-words">
-            <MentionText body={comment.body} />
-          </p>
         )}
       </div>
+      {editing ? (
+        <Composer
+          className="mt-1"
+          initial={comment.body}
+          submitLabel="Save"
+          autoFocus
+          onCancel={() => setEditing(false)}
+          onSubmit={async (body) => {
+            await onEdit(body);
+            setEditing(false);
+          }}
+        />
+      ) : (
+        <p className="mt-1 text-[12px] leading-snug text-foreground whitespace-pre-wrap break-words">
+          {comment.body}
+        </p>
+      )}
     </div>
   );
-}
-
-function MentionText({ body }: { body: string }) {
-  const users = useUsersQuery().data ?? [];
-  const known = new Set(users.map((u) => u.username.toLowerCase()));
-  const parts: React.ReactNode[] = [];
-  let last = 0;
-  for (const m of body.matchAll(MENTION_RE)) {
-    const name = m[2].replace(/[.+-]+$/, "");
-    if (!known.has(name.toLowerCase())) continue;
-    const start = m.index + m[1].length;
-    parts.push(body.slice(last, start));
-    parts.push(
-      <span key={start} className="font-medium text-primary">
-        @{name}
-      </span>,
-    );
-    last = start + 1 + name.length;
-  }
-  parts.push(body.slice(last));
-  return <>{parts}</>;
 }
 
 /** Textarea + submit. ⌘/Ctrl+Enter submits and Escape cancels — both stop
@@ -248,14 +231,14 @@ function Composer({
   }
 
   return (
-    <div className={cn("space-y-1.5", className)}>
+    <div className={cn("space-y-1", className)}>
       <Textarea
         value={body}
         onChange={(e) => setBody(e.target.value)}
         placeholder={placeholder}
         autoFocus={autoFocus}
         rows={2}
-        className="min-h-[3.5rem] text-[13px] resize-none"
+        className="min-h-[3rem] px-2 py-1.5 text-[12px] resize-none"
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
@@ -268,13 +251,23 @@ function Composer({
         }}
       />
       {(body.trim() || onCancel) && (
-        <div className="flex justify-end gap-1.5">
+        <div className="flex justify-end gap-1">
           {onCancel && (
-            <Button variant="ghost" size="sm" onClick={onCancel}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px]"
+              onClick={onCancel}
+            >
               Cancel
             </Button>
           )}
-          <Button size="sm" disabled={!canSubmit} onClick={() => void submit()}>
+          <Button
+            size="sm"
+            className="h-6 px-2 text-[11px]"
+            disabled={!canSubmit}
+            onClick={() => void submit()}
+          >
             {busy ? "Saving..." : submitLabel}
           </Button>
         </div>

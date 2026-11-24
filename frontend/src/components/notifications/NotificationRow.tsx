@@ -15,7 +15,6 @@ import { useRouter } from "next/navigation";
 import {
   Bell,
   CheckCircle2,
-  AtSign,
   Eye,
   type LucideIcon,
   MessageSquare,
@@ -173,13 +172,11 @@ export function describeNotification(n: Notification): {
         ),
       };
     case "commented":
-    case "mentioned":
       return {
-        Icon: n.verb === "mentioned" ? AtSign : MessageSquare,
+        Icon: MessageSquare,
         text: (
           <>
-            <strong className="font-medium">{actorName}</strong>{" "}
-            {n.verb === "mentioned" ? "mentioned you on" : "commented on"}{" "}
+            <strong className="font-medium">{actorName}</strong> commented on{" "}
             {keyEl}
             {n.payload.excerpt && (
               <span className="text-muted-foreground">

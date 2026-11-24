@@ -452,18 +452,14 @@ async def list_comments(key: str) -> list[dict[str, Any]]:
 
 @mcp.tool()
 async def add_comment(key: str, body: str) -> dict[str, Any]:
-    """Post a comment on task ``key`` as the calling user.
-
-    ``@username`` in ``body`` mentions a user (see ``list_users``) and sends
-    them a notification; the task's other assignees get a "commented" one.
-    """
+    """Post a comment on task ``key`` as the calling user. The task's
+    assignees get a "commented" notification."""
     return await _async(tools.add_comment)(key, body, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
 async def edit_comment(comment_id: int, body: str) -> dict[str, Any]:
-    """Replace the body of one of your own comments. Newly added
-    ``@mentions`` are notified; existing ones are not re-notified."""
+    """Replace the body of one of your own comments."""
     return await _async(tools.edit_comment)(
         comment_id, body, mcp_user=_get_mcp_user()
     )
