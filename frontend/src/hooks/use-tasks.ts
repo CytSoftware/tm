@@ -249,8 +249,15 @@ export function useCreateTask() {
   });
 }
 
-type UpdateTaskPayload = Partial<CreateTaskPayload> & {
+type UpdateTaskPayload = Omit<
+  Partial<CreateTaskPayload>,
+  "project_id" | "column_id"
+> & {
   key: string;
+  /** null moves the task to the Inbox (no project, no column). */
+  project_id?: number | null;
+  column_id?: number | null;
+  due_at?: string | null;
   /** The real API also accepts this plural id-array field for PATCH — it
    *  isn't modeled on `CreateTaskPayload`, which only has the create-time
    *  singular `assignee_id`. */

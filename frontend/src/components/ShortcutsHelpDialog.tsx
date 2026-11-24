@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 
 // Keep in sync with the keydown handlers: Shell (⌘B/⌘K), GlobalShortcuts (c),
-// the board page, and TaskPanel/TaskDialog.
+// the board page, TaskPanel (new task) and TaskDetail (open task).
 const SHORTCUT_GROUPS: {
   title: string;
   rows: { keys: string[]; description: string }[];
@@ -39,11 +39,24 @@ const SHORTCUT_GROUPS: {
     ],
   },
   {
+    title: "Open task",
+    rows: [
+      { keys: ["s"], description: "Change status" },
+      { keys: ["a"], description: "Change assignees" },
+      { keys: ["p"], description: "Change priority" },
+      { keys: ["d"], description: "Set deadline" },
+      { keys: ["l"], description: "Labels, reviewer, points, bet, project" },
+      { keys: ["c"], description: "Write a comment" },
+      { keys: ["j", "k"], description: "Next / previous task in the column" },
+      { keys: ["Esc"], description: "Close" },
+    ],
+  },
+  {
     title: "Selected or open task",
     rows: [
       { keys: ["⌘C"], description: "Copy task ID" },
       { keys: ["⌘⇧C"], description: "Copy prompt for Claude" },
-      { keys: ["⌘Enter"], description: "Save task" },
+      { keys: ["⌘Enter"], description: "Create task (new task panel)" },
     ],
   },
 ];

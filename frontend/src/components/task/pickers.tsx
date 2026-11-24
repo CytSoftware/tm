@@ -57,7 +57,7 @@ export function AssigneeCheckboxList({
           key={u.id}
           type="button"
           onClick={() => onToggle(u.id)}
-          className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] hover:bg-accent transition-colors"
+          className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] hover:bg-accent focus-visible:bg-accent outline-none transition-colors"
         >
           <Checkbox checked={selected.includes(u.id)} />
           <UserAvatar

@@ -20,6 +20,7 @@ import {
   useState,
 } from "react";
 
+import { TaskDetail } from "@/components/task/TaskDetail";
 import { TaskPanel } from "@/components/task/TaskPanel";
 import { apiFetch } from "@/lib/api";
 import { useActiveProject } from "@/lib/active-project";
@@ -171,11 +172,9 @@ export function TaskDialogProvider({ children }: { children: ReactNode }) {
     <Ctx.Provider value={value}>
       {children}
       {state?.mode === "edit" && (
-        <TaskPanel
+        <TaskDetail
           key={panelKey ?? undefined}
           projects={projects}
-          activeProject={activeProjectForPanel ?? projects[0] ?? null}
-          mode="edit"
           task={state.task}
           onClose={close}
         />
