@@ -271,7 +271,7 @@ def upsert_contact(
         # An id or address names one entity already; ``kind`` only
         # disambiguates names, so a company id works under the default.
         entity, created = _visible_contact(_entity(text), mcp_user), False
-        _guard(services.update_contact, entity, data)
+        _guard(services.update_contact, entity, data, viewer=mcp_user)
     else:
         entity, created = _guard(
             services.create_contact, {"name": text, "kind": kind, **data}, viewer=mcp_user
@@ -279,7 +279,7 @@ def upsert_contact(
     # Rename after resolving: passing the new name to create_contact would
     # look *it* up and create a second entity.
     if rename_to:
-        _guard(services.update_contact, entity, {"name": rename_to})
+        _guard(services.update_contact, entity, {"name": rename_to}, viewer=mcp_user)
     if base_contact_queryset(user=mcp_user).filter(pk=entity.pk).exists():
         return {"created": created, **_contact(entity, mcp_user)}
     # Not on one of the caller's leads yet — it shows once it is.

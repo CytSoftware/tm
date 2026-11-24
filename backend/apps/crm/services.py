@@ -194,10 +194,12 @@ def set_emails(entity: Entity, emails: Iterable[str], *, replace: bool = True) -
 
 
 @transaction.atomic
-def update_contact(entity: Entity, data: dict[str, Any]) -> Entity:
+def update_contact(entity: Entity, data: dict[str, Any], *, viewer) -> Entity:
     """Apply contact fields. ``emails`` replaces the set, ``add_emails`` adds.
     ``company`` takes an id or a name (created if new) and only applies to
-    people. A rename keeps the old name as an alias."""
+    people; one only another project's CRM knows is refused for ``viewer``,
+    since linking it would make it visible through its new employee. A rename
+    keeps the old name as an alias."""
     for field in CONTACT_FIELDS:
         if data.get(field) is not None:
             setattr(entity, field, data[field])
@@ -218,7 +220,9 @@ def update_contact(entity: Entity, data: dict[str, Any]) -> Entity:
     if "company" in data:
         if entity.kind != EntityKind.PERSON and data["company"] not in (None, ""):
             raise CrmError("Only a person can belong to a company.")
-        entity.company = _resolve_company(data["company"])
+        company = _resolve_company(data["company"])
+        check_reach(viewer, "crm", entities=[company])
+        entity.company = company
     entity.save()
 
     if data.get("emails") is not None:
@@ -252,7 +256,7 @@ def create_contact(data: dict[str, Any], *, viewer=None) -> tuple[Entity, bool]:
         fields = {k: v for k, v in fields.items() if v not in (None, "", [])}
         if "emails" in fields:
             fields["add_emails"] = fields.pop("emails")
-    update_contact(entity, fields)
+    update_contact(entity, fields, viewer=viewer)
     return entity, created
 
 

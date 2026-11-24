@@ -126,9 +126,12 @@ class ContactViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.
     def create(self, request, *args, **kwargs):
         payload = ContactWriteSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        entity, created = _guard(
-            services.create_contact, payload.validated_data, viewer=request.user
-        )
+        data = payload.validated_data
+        if not has_module(request.user, "crm"):
+            # Billing may pick and create companies by name, not edit contacts —
+            # and a name match would apply every field to the existing entity.
+            data = {k: v for k, v in data.items() if k in ("kind", "name")}
+        entity, created = _guard(services.create_contact, data, viewer=request.user)
         if not base_contact_queryset(user=request.user).filter(pk=entity.pk).exists():
             # Not on one of their leads yet (a new contact, or someone only
             # meetings know): it shows in their CRM once it is. Until then
@@ -157,7 +160,7 @@ class ContactViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.
         payload.is_valid(raise_exception=True)
         data = dict(payload.validated_data)
         data.pop("kind", None)
-        _guard(services.update_contact, entity, data)
+        _guard(services.update_contact, entity, data, viewer=request.user)
         return Response(contact_detail(entity, request))
 
 

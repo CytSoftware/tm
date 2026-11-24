@@ -95,9 +95,10 @@ API_MODULES: tuple[tuple[str, str | tuple[str, ...] | None, frozenset[str] | Non
     ("/api/knowledge/", "llm_wiki", SAFE),
     ("/api/drive/", "drive", None),  # shares: IsAdminUser on DriveShareView
     # operations
-    ("/api/integrations/routines/", "operations", None),
     ("/api/integrations/events/", "operations", None),  # PATCH = triage
-    # Source and service setup lives in staff-only settings pages.
+    # Routines, source and service setup are staff work: editing or running a
+    # routine runs it as Hermes, outside any module or project.
+    ("/api/integrations/routines/", "operations", SAFE),
     ("/api/integrations/event-sources/", "operations", SAFE),
     ("/api/integrations/services/", "operations", SAFE),
 )

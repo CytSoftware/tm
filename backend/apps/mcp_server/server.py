@@ -265,7 +265,7 @@ TOOL_MODULES: dict[str, str | None] = {
     ),
     # operations
     **dict.fromkeys(
-        ("list_routines", "get_routine", "create_routine", "update_routine", "delete_routine"),
+        ("list_routines", "get_routine"),  # routine writes are staff work, as in REST
         "operations",
     ),
 }

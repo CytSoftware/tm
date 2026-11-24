@@ -59,10 +59,10 @@ class ContactTests(CrmTestCase):
         self.assertEqual(entity.pk, existing.pk)
 
     def test_email_is_unique_across_entities(self):
-        services.update_contact(self.mohamed, {"emails": ["mo@ecg.com"]})
+        services.update_contact(self.mohamed, {"emails": ["mo@ecg.com"]}, viewer=None)
         other, _ = services.create_contact({"kind": "person", "name": "Sami"})
         with self.assertRaises(services.CrmError):
-            services.update_contact(other, {"emails": ["MO@ecg.com"]})
+            services.update_contact(other, {"emails": ["MO@ecg.com"]}, viewer=None)
 
     def test_merge_repoints_leads_and_updates(self):
         lead = self.lead()

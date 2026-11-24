@@ -149,6 +149,17 @@ class MiddlewareTests(TestCase):
         # The company picker and scope switcher serve billing too.
         self.assertEqual(self.client.get("/api/crm/contacts/").status_code, 200)
 
+    def test_operations_cannot_edit_or_run_routines(self):
+        # A routine runs as Hermes, outside any module or project.
+        grant(self.emp, ["operations"])
+        base = "/api/integrations/routines/job1"
+        self.assertEqual(
+            self.client.patch(f"{base}/", {"prompt": "x"}, content_type="application/json").status_code,
+            403,
+        )
+        self.assertEqual(self.client.post(f"{base}/run/").status_code, 403)
+        self.assertEqual(self.client.get(f"{base}/runs/cron_job1_20260101_000000/").status_code, 403)
+
     def test_me_lists_the_modules(self):
         grant(self.emp, ["wiki", "tasks", "nonsense"])
         self.assertEqual(self.client.get("/api/auth/me/").json()["modules"], ["tasks", "wiki"])
@@ -175,6 +186,43 @@ class CrossModuleTests(TestCase):
         found = [c["name"] for c in rows(self.client.get("/api/crm/contacts/?search=acme"))]
         self.assertEqual(found, ["Acme One"])
         self.assertEqual(self.client.get(f"/api/crm/contacts/{theirs.pk}/").status_code, 404)
+
+    def test_contact_company_from_another_projects_crm_is_refused(self):
+        # Linking it would make it visible through its new employee.
+        grant(self.emp, ["crm"])
+        person = Entity.objects.create(kind=EntityKind.PERSON, name="Sara", slug="sara")
+        update = Update.objects.create(
+            lead=Lead.objects.create(title="ours", project=self.mine),
+            body="call", occurred_at=timezone.now(),
+        )
+        update.people.add(person)
+        theirs = Entity.objects.create(kind=EntityKind.COMPANY, name="Secret", slug="secret")
+        Lead.objects.create(title="theirs", project=self.theirs, company=theirs)
+        resp = self.client.patch(
+            f"/api/crm/contacts/{person.pk}/", {"company": str(theirs.pk)},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 400)
+        person.refresh_from_db()
+        self.assertIsNone(person.company_id)
+        self.assertEqual(self.client.get(f"/api/crm/contacts/{theirs.pk}/").status_code, 404)
+
+    def test_billing_create_by_name_does_not_edit_the_contact(self):
+        grant(self.emp, ["billing"])
+        company = Entity.objects.create(
+            kind=EntityKind.COMPANY, name="ECG", slug="ecg", phone="+974 1",
+        )
+        Payment.objects.create(
+            title="p", company=company, project=self.mine, type="one_off",
+            amount=Decimal("10"), due_on=date(2026, 12, 1),
+        )
+        resp = self.client.post(
+            "/api/crm/contacts/", {"kind": "company", "name": "ECG", "phone": "+1 evil"},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        company.refresh_from_db()
+        self.assertEqual(company.phone, "+974 1")
 
     def test_task_sources_hide_a_lead_without_crm(self):
         grant(self.emp, ["tasks"])

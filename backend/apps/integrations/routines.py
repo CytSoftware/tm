@@ -12,9 +12,10 @@ from django.db import close_old_connections, transaction
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException, NotFound, ValidationError
+from rest_framework.exceptions import APIException, NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
 
+from apps.tasks.access import has_full_access
 from apps.tasks.broadcast import broadcast_task_event
 from .models import Routine, RoutineRun
 
@@ -213,6 +214,10 @@ class RoutineViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["get"], url_path=r"runs/(?P<session_id>[A-Za-z0-9_]+)")
     def recap(self, request, pk, session_id):
+        # Transcripts carry tool output from any module, so they stay staff-only
+        # even for holders of the operations module.
+        if not has_full_access(request.user):
+            raise PermissionDenied("You don't have access to this.")
         # Only this job's cron sessions: the same API also serves private chats.
         if not re.fullmatch(rf"cron_{re.escape(pk)}_\d{{8}}_\d{{6}}", session_id):
             raise NotFound("Not a run of this routine.")

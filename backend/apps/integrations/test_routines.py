@@ -67,6 +67,9 @@ class RoutineTests(TestCase):
     @patch("apps.integrations.routines.hermes")
     def test_http_routines_are_authenticated_and_recap_only_reads_cron_runs(self, hermes):
         hermes.return_value = {"data": [{"role": "assistant", "content": "Draft"}, {"role": "tool", "content": "x"}, {"role": "assistant", "content": "Nothing to organize."}]}
+        self.assertEqual(self.client.get("/api/integrations/routines/abc/runs/cron_abc_20261021_000010/").status_code, 403)
+        self.user.is_staff = True  # transcripts are staff-only
+        self.user.save()
         response = self.client.get("/api/integrations/routines/abc/runs/cron_abc_20261021_000010/")
         self.assertEqual(response.data["recap"], "Nothing to organize.")
         self.assertEqual([m["role"] for m in response.data["messages"]], ["assistant", "tool", "assistant"])
