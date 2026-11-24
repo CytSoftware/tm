@@ -2,7 +2,7 @@
 
 /**
  * A task's comment thread as a collapsible section of the panel's left
- * sidebar, styled like the History section below it. Oldest first, composer
+ * sidebar, styled like the History section below it but open by default. Oldest first, composer
  * last. Authors can edit or delete their own comments (the server enforces it
  * too). The project socket's `task.commented` event keeps other open panels in
  * sync (see `lib/ws.ts`).
@@ -31,7 +31,7 @@ export function TaskComments({
   count: number;
   meId: number | null;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: taskCommentsKey(taskKey),
