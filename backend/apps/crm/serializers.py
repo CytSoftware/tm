@@ -5,6 +5,7 @@ from rest_framework import serializers
 
 from apps.meetings.models import Entity, EntityKind, Meeting
 from apps.meetings.serializers import AwareDateTimeField
+from apps.tasks.access import can_see_project, has_module
 from apps.tasks.models import Project, Task
 from apps.tasks.serializers import UserSerializer
 
@@ -38,6 +39,13 @@ def project_ref(p) -> dict | None:
     return {"id": p.id, "prefix": p.prefix, "name": p.name, "color": p.color}
 
 
+def _viewer(context):
+    """``user`` from the MCP tools, else the DRF request's; ``None`` is a
+    user-less operator credential (sees everything)."""
+    context = context or {}
+    return context.get("user") or getattr(context.get("request"), "user", None)
+
+
 def _users(users, context) -> list:
     # `or {}`: the MCP tools call this without a request, and DRF keeps an
     # explicit None as the context — an uploaded avatar then crashed on
@@ -58,6 +66,11 @@ def step_dict(task: Task, *, context=None) -> dict:
 def update_dict(u: Update, *, context=None) -> dict:
     lead = u.lead
     meeting = u.meeting
+    viewer = _viewer(context)
+    if meeting is not None and viewer is not None and not can_see_project(
+        viewer, meeting.project_id, "meetings"
+    ):
+        meeting = None
     return {
         "id": u.id,
         "kind": u.kind,
@@ -125,6 +138,14 @@ class ContactSerializer(serializers.ModelSerializer):
 
     def get_emails(self, obj):
         return [e.email for e in obj.emails.all()]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        viewer = _viewer(self.context)
+        if viewer is not None and not has_module(viewer, "crm"):
+            # Billing sees companies for its picker, not their contact details.
+            data.update(emails=[], phone="", linkedin_url="")
+        return data
 
     def get_last_update(self, obj):
         at = getattr(obj, "last_update_at", None)
@@ -263,8 +284,18 @@ class UpdateInputSerializer(serializers.Serializer):
 # ---------------------------------------------------------------------------
 
 
-def payment_dict(p: Payment) -> dict:
-    """Expects a row from ``query.filter_payments`` (carries ``status``)."""
+def _lead_link(lead: Lead | None, user) -> dict | None:
+    """A payment's or licence's lead: always its key (billing may link one
+    without CRM), its title only for someone who could open it in the CRM."""
+    if lead is None:
+        return None
+    visible = user is None or can_see_project(user, lead.project_id, "crm")
+    return {"key": lead.key, "title": lead.title if visible else ""}
+
+
+def payment_dict(p: Payment, *, user=None) -> dict:
+    """Expects a row from ``query.filter_payments`` (carries ``status``).
+    ``user=None`` (the operator credential) sees every link in full."""
     return {
         "id": p.id,
         "title": p.title,
@@ -275,7 +306,7 @@ def payment_dict(p: Payment) -> dict:
         "due_on": p.due_on.isoformat(),
         "paid_on": p.paid_on.isoformat() if p.paid_on else None,
         "status": p.status,
-        "lead": {"key": p.lead.key, "title": p.lead.title} if p.lead_id else None,
+        "lead": _lead_link(p.lead, user),
         "licence": (
             {"id": p.licence.id, "title": p.licence.title, "starts_on": p.licence.starts_on.isoformat(),
              "ends_on": p.licence.ends_on.isoformat()}
@@ -305,7 +336,7 @@ class PaymentWriteSerializer(serializers.Serializer):
     )
 
 
-def licence_dict(lc: Licence) -> dict:
+def licence_dict(lc: Licence, *, user=None) -> dict:
     """Expects a row from ``query.filter_licences`` (carries status/renewed/totals)."""
     return {
         "id": lc.id,
@@ -318,7 +349,7 @@ def licence_dict(lc: Licence) -> dict:
         "renewed": lc.renewed,
         "total": float(lc.total),
         "paid": float(lc.paid),
-        "lead": {"key": lc.lead.key, "title": lc.lead.title} if lc.lead_id else None,
+        "lead": _lead_link(lc.lead, user),
     }
 
 

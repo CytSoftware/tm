@@ -9,8 +9,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/api";
+import { fetchMe } from "@/lib/auth";
 import { md } from "@/lib/markdown";
-import { routineKey, routineRunsKey, routinesKey } from "@/lib/query-keys";
+import { meKey, routineKey, routineRunsKey, routinesKey } from "@/lib/query-keys";
 import { describeSchedule, errorText, formatDate, statusLabel, statusStyle, type Routine, type RoutineRun, type TranscriptMessage } from "@/lib/routines";
 
 // Hermes rejects longer prompts (api_server _MAX_PROMPT_LENGTH).
@@ -19,6 +20,10 @@ const MAX_PROMPT = 5000;
 export default function RoutinePage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
+  // Editing, running and transcripts are staff-only on the backend: a routine
+  // runs as Hermes, outside any module or project.
+  const { data: me } = useQuery({ queryKey: meKey(), queryFn: fetchMe });
+  const staff = !!me?.is_staff;
   const routine = useQuery({
     queryKey: routineKey(id),
     queryFn: () => apiFetch<Routine>(`/api/integrations/routines/${id}/`),
@@ -57,7 +62,7 @@ export default function RoutinePage() {
         <Button className="h-7 text-[12px] tap-target" size="sm" variant="ghost" render={<Link href="/routines" />}><ArrowLeft className="size-3.5" />Routines</Button>
         <h1 className="min-w-0 truncate text-[13px] font-semibold tracking-tight">{data?.name ?? id}</h1>
         <Button className="ml-auto h-7 text-[12px] tap-target" size="sm" variant="ghost" disabled={runs.isFetching} onClick={() => { void routine.refetch(); void runs.refetch(); }}><RefreshCw className="size-3.5" />Refresh</Button>
-        <Button className="h-7 text-[12px] tap-target" size="sm" disabled={run.isPending || !data} onClick={() => run.mutate()}><Play className="size-3.5" />Run now</Button>
+        {staff && <Button className="h-7 text-[12px] tap-target" size="sm" disabled={run.isPending || !data} onClick={() => run.mutate()}><Play className="size-3.5" />Run now</Button>}
       </header>
       <main className="min-h-0 flex-1 overflow-y-auto">
         <div className="w-full space-y-6 p-4">
@@ -79,13 +84,14 @@ export default function RoutinePage() {
               value={prompt}
               maxLength={MAX_PROMPT}
               disabled={!data || save.isPending}
+              readOnly={!staff}
               onChange={event => setDraft(event.target.value)}
             />
-            <div className="flex items-center gap-2">
+            {staff && <div className="flex items-center gap-2">
               <span className="text-xs tabular-nums text-muted-foreground">{prompt.length} / {MAX_PROMPT}</span>
               {draft !== null && <Button className="ml-auto" size="sm" variant="ghost" onClick={() => setDraft(null)}>Discard</Button>}
               <Button className={draft === null ? "ml-auto" : ""} size="sm" disabled={draft === null || draft === data?.prompt || !prompt.trim() || save.isPending} onClick={() => save.mutate()}>Save instructions</Button>
-            </div>
+            </div>}
           </section>
 
           <section className="space-y-2">
@@ -94,7 +100,7 @@ export default function RoutinePage() {
             {runs.isPending ? <p role="status" className="text-sm text-muted-foreground">Loading runs…</p> : runs.data?.results.length === 0 ? (
               <p className="text-sm text-muted-foreground">No runs yet.</p>
             ) : runs.data?.results.map(item => (
-              <RunRow key={item.session_id ?? item.finished_at} routineId={id} script={data?.script ?? null} run={item} onRetry={() => run.mutate()} retrying={run.isPending} />
+              <RunRow key={item.session_id ?? item.finished_at} routineId={id} script={data?.script ?? null} run={item} staff={staff} onRetry={() => run.mutate()} retrying={run.isPending} />
             ))}
           </section>
         </div>
@@ -103,12 +109,12 @@ export default function RoutinePage() {
   );
 }
 
-function RunRow({ routineId, script, run, onRetry, retrying }: { routineId: string; script: string | null; run: RoutineRun; onRetry: () => void; retrying: boolean }) {
+function RunRow({ routineId, script, run, staff, onRetry, retrying }: { routineId: string; script: string | null; run: RoutineRun; staff: boolean; onRetry: () => void; retrying: boolean }) {
   const [open, setOpen] = useState(false);
   const recap = useQuery({
     queryKey: [...routineRunsKey(routineId), run.session_id],
     queryFn: () => apiFetch<{ recap: string; messages: TranscriptMessage[] }>(`/api/integrations/routines/${routineId}/runs/${run.session_id}/`),
-    enabled: open && run.session_id !== null,
+    enabled: open && staff && run.session_id !== null,
     staleTime: Infinity,
   });
   return (
@@ -116,7 +122,7 @@ function RunRow({ routineId, script, run, onRetry, retrying }: { routineId: stri
       <summary className="flex cursor-pointer flex-wrap items-center gap-2 p-3 text-sm">
         <span className={`rounded-full px-2 py-0.5 text-xs ${statusStyle(run.status)}`}>{statusLabel(run.status)}</span>
         <span>{formatDate(run.started_at ?? run.finished_at)}</span>
-        {run.status === "error" && (
+        {staff && run.status === "error" && (
           <Button className="ml-auto h-7 text-[12px]" size="sm" variant="outline" title="Runs the routine again with its current instructions" disabled={retrying} onClick={event => { event.preventDefault(); onRetry(); }}>
             <RotateCcw className="size-3.5" />Retry
           </Button>
@@ -125,6 +131,7 @@ function RunRow({ routineId, script, run, onRetry, retrying }: { routineId: stri
       <div className="space-y-3 border-t p-3 text-sm">
         {run.error && <pre className="whitespace-pre-wrap break-words rounded bg-destructive/5 p-2 text-xs text-destructive">{run.error}</pre>}
         {run.status === "skipped" ? <p className="text-muted-foreground">Nothing to do. The gate script{script ? <> <code>{script}</code></> : ""} found no new work, so Hermes did not start the agent.</p>
+          : !staff ? <p className="text-muted-foreground">Only staff can read run transcripts.</p>
           : run.session_id === null ? <p className="text-muted-foreground">Hermes has no stored conversation for this run.</p>
           : recap.isPending ? <p role="status" className="text-muted-foreground">Loading recap…</p>
           : recap.isError ? <p role="alert" className="text-destructive">Couldn’t load the recap: {errorText(recap.error)}</p>

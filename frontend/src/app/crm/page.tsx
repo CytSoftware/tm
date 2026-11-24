@@ -17,7 +17,7 @@
  */
 
 import { Suspense, useCallback, useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Plus, Search, X } from "lucide-react";
 
 import { BillingView } from "@/components/crm/BillingView";
@@ -42,31 +42,41 @@ import {
   usePayments,
 } from "@/hooks/use-crm";
 import { useUrlParams, useUrlSearch } from "@/hooks/use-url-params";
+import { fetchMe, hasModule } from "@/lib/auth";
 import { connectCrmSocket } from "@/lib/crm-ws";
-import { CRM_SECTIONS, type CrmSection } from "@/lib/crm-meta";
+import { crmSectionsFor, type CrmSection } from "@/lib/crm-meta";
+import { meKey } from "@/lib/query-keys";
+import type { Me } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const ACTIVITY_WINDOWS = [7, 30, 90, 365];
 
 export default function CrmPage() {
+  // Shell has already loaded `me` (and only lets in crm or billing holders).
+  const { data: me } = useQuery({ queryKey: meKey(), queryFn: fetchMe });
+  if (!me) return null;
   // useSearchParams needs a Suspense boundary for the static build.
   return (
     <Suspense fallback={null}>
-      <Crm />
+      <Crm me={me} />
     </Suspense>
   );
 }
 
-function Crm() {
+function Crm({ me }: { me: Me }) {
   const { params, setParams } = useUrlParams();
   const queryClient = useQueryClient();
   useEffect(() => connectCrmSocket(queryClient), [queryClient]);
 
-  const section = CRM_SECTIONS.find((t) => t.id === params.get("tab")) ?? CRM_SECTIONS[0];
+  // Sections are split between the crm and billing modules; a tab the user
+  // lacks (or none) falls to their first one, and only that tab's query runs.
+  const sections = crmSectionsFor(me);
+  const crm = hasModule(me, "crm");
+  const section = sections.find((t) => t.id === params.get("tab")) ?? sections[0];
   const tab: CrmSection = section.id;
   const listTab = tab === "people" || tab === "companies";
   const contactId = params.get("c") ? Number(params.get("c")) : null;
-  const leadKey = params.get("l");
+  const leadKey = crm ? params.get("l") : null;
 
   // Scope: one of our businesses (project prefix, e.g. MOW) or everything.
   const crmProjects = useCrmProjects();
@@ -302,7 +312,7 @@ function Crm() {
               <BillingView
                 payments={inScope(payments.data ?? [])}
                 onEdit={(payment) => setPaymentDraft({ payment })}
-                onOpenLead={openLead}
+                onOpenLead={crm ? openLead : undefined}
                 onOpenLicence={(id) => setLicenceDraft({ licenceId: id })}
               />
             )
@@ -315,7 +325,7 @@ function Crm() {
               <LicencesView
                 licences={inScope(licences.data ?? [])}
                 onEdit={(licence) => setLicenceDraft({ licenceId: licence.id })}
-                onOpenLead={openLead}
+                onOpenLead={crm ? openLead : undefined}
               />
             )
           ) : tab === "activity" ? (

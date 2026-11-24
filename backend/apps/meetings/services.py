@@ -103,14 +103,23 @@ def resolve_project(ref: Any) -> Project | None:
 
 
 def _link_entities(
-    meeting: Meeting, specs: Iterable[dict[str, Any]], *, replace: bool
+    meeting: Meeting, specs: Iterable[dict[str, Any]], *, replace: bool, user=None
 ) -> None:
     """Attach entities to a meeting.
 
     ``replace=False`` (pipeline) is additive — nothing is ever removed, and an
     existing link is only ever *upgraded* from mentioned to attendee.
     ``replace=True`` (a person editing in the UI) makes the set exact.
+
+    ``user`` (the curator; ``None`` = pipeline or operator) only sets a
+    person's company when both are within their CRM reach: a company link
+    makes the person visible to every CRM user of that company's projects.
     """
+    reachable = None
+    if user is not None:
+        from apps.crm.query import reachable_entities
+
+        reachable = reachable_entities(user)
     wanted: dict[int, str] = {}
     for spec in specs:
         entity = resolve_entity(spec["kind"], spec["name"])
@@ -120,8 +129,10 @@ def _link_entities(
             and entity.kind == EntityKind.PERSON
             and entity.company_id is None
         ):
-            entity.company = resolve_entity(EntityKind.COMPANY, company_name)
-            entity.save(update_fields=["company", "updated_at"])
+            company = resolve_entity(EntityKind.COMPANY, company_name)
+            if reachable is None or reachable.filter(pk__in=[entity.pk, company.pk]).count() == 2:
+                entity.company = company
+                entity.save(update_fields=["company", "updated_at"])
         role = spec.get("role") or EntityRole.ATTENDEE
         if wanted.get(entity.id) != EntityRole.ATTENDEE:
             wanted[entity.id] = role
@@ -430,8 +441,9 @@ def upsert_meeting(data: dict[str, Any], *, user=None) -> tuple[Meeting, bool]:
 
 
 @transaction.atomic
-def curate_meeting(meeting: Meeting, data: dict[str, Any]) -> Meeting:
-    """Apply a person's edits. Unlike upsert, entity and tag lists are exact."""
+def curate_meeting(meeting: Meeting, data: dict[str, Any], *, user) -> Meeting:
+    """Apply a person's edits. Unlike upsert, entity and tag lists are exact.
+    ``user`` is the curator (``None`` = operator); see ``_link_entities``."""
     for field in ("title", "category", "started_at", "summary", "gshr_url"):
         if field in data:
             setattr(meeting, field, data[field])
@@ -439,7 +451,7 @@ def curate_meeting(meeting: Meeting, data: dict[str, Any]) -> Meeting:
         meeting.project = resolve_project(data["project"])
     meeting.save()
     if "entities" in data:
-        _link_entities(meeting, data["entities"], replace=True)
+        _link_entities(meeting, data["entities"], replace=True, user=user)
     if "tags" in data:
         _set_tags(meeting, data["tags"], replace=True)
     return meeting

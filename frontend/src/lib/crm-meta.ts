@@ -26,17 +26,23 @@ import {
 
 import type { LeadStage, Licence, LostReason, PaymentStatus, PaymentType, UpdateKind } from "@/hooks/use-crm";
 import { ApiError } from "@/lib/api";
+import { hasModule } from "@/lib/auth";
+import type { Me, ModuleKey } from "@/lib/types";
 
 /** The CRM's sections, in order — rendered as sub-items under CRM in the
- *  sidebar and selected by `/crm?tab=<id>` (`leads` is the bare `/crm`). */
+ *  sidebar and selected by `/crm?tab=<id>` (`leads` is the bare `/crm`).
+ *  `module` is the grant that opens the section. */
 export const CRM_SECTIONS = [
-  { id: "leads", label: "Leads", icon: Kanban },
-  { id: "activity", label: "Activity", icon: History },
-  { id: "people", label: "People", icon: Users },
-  { id: "companies", label: "Companies", icon: Building2 },
-  { id: "billing", label: "Billing", icon: Banknote },
-  { id: "licences", label: "Licences", icon: KeyRound },
-] as const satisfies readonly { id: string; label: string; icon: LucideIcon }[];
+  { id: "leads", label: "Leads", icon: Kanban, module: "crm" },
+  { id: "activity", label: "Activity", icon: History, module: "crm" },
+  { id: "people", label: "People", icon: Users, module: "crm" },
+  { id: "companies", label: "Companies", icon: Building2, module: "crm" },
+  { id: "billing", label: "Billing", icon: Banknote, module: "billing" },
+  { id: "licences", label: "Licences", icon: KeyRound, module: "billing" },
+] as const satisfies readonly { id: string; label: string; icon: LucideIcon; module: ModuleKey }[];
+
+/** The sections this user can open, in order. */
+export const crmSectionsFor = (me: Me) => CRM_SECTIONS.filter((s) => hasModule(me, s.module));
 
 export type CrmSection = (typeof CRM_SECTIONS)[number]["id"];
 

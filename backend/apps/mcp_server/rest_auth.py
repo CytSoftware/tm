@@ -1,7 +1,7 @@
 """Personal access tokens on selected REST views.
 
 Applied per view, never in ``DEFAULT_AUTHENTICATION_CLASSES``:
-``NonStaffAccessMiddleware`` runs before DRF authenticates and only sees the
+``ModuleAccessMiddleware`` runs before DRF authenticates and only sees the
 session user, so a bearer user is invisible to it. Enabling this globally
 would let a non-staff token reach every endpoint the middleware is meant to
 refuse. The views that opt in must do their own scoping.

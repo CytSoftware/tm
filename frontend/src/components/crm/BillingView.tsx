@@ -37,7 +37,8 @@ export function BillingView({
 }: {
   payments: Payment[];
   onEdit: (p: Payment) => void;
-  onOpenLead: (key: string) => void;
+  /** Omitted without the crm module — leads can't be opened. */
+  onOpenLead?: (key: string) => void;
   onOpenLicence: (id: number) => void;
 }) {
   const year = String(new Date().getFullYear());

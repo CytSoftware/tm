@@ -4,7 +4,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 
-from apps.tasks.access import has_full_access
+from apps.tasks.access import can_see_project
 
 from .models import (
     Entity,
@@ -163,11 +163,9 @@ class MeetingDetailSerializer(MeetingListSerializer):
 
     def get_linked_tasks(self, obj):
         links = obj.task_links.select_related("task__column", "task__project")
-        # ``user`` is passed by the MCP tools, ``request`` by DRF. Tasks are
-        # staff-only, so a non-staff viewer gets none.
+        # ``user`` is passed by the MCP tools, ``request`` by DRF; ``None`` is
+        # a user-less operator credential. Others see the tasks they could open.
         user = self.context.get("user") or getattr(self.context.get("request"), "user", None)
-        if user is not None and not has_full_access(user):
-            return []
         return [
             {
                 "key": link.task.key,
@@ -177,15 +175,18 @@ class MeetingDetailSerializer(MeetingListSerializer):
                 "project": link.task.project.prefix if link.task.project else None,
             }
             for link in links
+            if user is None or can_see_project(user, link.task.project_id, "tasks")
         ]
 
     def get_crm_leads(self, obj):
-        """CRM leads this recording was posted to (staff-only, like tasks)."""
+        """CRM leads this recording was posted to that the viewer could open."""
         user = self.context.get("user") or getattr(self.context.get("request"), "user", None)
-        if user is not None and not has_full_access(user):
-            return []
         updates = obj.crm_updates.filter(lead__isnull=False).select_related("lead")
-        return list({u.lead.key: {"key": u.lead.key, "title": u.lead.title} for u in updates}.values())
+        return list({
+            u.lead.key: {"key": u.lead.key, "title": u.lead.title}
+            for u in updates
+            if user is None or can_see_project(user, u.lead.project_id, "crm")
+        }.values())
 
     def get_has_brief_html(self, obj):
         return bool(obj.brief_html)

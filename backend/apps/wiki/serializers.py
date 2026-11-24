@@ -94,7 +94,7 @@ class DocWriteSerializer(serializers.ModelSerializer):
         if user is None:
             return attrs
         project = attrs.get("project")
-        if project is not None and not can_see_project(user, project.id):
+        if project is not None and not can_see_project(user, project.id, "wiki"):
             raise serializers.ValidationError(
                 {"project_id": "Pick a project you have access to."}
             )

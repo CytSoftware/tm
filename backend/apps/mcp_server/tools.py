@@ -22,7 +22,9 @@ from django.db.models import F, Max, Q
 from django.utils import timezone
 
 from apps.tasks.access import (
+    can_see_project,
     has_full_access,
+    member_project_ids,
     scope_for_caller,
     visible_doc_ids,
     visible_knowledge_slugs,
@@ -78,16 +80,24 @@ User = get_user_model()
 # helpers centralize that resolution so each tool stays terse.
 
 
-def _visible_projects(mcp_user=None):
-    """Projects the caller may touch. ``mcp_user=None`` (a user-less operator
-    credential) and staff see all; anyone else only their own."""
+def _visible_projects(mcp_user, module: str | None):
+    """Projects the caller may touch in ``module`` (``None``: any project they
+    belong to — directory data only). ``mcp_user=None`` (a user-less operator
+    credential) and staff see all."""
     qs = Project.objects.all()
-    ids = visible_project_ids(mcp_user) if mcp_user is not None else None
+    if mcp_user is None:
+        return qs
+    ids = member_project_ids(mcp_user) if module is None else visible_project_ids(mcp_user, module)
     return qs if ids is None else qs.filter(pk__in=ids)
 
 
-def _resolve_project(ref: str | int, mcp_user=None) -> Project:
-    qs = _visible_projects(mcp_user)
+def _resolve_project(ref: str | int | Project, mcp_user, module: str | None) -> Project:
+    """A project by id or prefix, among those ``_visible_projects`` allows —
+    anything else is "not found". A ``Project`` instance is taken as already
+    scoped by the (in-process) caller."""
+    if isinstance(ref, Project):
+        return ref
+    qs = _visible_projects(mcp_user, module)
     if isinstance(ref, int):
         return qs.get(pk=ref)
     if isinstance(ref, str):
@@ -317,7 +327,7 @@ def _view_dict(v: View) -> dict[str, Any]:
 
 
 def list_projects(mcp_user=None) -> list[dict[str, Any]]:
-    qs = _visible_projects(mcp_user).prefetch_related("repositories").order_by("name")
+    qs = _visible_projects(mcp_user, None).prefetch_related("repositories").order_by("name")
     return [_project_dict(p) for p in qs]
 
 
@@ -327,7 +337,7 @@ def list_projects(mcp_user=None) -> list[dict[str, Any]]:
 
 
 def list_columns(project: str | int, mcp_user=None) -> list[dict[str, Any]]:
-    proj = _resolve_project(project, mcp_user)
+    proj = _resolve_project(project, mcp_user, "tasks")
     return [_column_dict(c) for c in proj.columns.order_by("order")]
 
 
@@ -350,7 +360,7 @@ def create_column(
     kind: str | None = None,
     is_done: bool = False,
 ) -> dict[str, Any]:
-    proj = _resolve_project(project)
+    proj = _resolve_project(project, None, "tasks")  # staff-only tool
     name = (name or "").strip()
     if not name:
         raise ValueError("Column name must not be empty.")
@@ -457,7 +467,7 @@ def delete_column(
 def reorder_columns(
     project: str | int, ordered_ids: list[int]
 ) -> list[dict[str, Any]]:
-    proj = _resolve_project(project)
+    proj = _resolve_project(project, None, "tasks")  # staff-only tool
     existing = list(proj.columns.select_for_update().order_by("order"))
     existing_ids = {c.id for c in existing}
     ordered_ids_int = [int(x) for x in ordered_ids]
@@ -506,7 +516,8 @@ def get_throughput(
         raise ValueError("days must be a positive integer.")
     days = min(days, MAX_RANGE_DAYS)
 
-    project_id = _resolve_project(project).id if project is not None else None
+    # Analytics is module-only: every project's numbers.
+    project_id = _resolve_project(project, None, "analytics").id if project is not None else None
     date_to = timezone.now().astimezone(zone).date()
     date_from = date_to - timedelta(days=days - 1)
     return throughput(project_id, date_from, date_to, zone)
@@ -547,7 +558,7 @@ def get_weekly_completions(
         raise ValueError("weeks must be a positive integer.")
     weeks = min(weeks, MAX_WEEKS)
 
-    project_id = _resolve_project(project).id if project is not None else None
+    project_id = _resolve_project(project, None, "analytics").id if project is not None else None
     return weekly_completions(project_id, week_date, weeks, zone)
 
 
@@ -594,7 +605,7 @@ def list_tasks(
 
 
 def _tasks(mcp_user=None):
-    return scope_for_caller(base_task_queryset(), mcp_user)
+    return scope_for_caller(base_task_queryset(), mcp_user, "tasks")
 
 
 def get_task(key: str, mcp_user=None) -> dict[str, Any]:
@@ -616,7 +627,7 @@ def create_task(
     due_at: str | None = None,
     mcp_user=None,
 ) -> dict[str, Any]:
-    proj = _resolve_project(project, mcp_user)
+    proj = _resolve_project(project, mcp_user, "tasks")
     col = _resolve_column(proj, column)
     assignee_users = [_resolve_user(ref) for ref in assignees] if assignees else []
     reporter = _resolve_reporter_for_mcp(mcp_user)
@@ -847,7 +858,7 @@ def add_comment(key: str, body: str, mcp_user=None) -> dict[str, Any]:
 
 def _comment(comment_id: int, mcp_user) -> TaskComment:
     qs = TaskComment.objects.select_related("task", "author")
-    return scope_for_caller(qs, mcp_user, field="task__project").get(pk=comment_id)
+    return scope_for_caller(qs, mcp_user, "tasks", field="task__project").get(pk=comment_id)
 
 
 def edit_comment(comment_id: int, body: str, mcp_user=None) -> dict[str, Any]:
@@ -909,7 +920,9 @@ def list_focus(*, mcp_user) -> list[dict[str, Any]]:
 
     _require_mcp_user(mcp_user, "list_focus")
     qs = (
-        scope_for_caller(FocusItem.objects.filter(user=mcp_user), mcp_user, "task__project")
+        scope_for_caller(
+            FocusItem.objects.filter(user=mcp_user), mcp_user, "tasks", "task__project"
+        )
         .select_related("task", "task__column", "task__project")
         .prefetch_related("task__assignees", "task__labels")
         .order_by("period", "position", "id")
@@ -1009,7 +1022,7 @@ def register_webhook(
         raise ValueError(
             f"Unknown scope {scope!r}. Use 'mine' or 'all'."
         )
-    project_obj = _resolve_project(project) if project is not None else None
+    project_obj = _resolve_project(project, mcp_user, "tasks") if project is not None else None
     ep = WebhookEndpoint.objects.create(
         user=mcp_user,
         name=name,
@@ -1065,9 +1078,9 @@ def list_webhook_deliveries(
 def list_labels(project: str | int | None = None, mcp_user=None) -> list[dict[str, Any]]:
     qs = Label.objects.all()
     if project is not None:
-        proj = _resolve_project(project, mcp_user)
+        proj = _resolve_project(project, mcp_user, "tasks")
         qs = qs.filter(Q(project=proj) | Q(project__isnull=True))
-    elif mcp_user is not None and (ids := visible_project_ids(mcp_user)) is not None:
+    elif mcp_user is not None and (ids := visible_project_ids(mcp_user, "tasks")) is not None:
         qs = qs.filter(Q(project__isnull=True) | Q(project_id__in=ids))
     return [_label_dict(l) for l in qs.order_by(F("project_id").asc(nulls_last=True), "name")]
 
@@ -1077,11 +1090,15 @@ def create_label(
     name: str,
     color: str = "#888888",
     project: str | int | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
     name = (name or "").strip()
     if not name:
         raise ValueError("Label name must not be empty.")
-    proj = _resolve_project(project) if project is not None else None
+    proj = _resolve_project(project, mcp_user, "tasks") if project is not None else None
+    if proj is None and mcp_user is not None and not has_full_access(mcp_user):
+        # Global labels show on every project's board — staff curate them.
+        raise ValueError("Pass a project: global labels are created by staff.")
     label, _ = Label.objects.get_or_create(
         project=proj,
         name=name,
@@ -1164,8 +1181,11 @@ def _metric_dict(m: Metric, *, include_checkins: bool = True) -> dict[str, Any]:
     return data
 
 
-def _bet_dict(b: Bet, *, include_metrics: bool = True) -> dict[str, Any]:
+def _bet_dict(b: Bet, mcp_user, *, include_metrics: bool = True) -> dict[str, Any]:
     tasks = list(b.tasks.all())
+    # Bets are module-only, tasks aren't: counts for anyone, titles only for
+    # someone who could open the project's tasks.
+    show_tasks = mcp_user is None or can_see_project(mcp_user, b.project_id, "tasks")
     data = {
         "id": b.id,
         "project": b.project.prefix,
@@ -1183,7 +1203,7 @@ def _bet_dict(b: Bet, *, include_metrics: bool = True) -> dict[str, Any]:
         "tasks": [
             {"key": t.key, "title": t.title, "column": t.column.name if t.column_id else None}
             for t in tasks
-        ],
+        ] if show_tasks else [],
         "created_at": b.created_at.isoformat(),
         "updated_at": b.updated_at.isoformat(),
     }
@@ -1204,10 +1224,11 @@ def list_bets(
     project: str | int | None = None,
     period: str | None = "current",
     status: str | None = None,
+    mcp_user=None,
 ) -> list[dict[str, Any]]:
     qs = _bet_queryset()
     if project is not None:
-        qs = qs.filter(project=_resolve_project(project))
+        qs = qs.filter(project=_resolve_project(project, mcp_user, "bets"))
     period_start = _parse_period(period)
     if period_start is not None:
         qs = qs.filter(period_start=period_start)
@@ -1217,13 +1238,13 @@ def list_bets(
                 f"Unknown status {status!r}. Use one of: {', '.join(BetStatus.values)}."
             )
         qs = qs.filter(status=status)
-    return [_bet_dict(b) for b in qs.order_by("-period_start", "name")]
+    return [_bet_dict(b, mcp_user) for b in qs.order_by("-period_start", "name")]
 
 
-def get_bet(bet: str | int, project: str | int | None = None) -> dict[str, Any]:
-    proj = _resolve_project(project) if project is not None else None
+def get_bet(bet: str | int, project: str | int | None = None, mcp_user=None) -> dict[str, Any]:
+    proj = _resolve_project(project, mcp_user, "bets") if project is not None else None
     resolved = _resolve_bet(bet, project=proj)
-    return _bet_dict(_bet_queryset().get(pk=resolved.pk))
+    return _bet_dict(_bet_queryset().get(pk=resolved.pk), mcp_user)
 
 
 @transaction.atomic
@@ -1234,8 +1255,9 @@ def create_bet(
     color: str = "#6366f1",
     period: str | None = "current",
     status: str = "active",
+    mcp_user=None,
 ) -> dict[str, Any]:
-    proj = _resolve_project(project)
+    proj = _resolve_project(project, mcp_user, "bets")
     name = (name or "").strip()
     if not name:
         raise ValueError("Bet name must not be empty.")
@@ -1255,7 +1277,7 @@ def create_bet(
         period_start=period_start,
     )
     broadcast_task_event(proj.id, "bet.created", {"bet_id": bet.id})
-    return _bet_dict(bet)
+    return _bet_dict(bet, mcp_user)
 
 
 @transaction.atomic
@@ -1267,8 +1289,9 @@ def update_bet(
     color: str | None = None,
     status: str | None = None,
     period: str | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
-    proj = _resolve_project(project) if project is not None else None
+    proj = _resolve_project(project, mcp_user, "bets") if project is not None else None
     b = _resolve_bet(bet, project=proj)
     if name is not None:
         name = name.strip()
@@ -1292,12 +1315,12 @@ def update_bet(
         b.period_start = period_start
     b.save()
     broadcast_task_event(b.project_id, "bet.updated", {"bet_id": b.id})
-    return _bet_dict(_bet_queryset().get(pk=b.pk))
+    return _bet_dict(_bet_queryset().get(pk=b.pk), mcp_user)
 
 
 @transaction.atomic
-def delete_bet(bet: str | int, project: str | int | None = None) -> dict[str, Any]:
-    proj = _resolve_project(project) if project is not None else None
+def delete_bet(bet: str | int, project: str | int | None = None, mcp_user=None) -> dict[str, Any]:
+    proj = _resolve_project(project, mcp_user, "bets") if project is not None else None
     b = _resolve_bet(bet, project=proj)
     project_id, bet_id = b.project_id, b.id
     b.delete()  # Task.bet is SET_NULL — linked tasks survive, unlinked
@@ -1312,8 +1335,9 @@ def create_metric(
     target: float | None = None,
     unit: str = "",
     project: str | int | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
-    proj = _resolve_project(project) if project is not None else None
+    proj = _resolve_project(project, mcp_user, "bets") if project is not None else None
     b = _resolve_bet(bet, project=proj)
     name = (name or "").strip()
     if not name:
@@ -1419,7 +1443,7 @@ def _views(mcp_user=None):
     pinned to a project they aren't in."""
     qs = View.objects.all()
     if mcp_user is not None and not has_full_access(mcp_user):
-        ids = visible_project_ids(mcp_user)
+        ids = visible_project_ids(mcp_user, "tasks")
         qs = qs.filter(Q(owner=mcp_user) | Q(shared=True)).filter(
             Q(project__isnull=True) | Q(project_id__in=ids)
         )
@@ -1429,7 +1453,7 @@ def _views(mcp_user=None):
 def list_views(project: str | int | None = None, mcp_user=None) -> list[dict[str, Any]]:
     qs = _views(mcp_user).select_related("owner", "project")
     if project is not None:
-        proj = _resolve_project(project, mcp_user)
+        proj = _resolve_project(project, mcp_user, "tasks")
         qs = qs.filter(project=proj)
     return [_view_dict(v) for v in qs.order_by("name")]
 
@@ -1466,7 +1490,7 @@ def create_recurring_task(
     column: str | int | None = None,
     mcp_user=None,
 ) -> dict[str, Any]:
-    proj = _resolve_project(project)
+    proj = _resolve_project(project, mcp_user, "tasks")
     col = _resolve_column(proj, column)
     assignee_users = [_resolve_user(ref) for ref in assignees] if assignees else []
     reporter = _resolve_reporter_for_mcp(mcp_user)
@@ -1497,14 +1521,18 @@ def create_recurring_task(
     return _template_dict(tpl)
 
 
+def _templates(mcp_user):
+    return scope_for_caller(RecurringTaskTemplate.objects.all(), mcp_user, "tasks")
+
+
 def list_recurring_tasks(
-    project: str | int | None = None, active: bool | None = None
+    project: str | int | None = None, active: bool | None = None, mcp_user=None
 ) -> list[dict[str, Any]]:
-    qs = RecurringTaskTemplate.objects.all().select_related(
+    qs = _templates(mcp_user).select_related(
         "project", "column", "created_by"
     ).prefetch_related("labels", "assignees")
     if project is not None:
-        qs = qs.filter(project=_resolve_project(project))
+        qs = qs.filter(project=_resolve_project(project, mcp_user, "tasks"))
     if active is not None:
         qs = qs.filter(active=active)
     return [_template_dict(tpl) for tpl in qs.order_by("next_run_at")]
@@ -1521,8 +1549,9 @@ def update_recurring_task(
     schedule: str | None = None,
     dtstart: str | None = None,
     column: str | int | None = None,
+    mcp_user=None,
 ) -> dict[str, Any]:
-    tpl = RecurringTaskTemplate.objects.get(pk=id)
+    tpl = _templates(mcp_user).get(pk=id)
 
     if title is not None:
         tpl.title = title
@@ -1550,16 +1579,16 @@ def update_recurring_task(
 
 
 @transaction.atomic
-def pause_recurring_task(id: int) -> dict[str, Any]:
-    tpl = RecurringTaskTemplate.objects.get(pk=id)
+def pause_recurring_task(id: int, mcp_user=None) -> dict[str, Any]:
+    tpl = _templates(mcp_user).get(pk=id)
     tpl.active = False
     tpl.save(update_fields=["active", "updated_at"])
     return {"ok": True, "id": tpl.id, "active": tpl.active}
 
 
 @transaction.atomic
-def resume_recurring_task(id: int) -> dict[str, Any]:
-    tpl = RecurringTaskTemplate.objects.get(pk=id)
+def resume_recurring_task(id: int, mcp_user=None) -> dict[str, Any]:
+    tpl = _templates(mcp_user).get(pk=id)
     tpl.active = True
     if tpl.next_run_at < timezone.now():
         tpl.next_run_at = compute_initial_next_run(tpl.rrule, tpl.dtstart)
@@ -1573,14 +1602,14 @@ def resume_recurring_task(id: int) -> dict[str, Any]:
 
 
 @transaction.atomic
-def delete_recurring_task(id: int) -> dict[str, Any]:
-    tpl = RecurringTaskTemplate.objects.get(pk=id)
+def delete_recurring_task(id: int, mcp_user=None) -> dict[str, Any]:
+    tpl = _templates(mcp_user).get(pk=id)
     tpl.delete()
     return {"ok": True, "id": id}
 
 
-def preview_recurring_task(id: int, count: int = 5) -> dict[str, Any]:
-    tpl = RecurringTaskTemplate.objects.get(pk=id)
+def preview_recurring_task(id: int, count: int = 5, mcp_user=None) -> dict[str, Any]:
+    tpl = _templates(mcp_user).get(pk=id)
     count = max(1, min(50, count))
     occurrences = preview_occurrences(tpl, count=count)
     return {
@@ -1770,7 +1799,7 @@ def list_wiki_docs(
         if isinstance(project, str) and project.lower() in ("none", "null"):
             filters["project"] = "none"
         else:
-            filters["project"] = _resolve_project(project, mcp_user).id
+            filters["project"] = _resolve_project(project, mcp_user, "wiki").id
     if search:
         filters["search"] = search
     qs = filter_and_sort_wiki_docs(filters=filters)
@@ -1807,7 +1836,7 @@ def create_wiki_doc(
 ) -> dict[str, Any]:
     actor = _resolve_reporter_for_mcp(mcp_user)
     parent_obj = _resolve_wiki_doc(parent, mcp_user) if parent is not None else None
-    project_obj = _resolve_project(project, mcp_user) if project is not None else None
+    project_obj = _resolve_project(project, mcp_user, "wiki") if project is not None else None
 
     doc = WikiDoc(
         title=title or "Untitled",
@@ -1858,7 +1887,7 @@ def update_wiki_doc(
     if clear_project:
         doc.project = None
     elif project is not None:
-        doc.project = _resolve_project(project, mcp_user)
+        doc.project = _resolve_project(project, mcp_user, "wiki")
 
     if parent_changed:
         doc.position = _wiki_tail_position(doc.parent_id, exclude_id=doc.id)
@@ -1954,7 +1983,7 @@ def _drive_destination(filename: str, project: str | int | None,
         raise ValueError("Pass both `project` and `category`, or neither for to-be-organized/.")
     else:
         key = drive_path(
-            _resolve_project(project, mcp_user), category, filename,
+            _resolve_project(project, mcp_user, "drive"), category, filename,
             client=client, subfolder=subfolder,
         )
 
@@ -2209,7 +2238,7 @@ def knowledge_write(
             "content pages (e.g. entities/people/<name>) — the index and log "
             "update automatically. Call knowledge_schema for the conventions."
         )
-    filed = [_resolve_project(p, mcp_user) for p in projects] if projects else None
+    filed = [_resolve_project(p, mcp_user, "llm_wiki") for p in projects] if projects else None
     visible = _visible_slugs(mcp_user)
     if visible is not None:
         norm = b2._wiki_norm(slug)

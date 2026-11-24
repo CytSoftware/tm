@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+
+from apps.tasks.access import has_module
 
 from .broadcast import CRM_GROUP_NAME
 
@@ -12,6 +15,12 @@ class CrmConsumer(AsyncJsonWebsocketConsumer):
         user = self.scope.get("user")
         if user is None or user.is_anonymous:
             await self.close(code=4401)
+            return
+        if not (
+            await sync_to_async(has_module)(user, "crm")
+            or await sync_to_async(has_module)(user, "billing")
+        ):
+            await self.close(code=4403)
             return
         self.group_name = CRM_GROUP_NAME
         await self.channel_layer.group_add(self.group_name, self.channel_name)

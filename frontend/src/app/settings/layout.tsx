@@ -9,6 +9,7 @@ import {
   Plug,
   Send,
   Settings,
+  ShieldCheck,
   Zap,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
@@ -27,6 +28,12 @@ const SETTINGS_NAV = [
     label: "Projects",
     description: "Members, colours, archive",
     icon: FolderKanban,
+  },
+  {
+    href: "/settings/access",
+    label: "Access",
+    description: "Modules and projects per person",
+    icon: ShieldCheck,
   },
   { href: "/settings/github", label: "GitHub", description: "Your review username", icon: GitPullRequest },
   {

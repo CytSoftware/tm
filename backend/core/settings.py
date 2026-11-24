@@ -87,7 +87,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     # Keeps non-staff users inside tasks/wiki/drive/LLM wiki/meetings.
-    "apps.tasks.access.NonStaffAccessMiddleware",
+    "apps.tasks.access.ModuleAccessMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # Safety net: catches overdue recurring templates if the system timer is not configured.

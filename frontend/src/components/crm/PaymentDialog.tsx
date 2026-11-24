@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useHasModule } from "@/hooks/use-access";
 import {
   type Payment,
   type PaymentType,
@@ -66,6 +67,7 @@ function Body({ draft, onClose }: { draft: PaymentDraft; onClose: () => void }) 
   const createCompany = useCreateContact();
   const save = useSavePayment();
   const remove = useDeletePayment();
+  const crm = useHasModule("crm");
 
   const [licence, setLicence] = useState(String(p?.licence?.id ?? draft.licence ?? ""));
   const [title, setTitle] = useState(p?.title ?? draft.title ?? "");
@@ -83,7 +85,8 @@ function Body({ draft, onClose }: { draft: PaymentDraft; onClose: () => void }) 
   );
   const picked = (licences.data ?? []).find((l) => String(l.id) === licence);
   const prefix = projects.data?.results.find((x) => String(x.id) === project)?.prefix ?? "";
-  const leads = useLeads(prefix, !picked);
+  // The lead picker needs the crm module; billing-only users file without one.
+  const leads = useLeads(prefix, !picked && crm);
   const companyLeads = (leads.data ?? []).filter(
     (l) => !company.trim() || l.company?.name.toLowerCase() === company.trim().toLowerCase(),
   );

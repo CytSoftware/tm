@@ -7,6 +7,13 @@ filter in either. Unknown filter keys are ignored.
 Derived, never stored: whether an entity is "in the CRM", its last update,
 and a lead's next step (the soonest open task its updates filed) are query
 annotations, so none of them can drift.
+
+Every list and base queryset takes a keyword-only ``user`` (no default, so a
+caller can't forget it) and shows only what that user may see
+(``apps.tasks.access``): leads and their updates by the ``crm`` module and
+project, payments and licences by ``billing``. Updates without a lead are
+staff-only. ``user=None`` is a user-less operator credential (MCP legacy
+token, stdio) and sees everything.
 """
 
 from __future__ import annotations
@@ -35,6 +42,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.meetings.models import Entity
+from apps.tasks.access import has_full_access, member_project_ids, visible_project_ids
 from apps.tasks.models import ColumnKind, Project, Task
 
 from .models import CLOSED_STAGES, Lead, Licence, Payment, Update
@@ -74,6 +82,66 @@ def _id(value: Any) -> int | None:
     return int(text) if text.isdigit() else None
 
 
+def _ids(user, module: str) -> set[int] | None:
+    """Projects whose ``module`` rows ``user`` sees; ``None`` = all."""
+    return None if user is None else visible_project_ids(user, module)
+
+
+def _scoped(qs: QuerySet, user, module: str, field: str = "project") -> QuerySet:
+    ids = _ids(user, module)
+    return qs if ids is None else qs.filter(**{f"{field}_id__in": ids})
+
+
+def visible_contacts(user) -> Q | None:
+    """People and companies ``user`` may see (``None`` = everyone): linked to
+    a lead or update they can see in the CRM, or — for the billing company
+    picker — on a payment or licence they can see in billing."""
+    if user is None or has_full_access(user):
+        return None
+    q = Q(pk__in=[])
+    if crm := _ids(user, "crm"):
+        q |= (
+            Q(leads__project_id__in=crm)
+            | Q(company__leads__project_id__in=crm)
+            | Q(crm_updates__lead__project_id__in=crm)
+            | Q(people__crm_updates__lead__project_id__in=crm)
+        )
+    if billing := _ids(user, "billing"):
+        q |= Q(payments__project_id__in=billing) | Q(licences__project_id__in=billing)
+    return q
+
+
+def _on_projects(ids) -> Q:
+    """On a lead, update, payment or licence in ``ids`` — directly, or (as in
+    ``IN_CRM``) through a person's company or a company's tagged people."""
+    return (
+        Q(leads__project_id__in=ids)
+        | Q(crm_updates__lead__project_id__in=ids)
+        | Q(company__leads__project_id__in=ids)
+        | Q(people__crm_updates__lead__project_id__in=ids)
+        | Q(payments__project_id__in=ids)
+        | Q(licences__project_id__in=ids)
+    )
+
+
+#: Someone's CRM or billing has it. Billing counts, or a company only another
+#: project bills would read as nobody's and be claimable by name or id.
+KNOWN = IN_CRM | Q(payments__isnull=False) | Q(licences__isnull=False)
+
+
+def reachable_entities(user) -> QuerySet[Entity]:
+    """Entities ``user`` may tag on an update, put on a lead or bill: the ones
+    they can see, the ones their own projects' CRM or billing already has
+    (whichever module they hold), and ones nobody has yet (a person met in a
+    meeting, a brand-new company). An entity that only lives on other
+    projects' leads, updates or bills stays out of reach."""
+    q = visible_contacts(user)
+    if q is None:
+        return Entity.objects.all()
+    ours = _on_projects(member_project_ids(user) or set())
+    return Entity.objects.filter(pk__in=Entity.objects.filter(q | ours | ~KNOWN).values("pk"))
+
+
 # ---------------------------------------------------------------------------
 # Updates
 # ---------------------------------------------------------------------------
@@ -85,16 +153,17 @@ def about_entity(entity_id: Any) -> Q:
     return Q(people=entity_id) | Q(people__company=entity_id) | Q(lead__company=entity_id)
 
 
-def base_update_queryset() -> QuerySet[Update]:
-    return Update.objects.select_related(
+def base_update_queryset(*, user) -> QuerySet[Update]:
+    qs = Update.objects.select_related(
         "lead__company", "meeting", "created_by", "task__column"
     ).prefetch_related("people__company", "users", "task__assignees")
+    return _scoped(qs, user, "crm", "lead__project")
 
 
-def filter_updates(filters: dict[str, Any] | None = None) -> QuerySet[Update]:
+def filter_updates(filters: dict[str, Any] | None = None, *, user) -> QuerySet[Update]:
     """``{lead, entity, project, days}``. ``lead`` is a key."""
     filters = filters or {}
-    qs = base_update_queryset()
+    qs = base_update_queryset(user=user)
     if filters.get("lead"):
         qs = qs.filter(lead__key__iexact=str(filters["lead"]))
     entity = _id(filters.get("entity"))
@@ -109,7 +178,9 @@ def filter_updates(filters: dict[str, Any] | None = None) -> QuerySet[Update]:
     # Joins through people repeat a row once per matching person; re-selecting
     # by id from a fresh, unjoined queryset drops the repeats and stays
     # sliceable and portable (no DISTINCT ON).
-    return base_update_queryset().filter(pk__in=qs.values("pk")).order_by("-occurred_at", "-id")
+    return (
+        base_update_queryset(user=user).filter(pk__in=qs.values("pk")).order_by("-occurred_at", "-id")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -117,8 +188,12 @@ def filter_updates(filters: dict[str, Any] | None = None) -> QuerySet[Update]:
 # ---------------------------------------------------------------------------
 
 
-def annotate_contacts(qs: QuerySet[Entity]) -> QuerySet[Entity]:
-    last = Update.objects.filter(about_entity(OuterRef("pk"))).order_by("-occurred_at")
+def annotate_contacts(qs: QuerySet[Entity], *, user) -> QuerySet[Entity]:
+    # The derived columns count only what ``user`` could open themselves.
+    last = _scoped(
+        Update.objects.filter(about_entity(OuterRef("pk"))), user, "crm", "lead__project"
+    ).order_by("-occurred_at")
+    leads = _scoped(Lead.objects.filter(company_id=OuterRef("pk")), user, "crm")
     return qs.annotate(
         last_update_at=Subquery(last.values("occurred_at")[:1]),
         last_update_body=Subquery(last.values("body")[:1]),
@@ -135,8 +210,7 @@ def annotate_contacts(qs: QuerySet[Entity]) -> QuerySet[Entity]:
         ),
         open_lead_count=Coalesce(
             Subquery(
-                Lead.objects.filter(company_id=OuterRef("pk"))
-                .exclude(stage__in=CLOSED_STAGES)
+                leads.exclude(stage__in=CLOSED_STAGES)
                 .values("company_id")
                 .annotate(n=Count("pk"))
                 .values("n")[:1],
@@ -147,14 +221,18 @@ def annotate_contacts(qs: QuerySet[Entity]) -> QuerySet[Entity]:
     )
 
 
-def base_contact_queryset() -> QuerySet[Entity]:
-    return annotate_contacts(Entity.objects.select_related("company").prefetch_related("emails"))
+def base_contact_queryset(*, user) -> QuerySet[Entity]:
+    qs = Entity.objects.select_related("company").prefetch_related("emails")
+    if (q := visible_contacts(user)) is not None:
+        qs = qs.filter(pk__in=Entity.objects.filter(q).values("pk"))
+    return annotate_contacts(qs, user=user)
 
 
-def filter_contacts(filters: dict[str, Any] | None = None) -> QuerySet[Entity]:
+def filter_contacts(filters: dict[str, Any] | None = None, *, user) -> QuerySet[Entity]:
     """``{kind, company, search, project, all}``. Defaults to entities in the
     CRM; a search (or ``all``) looks through every person and company we know,
-    so someone met once in a meeting can still be found and tagged."""
+    so someone met once in a meeting can still be found and tagged. Either way
+    only within what ``user`` may see."""
     filters = filters or {}
     qs = Entity.objects.all()
     term = (filters.get("search") or "").strip()
@@ -182,7 +260,7 @@ def filter_contacts(filters: dict[str, Any] | None = None) -> QuerySet[Entity]:
             | Q(company__name__icontains=term)
         )
     ids = qs.values("pk")
-    return base_contact_queryset().filter(pk__in=ids).order_by(
+    return base_contact_queryset(user=user).filter(pk__in=ids).order_by(
         F("last_update_at").desc(nulls_last=True), "name"
     )
 
@@ -201,10 +279,10 @@ def open_steps() -> QuerySet[Task]:
     )
 
 
-def base_lead_queryset() -> QuerySet[Lead]:
+def base_lead_queryset(*, user) -> QuerySet[Lead]:
     step = open_steps().filter(crm_update__lead_id=OuterRef("pk"))
     last = Update.objects.filter(lead_id=OuterRef("pk")).order_by("-occurred_at", "-id")
-    return Lead.objects.select_related("company", "project").annotate(
+    return _scoped(Lead.objects.select_related("company", "project"), user, "crm").annotate(
         next_step_key=Subquery(step.values("key")[:1]),
         next_step_title=Subquery(step.values("title")[:1]),
         next_step_due=Subquery(step.values("due_at")[:1]),
@@ -212,7 +290,7 @@ def base_lead_queryset() -> QuerySet[Lead]:
     )
 
 
-def filter_leads(filters: dict[str, Any] | None = None) -> QuerySet[Lead]:
+def filter_leads(filters: dict[str, Any] | None = None, *, user) -> QuerySet[Lead]:
     """``{stage, status, entity, project, search}``. ``status``: open, won,
     lost, closed. ``entity`` matches the lead's company, or — for a person —
     leads they're tagged on and their employer's leads."""
@@ -240,7 +318,7 @@ def filter_leads(filters: dict[str, Any] | None = None) -> QuerySet[Lead]:
         qs = qs.filter(
             Q(title__icontains=term) | Q(key__iexact=term) | Q(company__name__icontains=term)
         )
-    return base_lead_queryset().filter(pk__in=qs.values("pk")).order_by("position", "id")
+    return base_lead_queryset(user=user).filter(pk__in=qs.values("pk")).order_by("position", "id")
 
 
 def lead_people(lead: Lead) -> QuerySet[Entity]:
@@ -268,13 +346,13 @@ def payment_status() -> Case:
     )
 
 
-def filter_payments(filters: dict[str, Any] | None = None) -> QuerySet[Payment]:
+def filter_payments(filters: dict[str, Any] | None = None, *, user) -> QuerySet[Payment]:
     """``{status, type, project, company, lead}``. ``lead`` is a key,
     ``company`` an entity id. Soonest due first."""
     filters = filters or {}
-    qs = Payment.objects.select_related("company", "project", "lead", "licence").annotate(
-        status=payment_status()
-    )
+    qs = _scoped(
+        Payment.objects.select_related("company", "project", "lead", "licence"), user, "billing"
+    ).annotate(status=payment_status())
     if filters.get("status"):
         qs = qs.filter(status=filters["status"])
     if filters.get("type"):
@@ -301,7 +379,7 @@ def filter_payments(filters: dict[str, Any] | None = None) -> QuerySet[Payment]:
 EXPIRING_DAYS = 60
 
 
-def filter_licences(filters: dict[str, Any] | None = None) -> QuerySet[Licence]:
+def filter_licences(filters: dict[str, Any] | None = None, *, user) -> QuerySet[Licence]:
     """``{status, project, company, lead}``. Every row carries the derived
     ``status`` (upcoming / active / expiring / ended), ``renewed`` (a later
     licence exists for the same company and title — so an ended one isn't
@@ -312,7 +390,7 @@ def filter_licences(filters: dict[str, Any] | None = None) -> QuerySet[Licence]:
         company_id=OuterRef("company_id"), title__iexact=OuterRef("title"), starts_on__gt=OuterRef("starts_on")
     )
     money = DecimalField(max_digits=14, decimal_places=2)
-    qs = Licence.objects.select_related("company", "project", "lead").annotate(
+    qs = _scoped(Licence.objects.select_related("company", "project", "lead"), user, "billing").annotate(
         status=Case(
             When(starts_on__gt=today, then=Value("upcoming")),
             When(ends_on__lt=today, then=Value("ended")),

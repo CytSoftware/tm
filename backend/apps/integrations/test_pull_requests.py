@@ -16,7 +16,7 @@ class PullRequestTests(TestCase):
     def setUp(self):
         cache.clear()
         self.client = APIClient()
-        self.user = get_user_model().objects.create_user("reviewer")
+        self.user = get_user_model().objects.create_user("reviewer", is_staff=True)
         self.client.force_authenticate(self.user)
         self.project = Project.objects.create(name="Tracker", prefix="TM")
         self.task = Task.objects.create(project=self.project, title="Task title", reporter=self.user)

@@ -6,9 +6,10 @@ the transition log, broadcast, notifications and webhooks stay identical to
 every other write path; this view only validates, creates missing labels and
 turns resolver errors into a 400 instead of a 500.
 
-Scoping is the caller's: ``create_task`` resolves the project through the
-caller's visible projects, so a non-staff account can only create in projects
-it is a member of (anything else reads as an unknown project).
+Scoping is the caller's: the project is resolved through the caller's
+memberships, so a non-staff account can only create in projects it is a member
+of (anything else reads as an unknown project). It needs no module — this is
+the one task write a plain project member gets.
 """
 
 from __future__ import annotations
@@ -110,7 +111,9 @@ class ExternalTaskView(APIView):
                 # Resolve each reference up front only to name the bad one in
                 # the error; create_task resolves them again itself.
                 try:
-                    project = tools._resolve_project(data["project"], user)
+                    # Membership, not the tasks module: this endpoint predates
+                    # modules and the feedback bot only ever files here.
+                    project = tools._resolve_project(data["project"], user, None)
                 except (ObjectDoesNotExist, ValueError):
                     raise _BadRequest(f"Unknown project {data['project']!r}.")
                 if data["column"]:
@@ -133,7 +136,7 @@ class ExternalTaskView(APIView):
                 labels = [name.strip() for name in data["labels"] if name.strip()]
                 _ensure_labels(project, labels)
                 task = tools.create_task(
-                    project=project.pk,
+                    project=project,  # already scoped above
                     title=data["title"],
                     description=data["description"],
                     assignees=data["assignees"] or None,

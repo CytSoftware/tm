@@ -200,6 +200,9 @@ class ProjectSerializer(serializers.ModelSerializer):
         # queries. Any consumer that serializes a bare Project (never through
         # the viewset) degrades to 0 rather than silently firing extra SQL.
         value = getattr(obj, "open_task_count", None)
+        request = self.context.get("request")
+        if request is not None and not can_see_project(request.user, obj.pk, "tasks"):
+            return 0  # the project list is directory data; task counts aren't
         return int(value) if value is not None else 0
 
 
@@ -318,7 +321,12 @@ class BetSerializer(serializers.ModelSerializer):
 
     def get_tasks(self, obj: Bet) -> list[dict]:
         # Compact refs for the bets page's linked-task list (the viewset
-        # prefetches ``tasks__column`` so this stays N+1-free).
+        # prefetches ``tasks__column`` so this stays N+1-free). Bets are
+        # module-only, tasks aren't: the counts stay, the titles need the
+        # ``tasks`` module and the project.
+        request = self.context.get("request")
+        if request is not None and not can_see_project(request.user, obj.project_id, "tasks"):
+            return []
         return [
             {
                 "id": t.id,
@@ -428,17 +436,23 @@ class TaskReadSerializer(serializers.ModelSerializer):
 
     def get_sources(self, obj: Task) -> list[dict]:
         """Where the task came from: the CRM lead whose update filed it, and
-        meetings whose action items it tracks."""
+        meetings whose action items it tracks — each only if the viewer could
+        open it. No viewer in context (a broadcast payload) shows none."""
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None:
+            return []
         out = []
         try:
             lead = obj.crm_update.lead
         except ObjectDoesNotExist:
             lead = None
-        if lead is not None:
+        if lead is not None and can_see_project(user, lead.project_id, "crm"):
             company = lead.company.name if lead.company_id else ""
             out.append({"kind": "lead", "key": lead.key, "title": lead.title, "company": company})
         for link in obj.meeting_links.all():
-            out.append({"kind": "meeting", "key": link.meeting.key, "title": link.meeting.title})
+            if can_see_project(user, link.meeting.project_id, "meetings"):
+                out.append({"kind": "meeting", "key": link.meeting.key, "title": link.meeting.title})
         return out
 
 
@@ -571,7 +585,7 @@ class TaskWriteSerializer(serializers.ModelSerializer):
         if (
             request is not None
             and (has_project_key or self.instance is None)
-            and not can_see_project(request.user, project.id if project else None)
+            and not can_see_project(request.user, project.id if project else None, "tasks")
         ):
             raise serializers.ValidationError(
                 {"project_id": "Pick a project you have access to."}
@@ -843,6 +857,15 @@ class RecurringTaskTemplateWriteSerializer(serializers.ModelSerializer):
 
         project = attrs.get("project") or (self.instance and self.instance.project)
         column = attrs.get("column") or (self.instance and self.instance.column)
+        request = self.context.get("request")
+        if (
+            request is not None
+            and project
+            and not can_see_project(request.user, project.id, "tasks")
+        ):
+            raise serializers.ValidationError(
+                {"project_id": "Pick a project you have access to."}
+            )
         if project and column and column.project_id != project.id:
             raise serializers.ValidationError(
                 {"column_id": "Column does not belong to the selected project."}

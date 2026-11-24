@@ -22,8 +22,11 @@ from rest_framework.views import APIView
 
 from .access import (
     StaffOnlyActions,
+    can_see_project,
     has_full_access,
+    member_project_ids,
     restrict_to_projects,
+    user_modules,
     visible_project_ids,
 )
 from . import comments as task_comments
@@ -292,6 +295,7 @@ def _me_payload(user, request, *, profile=None):
                 continue
     data["github_username"] = profile.github_username or ""
     data["is_staff"] = has_full_access(user)
+    data["modules"] = sorted(user_modules(user))
     data["preferences"] = {
         "assign_hotkey_bindings": clean,
         "board_column_prefs": _clean_board_column_prefs(profile.board_column_prefs),
@@ -966,7 +970,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         # future joins could otherwise double-count. Tasks with no column
         # (only possible for projectless tasks today) count as open.
         qs = super().get_queryset()
-        if (ids := visible_project_ids(self.request.user)) is not None:
+        # Directory data: every member project, whatever modules the user has.
+        if (ids := member_project_ids(self.request.user)) is not None:
             qs = qs.filter(pk__in=ids)
         return qs.annotate(
             open_task_count=models.Count(
@@ -1056,9 +1061,12 @@ class ColumnViewSet(viewsets.ModelViewSet):
     serializer_class = ColumnSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["project"]
+    # Board layout is shared by the whole project — configuring it is staff work.
+    permission_classes = [permissions.IsAuthenticated, StaffOnlyActions]
+    staff_only_actions = {"create", "update", "partial_update", "destroy", "reorder"}
 
     def get_queryset(self):
-        return restrict_to_projects(super().get_queryset(), self.request.user)
+        return restrict_to_projects(super().get_queryset(), self.request.user, "tasks")
 
     def perform_create(self, serializer):
         project = serializer.validated_data["project"]
@@ -1235,9 +1243,32 @@ class LabelViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        if (ids := visible_project_ids(self.request.user)) is not None:
+        if (ids := visible_project_ids(self.request.user, "tasks")) is not None:
             qs = qs.filter(models.Q(project__isnull=True) | models.Q(project_id__in=ids))
         return qs
+
+    def _check_target(self, project):
+        # Global labels (no project) are read by everyone but changed by staff;
+        # a project label only in a project whose tasks the user can see.
+        user = self.request.user
+        if not has_full_access(user) and (
+            project is None or not can_see_project(user, project.id, "tasks")
+        ):
+            raise ValidationError({"project": "Pick a project you have access to."})
+
+    def perform_create(self, serializer):
+        self._check_target(serializer.validated_data.get("project"))
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._check_target(serializer.instance.project)
+        if "project" in serializer.validated_data:
+            self._check_target(serializer.validated_data["project"])
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check_target(instance.project)
+        instance.delete()
 
 
 # ---------------------------------------------------------------------------
@@ -1474,7 +1505,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     lookup_value_regex = r"[A-Za-z0-9\-]+"
 
     def get_queryset(self):
-        qs = restrict_to_projects(base_task_queryset(), self.request.user)
+        qs = restrict_to_projects(base_task_queryset(), self.request.user, "tasks")
         params = self.request.query_params
 
         ad_hoc_filters = _extract_ad_hoc_filters(params)
@@ -1891,6 +1922,9 @@ class RecurringTaskViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["project", "active"]
 
+    def get_queryset(self):
+        return restrict_to_projects(super().get_queryset(), self.request.user, "tasks")
+
     def get_serializer_class(self):
         if self.action in {"list", "retrieve"}:
             return RecurringTaskTemplateReadSerializer
@@ -1938,6 +1972,12 @@ class RecurringTaskViewSet(viewsets.ModelViewSet):
 # ---------------------------------------------------------------------------
 
 
+def _visible_notifications(user):
+    """The user's notifications about tasks they can still see — losing the
+    module or the project hides what it already sent. They're all task events."""
+    return restrict_to_projects(user.notifications.all(), user, "tasks")
+
+
 class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     """Current user's notifications. Strictly scoped to ``request.user`` —
     both ``get_queryset`` (list/retrieve/the ``read`` action's ``get_object``)
@@ -1948,7 +1988,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return Notification.objects.none()
-        qs = self.request.user.notifications.select_related("actor", "project")
+        qs = _visible_notifications(self.request.user).select_related("actor", "project")
         unread = self.request.query_params.get("unread")
         if unread in ("1", "true", "True"):
             qs = qs.filter(read_at__isnull=True)
@@ -1963,7 +2003,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         else:
             serializer = self.get_serializer(queryset, many=True)
             data = {"results": serializer.data}
-        data["unread_count"] = request.user.notifications.filter(
+        data["unread_count"] = _visible_notifications(request.user).filter(
             read_at__isnull=True
         ).count()
         return Response(data)
@@ -1987,7 +2027,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="unread_count")
     def unread_count(self, request):
-        count = request.user.notifications.filter(read_at__isnull=True).count()
+        count = _visible_notifications(request.user).filter(read_at__isnull=True).count()
         return Response({"unread_count": count})
 
     @action(detail=False, methods=["get", "post", "delete"], url_path="push")

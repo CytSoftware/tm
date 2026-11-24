@@ -90,7 +90,7 @@ def _items_qs(user):
     """Base queryset: this user's focus items, with the embedded Task fully
     prefetched so the serializer doesn't N+1 on labels/assignees/columns."""
     return (
-        restrict_to_projects(FocusItem.objects.filter(user=user), user, "task__project")
+        restrict_to_projects(FocusItem.objects.filter(user=user), user, "tasks", "task__project")
         .select_related(
             "task",
             "task__column",
@@ -174,7 +174,7 @@ class FocusListView(APIView):
         payload = FocusItemAddSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         task = get_object_or_404(
-            restrict_to_projects(Task.objects.all(), request.user),
+            restrict_to_projects(Task.objects.all(), request.user, "tasks"),
             key=payload.validated_data["task_key"],
         )
         period = payload.validated_data.get("period") or FocusPeriod.WEEK
@@ -212,11 +212,7 @@ class FocusItemView(APIView):
     lookup_field = "task_key"
 
     def _get_item(self, request, task_key: str) -> FocusItem:
-        return get_object_or_404(
-            FocusItem.objects.select_related("task"),
-            user=request.user,
-            task__key=task_key,
-        )
+        return get_object_or_404(_items_qs(request.user), task__key=task_key)
 
     @extend_schema(
         request=FocusItemUpdateSerializer, responses=FocusItemSerializer
@@ -270,7 +266,7 @@ def add_focus(*, user, task_key: str, period: str = FocusPeriod.WEEK) -> FocusIt
     Mirrors ``FocusListView.post`` so MCP and DRF share one code path."""
     if period not in dict(FocusPeriod.choices):
         raise ValidationError({"period": f"Invalid period: {period!r}"})
-    task = get_object_or_404(restrict_to_projects(Task.objects.all(), user), key=task_key)
+    task = get_object_or_404(restrict_to_projects(Task.objects.all(), user, "tasks"), key=task_key)
     with transaction.atomic():
         item, created = FocusItem.objects.select_for_update().get_or_create(
             user=user,

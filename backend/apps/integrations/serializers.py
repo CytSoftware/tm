@@ -114,8 +114,14 @@ class EventSourceSerializer(serializers.ModelSerializer):
         return getattr(obj, "new_count", None)
 
     def get_webhook_url(self, obj: EventSource) -> str:
-        path = reverse("event-source-ingest", kwargs={"token": obj.token})
+        from apps.tasks.access import has_full_access
+
         request = self.context.get("request")
+        # The token in the URL is the ingest credential; setting a source up
+        # is staff-only, so operations-module users don't get it.
+        if request is not None and not has_full_access(request.user):
+            return ""
+        path = reverse("event-source-ingest", kwargs={"token": obj.token})
         return request.build_absolute_uri(path) if request else path
 
 

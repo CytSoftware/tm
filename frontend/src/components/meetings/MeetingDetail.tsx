@@ -11,7 +11,6 @@
 
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
-import { useQuery } from "@tanstack/react-query";
 import {
   ArrowUpRight,
   Check,
@@ -36,12 +35,11 @@ import {
   useToggleActionItem,
   useUpdateMeeting,
 } from "@/hooks/use-meetings";
+import { useHasModule } from "@/hooks/use-access";
 import { useLeads, usePostUpdate } from "@/hooks/use-crm";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import { ApiError } from "@/lib/api";
-import { fetchMe } from "@/lib/auth";
 import { md } from "@/lib/markdown";
-import { meKey } from "@/lib/query-keys";
 import {
   CATEGORY_META,
   CATEGORY_ORDER,
@@ -266,12 +264,11 @@ function MetaBar({
 // ── CRM: which leads this recording is posted to, and one pick to post it ──
 
 function CrmRow({ meeting }: { meeting: Meeting }) {
-  // The CRM is staff-only; employees can't open or write to it.
-  const { data: me } = useQuery({ queryKey: meKey(), queryFn: fetchMe });
-  const staff = !!me?.is_staff;
-  const leads = useLeads("", staff);
+  // Leads live in the CRM module; without it there is nothing to show or post to.
+  const crm = useHasModule("crm");
+  const leads = useLeads("", crm);
   const post = usePostUpdate();
-  if (!staff) return null;
+  if (!crm) return null;
   const posted = new Set(meeting.crm_leads.map((l) => l.key));
   const open = (leads.data ?? []).filter(
     (l) => l.stage !== "won" && l.stage !== "lost" && !posted.has(l.key),
@@ -461,9 +458,8 @@ function Actions({ meeting }: { meeting: Meeting }) {
   const createTask = useCreateTaskFromActionItem(meeting.key);
   const projects = useProjectsQuery({ includeArchived: false });
   const { openTaskByKey } = useTaskDialog();
-  // Tasks are staff-only: employees tick action items but never see tasks.
-  const { data: me } = useQuery({ queryKey: meKey(), queryFn: fetchMe });
-  const staff = !!me?.is_staff;
+  // Without the tasks module you tick action items but never see tasks.
+  const tasks = useHasModule("tasks");
   // Only needed when the meeting itself has no project to file tasks under.
   const [projectId, setProjectId] = useState("");
 
@@ -491,7 +487,7 @@ function Actions({ meeting }: { meeting: Meeting }) {
         </p>
       ) : (
         <>
-          {staff && needsProject && (
+          {tasks && needsProject && (
             <label className="mb-3 flex items-center gap-2 text-[12px] text-muted-foreground">
               Create tasks in
               <select
@@ -549,7 +545,7 @@ function Actions({ meeting }: { meeting: Meeting }) {
                     </p>
                   )}
                 </div>
-                {!staff ? null : item.task_key ? (
+                {!tasks ? null : item.task_key ? (
                   <button
                     type="button"
                     onClick={() => openTaskByKey(item.task_key!)}
@@ -581,7 +577,7 @@ function Actions({ meeting }: { meeting: Meeting }) {
         </>
       )}
 
-      {staff && otherTasks.length > 0 && (
+      {tasks && otherTasks.length > 0 && (
         <>
           <h3 className="mb-1 mt-5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Linked tasks

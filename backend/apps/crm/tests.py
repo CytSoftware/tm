@@ -59,10 +59,10 @@ class ContactTests(CrmTestCase):
         self.assertEqual(entity.pk, existing.pk)
 
     def test_email_is_unique_across_entities(self):
-        services.update_contact(self.mohamed, {"emails": ["mo@ecg.com"]})
+        services.update_contact(self.mohamed, {"emails": ["mo@ecg.com"]}, viewer=None)
         other, _ = services.create_contact({"kind": "person", "name": "Sami"})
         with self.assertRaises(services.CrmError):
-            services.update_contact(other, {"emails": ["MO@ecg.com"]})
+            services.update_contact(other, {"emails": ["MO@ecg.com"]}, viewer=None)
 
     def test_merge_repoints_leads_and_updates(self):
         lead = self.lead()
@@ -78,7 +78,7 @@ class ContactTests(CrmTestCase):
 
 class MembershipTests(CrmTestCase):
     def ids(self, **filters):
-        return set(filter_contacts(filters).values_list("pk", flat=True))
+        return set(filter_contacts(filters, user=None).values_list("pk", flat=True))
 
     def test_only_entities_on_a_lead_or_update_are_listed(self):
         stranger = meeting_services.resolve_entity(EntityKind.PERSON, "Met Once")
@@ -99,7 +99,7 @@ class MembershipTests(CrmTestCase):
         services.post_update(
             {"body": "pinged", "occurred_at": when}, user=self.user, lead=lead, people=[self.mohamed]
         )
-        company = filter_contacts().get(pk=self.ecg.pk)
+        company = filter_contacts(user=None).get(pk=self.ecg.pk)
         self.assertEqual(company.last_update_at, when)
         self.assertEqual(company.open_lead_count, 1)
 
@@ -125,12 +125,12 @@ class LeadTests(CrmTestCase):
     def test_move_places_between_siblings(self):
         a, b, c = self.lead(title="a"), self.lead(title="b"), self.lead(title="c")
         services.move_lead(c, LeadStage.POTENTIAL, index=1)
-        order = list(filter_leads({"stage": "potential"}).values_list("title", flat=True))
+        order = list(filter_leads({"stage": "potential"}, user=None).values_list("title", flat=True))
         self.assertEqual(order, ["a", "c", "b"])
 
     def test_person_matches_their_employers_leads(self):
         self.lead()
-        self.assertEqual(filter_leads({"entity": self.mohamed.pk}).count(), 1)
+        self.assertEqual(filter_leads({"entity": self.mohamed.pk}, user=None).count(), 1)
 
 
 class UpdateTests(CrmTestCase):
@@ -156,14 +156,14 @@ class UpdateTests(CrmTestCase):
         task = update.task
         self.assertEqual((task.project, task.column.kind, task.title), (self.mow, ColumnKind.TODO, "Chase ECG"))
         self.assertEqual(list(task.assignees.all()), [self.user])
-        self.assertEqual(filter_leads().get(pk=lead.pk).next_step_key, task.key)
+        self.assertEqual(filter_leads(user=None).get(pk=lead.pk).next_step_key, task.key)
 
         # A later update without a step doesn't clear it; ticking it off does.
         services.post_update({"body": "Still waiting"}, user=self.user, lead=lead)
-        self.assertEqual(filter_leads().get(pk=lead.pk).next_step_key, task.key)
+        self.assertEqual(filter_leads(user=None).get(pk=lead.pk).next_step_key, task.key)
         services.set_step_done(task, True, user=self.user)
         self.assertEqual(Task.objects.get(pk=task.pk).column.kind, ColumnKind.DONE)
-        self.assertIsNone(filter_leads().get(pk=lead.pk).next_step_key)
+        self.assertIsNone(filter_leads(user=None).get(pk=lead.pk).next_step_key)
 
     def test_next_step_needs_a_lead_with_a_project(self):
         with self.assertRaises(services.CrmError):
@@ -176,13 +176,13 @@ class UpdateTests(CrmTestCase):
     def test_company_history_lists_an_update_once(self):
         hala, _ = services.create_contact({"kind": "person", "name": "Hala", "company": "ECG"})
         services.post_update({"body": "both"}, user=self.user, lead=self.lead(), people=[self.mohamed, hala])
-        self.assertEqual(filter_updates({"entity": self.ecg.pk}).count(), 1)
+        self.assertEqual(filter_updates({"entity": self.ecg.pk}, user=None).count(), 1)
 
     def test_activity_scopes_by_project(self):
         services.post_update({"body": "mow"}, user=self.user, lead=self.lead())
         services.post_update({"body": "loose"}, user=self.user, people=[self.mohamed])
-        self.assertEqual(filter_updates().count(), 2)
-        self.assertEqual([u.body for u in filter_updates({"project": "MOW"})], ["mow"])
+        self.assertEqual(filter_updates(user=None).count(), 2)
+        self.assertEqual([u.body for u in filter_updates({"project": "MOW"}, user=None)], ["mow"])
 
 
 class ApiTests(CrmTestCase):
@@ -261,9 +261,9 @@ class PaymentTests(CrmTestCase):
         self.payment(due_on=today - timedelta(days=1))
         self.payment(due_on=today - timedelta(days=5), paid_on=today - timedelta(days=6))
         self.payment(due_on=today)
-        statuses = list(filter_payments().values_list("status", flat=True))
+        statuses = list(filter_payments(user=None).values_list("status", flat=True))
         self.assertEqual(statuses, ["paid", "overdue", "upcoming"])
-        self.assertEqual(filter_payments({"status": "overdue"}).count(), 1)
+        self.assertEqual(filter_payments({"status": "overdue"}, user=None).count(), 1)
 
     def test_a_lead_fills_in_company_and_project(self):
         lead = self.lead()
@@ -307,7 +307,7 @@ class LicenceTests(CrmTestCase):
             services.save_payment(None, {"title": "Mowafeq licence", "company": self.ecg, "type": "licence",
                                          "amount": Decimal("1000"), "due_on": today, "paid_on": paid,
                                          "licence": current})
-        rows = {lc.pk: lc for lc in filter_licences()}
+        rows = {lc.pk: lc for lc in filter_licences(user=None)}
         self.assertEqual((rows[old.pk].status, rows[old.pk].renewed), ("ended", True))
         self.assertEqual((rows[current.pk].status, rows[current.pk].renewed), ("expiring", False))
         self.assertEqual((rows[lapsed.pk].status, rows[lapsed.pk].renewed), ("ended", False))

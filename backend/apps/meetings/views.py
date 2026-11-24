@@ -1,7 +1,8 @@
 """REST API for meetings and the entities that link them.
 
-Auth is the project default (session + ``IsAuthenticated``): every Task
-Manager user sees every meeting. All filtering goes through ``query.py`` and
+Auth is the project default (session + ``IsAuthenticated``); a non-staff user
+needs the ``meetings`` module and sees their projects' meetings
+(``apps.tasks.access``). All filtering goes through ``query.py`` and
 all writes through ``services.py`` — the MCP tools use the same two modules.
 """
 
@@ -11,12 +12,13 @@ from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, permissions, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from apps.tasks.access import (
     StaffOnlyActions,
     can_see_project,
+    has_module,
     restrict_to_projects,
     visible_project_ids,
 )
@@ -73,6 +75,11 @@ def _guard(fn, *args, **kwargs):
         raise ValidationError({"detail": str(exc)})
 
 
+def _require_tasks(user) -> None:
+    if not has_module(user, "tasks"):
+        raise PermissionDenied("You don't have access to tasks.")
+
+
 def _announce(meeting: Meeting, event: str = "meeting.updated") -> None:
     broadcast_meeting_event(event, {"key": meeting.key})
 
@@ -90,15 +97,17 @@ class MeetingViewSet(viewsets.ModelViewSet):
     lookup_value_regex = r"[A-Za-z0-9\-]+"
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
     permission_classes = [permissions.IsAuthenticated, StaffOnlyActions]
-    # Tasks are staff-only, so are the meeting actions that touch them.
-    staff_only_actions = {"create", "destroy", "action_item_create_task", "tasks"}
+    # Ingest and deletion are the pipeline's and staff's. Touching tasks
+    # (create from an action item, link) needs the tasks module — checked in
+    # the actions themselves.
+    staff_only_actions = {"create", "destroy"}
 
     def get_queryset(self):
         if self.action == "list":
             qs = filter_meetings(_filters_from(self.request), light=True)
         else:
             qs = base_meeting_queryset()
-        return restrict_to_projects(qs, self.request.user)
+        return restrict_to_projects(qs, self.request.user, "meetings")
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -134,9 +143,9 @@ class MeetingViewSet(viewsets.ModelViewSet):
         payload.is_valid(raise_exception=True)
         if "project" in payload.validated_data:
             target = _guard(services.resolve_project, payload.validated_data["project"])
-            if not can_see_project(request.user, target.id if target else None):
+            if not can_see_project(request.user, target.id if target else None, "meetings"):
                 raise ValidationError({"project": "Pick a project you have access to."})
-        _guard(services.curate_meeting, meeting, payload.validated_data)
+        _guard(services.curate_meeting, meeting, payload.validated_data, user=request.user)
         _announce(meeting)
         return self._detail(meeting)
 
@@ -162,7 +171,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
     def facets(self, request):
         """Counts behind the filter bar. Always over *all* meetings, so
         picking one filter doesn't make the other options disappear."""
-        meetings = restrict_to_projects(Meeting.objects.all(), request.user)
+        meetings = restrict_to_projects(Meeting.objects.all(), request.user, "meetings")
         categories = dict(meetings.values_list("category").annotate(n=Count("id")))
         tags = Tag.objects.annotate(
             count=Count("meetings", filter=Q(meetings__in=meetings), distinct=True)
@@ -216,8 +225,9 @@ class MeetingViewSet(viewsets.ModelViewSet):
     )
     def action_item_create_task(self, request, key=None, item_id=None):
         meeting = self.get_object()
+        _require_tasks(request.user)
         target = _guard(services.resolve_project, request.data.get("project")) or meeting.project
-        if target is not None and not can_see_project(request.user, target.id):
+        if target is not None and not can_see_project(request.user, target.id, "tasks"):
             raise ValidationError({"project": "Pick a project you have access to."})
         _guard(
             services.create_task_from_action_item,
@@ -234,8 +244,9 @@ class MeetingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post", "delete"], url_path="tasks")
     def tasks(self, request, key=None):
         meeting = self.get_object()
+        _require_tasks(request.user)
         task = get_object_or_404(
-            restrict_to_projects(Task.objects.all(), request.user),
+            restrict_to_projects(Task.objects.all(), request.user, "tasks"),
             key=request.data.get("task", ""),
         )
         if request.method == "POST":
@@ -251,7 +262,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
         payload = MeetingLinkInputSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         other = get_object_or_404(
-            restrict_to_projects(Meeting.objects.all(), request.user),
+            restrict_to_projects(Meeting.objects.all(), request.user, "meetings"),
             key=payload.validated_data["to"],
         )
         if request.method == "DELETE":
@@ -285,7 +296,7 @@ class EntityViewSet(
     def get_queryset(self):
         # Non-staff only see people/companies from meetings they can open,
         # and only those meetings are counted.
-        ids = visible_project_ids(self.request.user)
+        ids = visible_project_ids(self.request.user, "meetings")
         qs = Entity.objects.select_related("company").annotate(
             meeting_count=Count(
                 "meetings",

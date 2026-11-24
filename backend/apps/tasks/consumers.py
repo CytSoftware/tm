@@ -28,7 +28,7 @@ class TaskConsumer(AsyncJsonWebsocketConsumer):
             return
 
         self.project_id = int(self.scope["url_route"]["kwargs"]["project_id"])
-        if not await sync_to_async(can_see_project)(user, self.project_id):
+        if not await sync_to_async(can_see_project)(user, self.project_id, "tasks"):
             await self.close(code=4403)
             return
         self.group_name = project_group_name(self.project_id)
