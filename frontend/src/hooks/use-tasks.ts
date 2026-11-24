@@ -220,15 +220,19 @@ export function flattenInfinite(
 }
 
 type CreateTaskPayload = {
-  project_id: number;
-  column_id: number;
+  /** null creates the task in the Inbox (no project, no column). */
+  project_id: number | null;
+  column_id: number | null;
   title: string;
   description?: string;
   assignee_id?: number | null;
+  assignee_ids?: number[];
   priority?: Priority | null;
   label_ids?: number[];
   bet_id?: number | null;
+  reviewer_id?: number | null;
   story_points?: number | null;
+  due_at?: string | null;
 };
 
 /** Invalidate every task-scoped query so the board + list refetch. */
@@ -249,19 +253,8 @@ export function useCreateTask() {
   });
 }
 
-type UpdateTaskPayload = Omit<
-  Partial<CreateTaskPayload>,
-  "project_id" | "column_id"
-> & {
+type UpdateTaskPayload = Partial<CreateTaskPayload> & {
   key: string;
-  /** null moves the task to the Inbox (no project, no column). */
-  project_id?: number | null;
-  column_id?: number | null;
-  due_at?: string | null;
-  /** The real API also accepts this plural id-array field for PATCH — it
-   *  isn't modeled on `CreateTaskPayload`, which only has the create-time
-   *  singular `assignee_id`. */
-  assignee_ids?: number[];
   /** Client-only hints for the optimistic cache patch below: the resolved
    *  User/Label objects for `assignee_ids`/`label_ids`, since the PATCH body
    *  only carries ids but the UI needs full objects to render immediately.

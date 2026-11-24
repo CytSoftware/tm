@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Trash2,
   X,
@@ -25,15 +25,10 @@ import {
   parseRruleToState,
   type RecurrenceState,
 } from "./RecurrencePicker";
-import { UserAvatar } from "@/components/UserAvatar";
-import { useBetsQuery } from "@/hooks/use-bets";
 import { useLabelsQuery } from "@/hooks/use-labels";
-import { useCreateTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import { apiFetch } from "@/lib/api";
-import { fetchMe } from "@/lib/auth";
-import { currentPeriodStart } from "@/lib/periods";
-import { meKey, taskListKey } from "@/lib/query-keys";
+import { taskListKey } from "@/lib/query-keys";
 import type {
   Project,
   Priority,
@@ -55,34 +50,18 @@ const CLICK_THROUGH_GUARD_MS = 400;
 
 type Props = {
   projects: Project[];
-  /** Pre-selected project for "create" mode. Null means "start in Inbox". */
+  /** Fallback project context when the template's project isn't loaded. */
   activeProject: Project | null;
+  template: RecurringTaskTemplate;
   onClose: () => void;
-} & (
-  | { mode: "create"; template?: never; initialColumnId?: number }
-  | {
-      mode: "edit-recurring";
-      template: RecurringTaskTemplate;
-      initialColumnId?: never;
-    }
-);
+};
 
-export function TaskPanel(props: Props) {
-  const {
-    projects,
-    activeProject,
-    mode,
-    onClose,
-  } = props;
-  const template =
-    props.mode === "edit-recurring" ? props.template : undefined;
-  const initialColumnId =
-    props.mode === "create" ? props.initialColumnId : undefined;
+/** Edits a recurring-task template. Tasks themselves (create and edit) use
+ *  `TaskDetail`. */
+export function TaskPanel({ projects, activeProject, template, onClose }: Props) {
   const queryClient = useQueryClient();
   const usersQuery = useUsersQuery();
   const users = usersQuery.data ?? [];
-  const meQuery = useQuery({ queryKey: meKey(), queryFn: fetchMe });
-  const me = meQuery.data ?? null;
 
   // TAS-057 click-through guard: see comment above CLICK_THROUGH_GUARD_MS.
   // Initializing at first render (rather than in an effect) means the guard
@@ -109,7 +88,7 @@ export function TaskPanel(props: Props) {
   // projectId === null means "Inbox" (projectless task). Templates always
   // have a project — they can't live in the Inbox.
   const initialProjectId: number | null =
-    template?.project ?? activeProject?.id ?? null;
+    template.project ?? activeProject?.id ?? null;
   const [projectId, setProjectId] = useState<number | null>(initialProjectId);
   const selectedProject = useMemo(
     () =>
@@ -119,31 +98,23 @@ export function TaskPanel(props: Props) {
     [projects, projectId, activeProject],
   );
 
-  // Editing a template seeds the shared fields; creating starts empty.
-  const seed = template;
-  const [title, setTitle] = useState(seed?.title ?? "");
-  const [description, setDescription] = useState(seed?.description ?? "");
+  const [title, setTitle] = useState(template.title ?? "");
+  const [description, setDescription] = useState(template.description ?? "");
   const [priority, setPriority] = useState<Priority | null>(
-    seed?.priority ?? null,
+    template.priority ?? null,
   );
   const [storyPoints, setStoryPoints] = useState<string>(
-    seed?.story_points != null ? String(seed.story_points) : "",
+    template.story_points != null ? String(template.story_points) : "",
   );
-  const [dueAt, setDueAt] = useState("");
   const [assigneeIds, setAssigneeIds] = useState<number[]>(
-    seed?.assignees?.map((u) => u.id) ?? [],
+    template.assignees.map((u) => u.id) ?? [],
   );
   const [labelIds, setLabelIds] = useState<number[]>(
-    seed?.labels.map((l) => l.id) ?? [],
+    template.labels.map((l) => l.id) ?? [],
   );
   const allLabels = useLabelsQuery().data ?? [];
-  // Bet link (Cyt OS) — tasks only; recurring templates don't carry bets.
-  const [betId, setBetId] = useState<number | null>(null);
-  // Reviewer (TAS-064) — tasks only; recurring templates don't carry a
-  // reviewer. Always editable (unlike the old read-only display).
-  const [reviewerId, setReviewerId] = useState<number | null>(null);
-  // Only meaningful in `edit-recurring` mode. Controls pause/resume.
-  const [active, setActive] = useState<boolean>(template?.active ?? true);
+  // Controls pause/resume.
+  const [active, setActive] = useState<boolean>(template.active);
 
   const pickDefaultColumn = (
     p: Project | null,
@@ -156,8 +127,7 @@ export function TaskPanel(props: Props) {
       if (sameNameCol) return sameNameCol.id;
     }
     return (
-      p.columns.find((c) => c.id === initialColumnId)?.id ??
-      template?.column?.id ??
+      template.column?.id ??
       p.columns.find((c) => c.kind === "todo")?.id ??
       p.columns.find((c) => !c.is_done)?.id ??
       p.columns[0]?.id ??
@@ -180,7 +150,7 @@ export function TaskPanel(props: Props) {
     // the labels query resolves — a label we can't resolve yet is kept, never
     // dropped, or opening and saving a task would wipe its labels (TAS-077).
     const knownLabels = new Map(
-      [...(seed?.labels ?? []), ...allLabels].map((l) => [l.id, l]),
+      [...(template.labels ?? []), ...allLabels].map((l) => [l.id, l]),
     );
     setLabelIds((prev) =>
       prev.filter((id) => {
@@ -188,22 +158,11 @@ export function TaskPanel(props: Props) {
         return scope == null || scope === selectedProject?.id;
       }),
     );
-    // Bets are strictly project-scoped — a project switch always unlinks.
-    setBetId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
 
   const [recurrence, setRecurrence] = useState<RecurrenceState>(() =>
-    template
-      ? parseRruleToState(template.rrule, template.dtstart)
-      : {
-          enabled: false,
-          preset: "daily",
-          weekdays: ["MO"],
-          monthDay: 1,
-          customRrule: "",
-          dtstartLocal: defaultDtstartLocal(),
-        },
+    parseRruleToState(template.rrule, template.dtstart),
   );
 
   // Selectable labels: global ones plus the selected project's (Inbox: global only).
@@ -211,52 +170,15 @@ export function TaskPanel(props: Props) {
     (l) => l.project == null || l.project === selectedProject?.id,
   );
 
-  // Current-period bets for the selected project. The task's own bet stays
-  // selectable even when it belongs to an older period.
-  const betsQuery = useBetsQuery(
-    selectedProject?.id ?? null,
-    currentPeriodStart(),
-    { enabled: mode !== "edit-recurring" },
-  );
-  const betOptions = useMemo(
-    () =>
-      (betsQuery.data ?? []).map((b) => ({
-        id: b.id,
-        name: b.name,
-        color: b.color,
-      })),
-    [betsQuery.data],
-  );
-
-  const createTask = useCreateTask();
-
-  const createRecurring = useMutation({
-    mutationFn: (payload: unknown) =>
-      apiFetch<RecurringTaskTemplate>("/api/recurring-tasks/", {
-        method: "POST",
-        body: payload,
-      }),
-    onSuccess: () => {
-      // Invalidate the whole "recurring" prefix so RecurringManager's
-      // "all" scope refetches too, not only the per-project listing.
-      queryClient.invalidateQueries({ queryKey: ["recurring"] });
-      if (selectedProject) {
-        queryClient.invalidateQueries({
-          queryKey: taskListKey(selectedProject.id),
-        });
-      }
-    },
-  });
-
   const updateRecurring = useMutation({
     mutationFn: (payload: unknown) =>
       apiFetch<RecurringTaskTemplate>(
-        `/api/recurring-tasks/${template?.id}/`,
+        `/api/recurring-tasks/${template.id}/`,
         { method: "PATCH", body: payload },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["recurring"] });
-      if (template?.project != null) {
+      if (template.project != null) {
         queryClient.invalidateQueries({
           queryKey: taskListKey(template.project),
         });
@@ -266,7 +188,7 @@ export function TaskPanel(props: Props) {
 
   const deleteRecurring = useMutation({
     mutationFn: () =>
-      apiFetch<void>(`/api/recurring-tasks/${template?.id}/`, {
+      apiFetch<void>(`/api/recurring-tasks/${template.id}/`, {
         method: "DELETE",
       }),
     onSuccess: () => {
@@ -274,10 +196,7 @@ export function TaskPanel(props: Props) {
     },
   });
 
-  const saving =
-    createTask.isPending ||
-    createRecurring.isPending ||
-    updateRecurring.isPending;
+  const saving = updateRecurring.isPending;
 
   const projectItems = useMemo(
     () =>
@@ -339,88 +258,37 @@ export function TaskPanel(props: Props) {
 
   async function handleSubmit() {
     if (!title.trim()) return;
-
-    if (mode === "edit-recurring" && template) {
-      const rrule = buildRrule(recurrence);
-      if (!rrule || !recurrence.dtstartLocal) return;
-      const payload: Record<string, unknown> = {
-        title,
-        description,
-        priority,
-        story_points: storyPoints === "" ? null : Number(storyPoints),
-        column_id: columnId,
-        assignee_ids: assigneeIds,
-        label_ids: labelIds,
-        rrule,
-        dtstart: new Date(recurrence.dtstartLocal).toISOString(),
-        active,
-      };
-      if (projectId != null && projectId !== template.project) {
-        payload.project_id = projectId;
-      }
-      await updateRecurring.mutateAsync(payload);
-      onClose();
-      return;
-    }
-
-    if (mode === "create" && recurrence.enabled) {
-      if (!selectedProject) {
-        alert("Recurring tasks need a project.");
-        return;
-      }
-      const rrule = buildRrule(recurrence);
-      if (!rrule) return;
-      await createRecurring.mutateAsync({
-        project_id: selectedProject.id,
-        column_id: columnId,
-        title,
-        description,
-        priority,
-        story_points: storyPoints === "" ? null : Number(storyPoints),
-        rrule,
-        dtstart: new Date(recurrence.dtstartLocal).toISOString(),
-        timezone:
-          Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
-        active: true,
-        assignee_ids: assigneeIds,
-      });
-      onClose();
-      return;
-    }
-
+    const rrule = buildRrule(recurrence);
+    if (!rrule || !recurrence.dtstartLocal) return;
     const payload: Record<string, unknown> = {
-      project_id: selectedProject?.id ?? null,
-      column_id: selectedProject ? columnId : null,
       title,
       description,
       priority,
       story_points: storyPoints === "" ? null : Number(storyPoints),
-      due_at: dueAt ? new Date(dueAt).toISOString() : null,
+      column_id: columnId,
       assignee_ids: assigneeIds,
       label_ids: labelIds,
-      bet_id: selectedProject ? betId : null,
-      // Always sent (even when unchanged) so clearing the reviewer works —
-      // omitting the key entirely would look like "no change" to the PATCH.
-      reviewer_id: reviewerId,
+      rrule,
+      dtstart: new Date(recurrence.dtstartLocal).toISOString(),
+      active,
     };
-
-    await createTask.mutateAsync(payload as any);
+    if (projectId != null && projectId !== template.project) {
+      payload.project_id = projectId;
+    }
+    await updateRecurring.mutateAsync(payload);
     onClose();
   }
 
   async function handleDelete() {
-    if (mode === "edit-recurring" && template) {
-      if (
-        !confirm(
-          `Delete recurring template "${template.title}"?\n\nFuture instances will stop being generated. Tasks already created by this template are kept.`,
-        )
-      ) {
-        return;
-      }
-      await deleteRecurring.mutateAsync();
-      onClose();
+    if (
+      !confirm(
+        `Delete recurring template "${template.title}"?\n\nFuture instances will stop being generated. Tasks already created by this template are kept.`,
+      )
+    ) {
       return;
     }
+    await deleteRecurring.mutateAsync();
+    onClose();
   }
 
   // Close on Escape
@@ -457,22 +325,18 @@ export function TaskPanel(props: Props) {
         {/* Header */}
         <div className="shrink-0 flex items-center justify-between gap-2 px-6 py-3 border-b border-border/60 max-lg:px-3">
           <h2 className="text-[15px] font-semibold tracking-tight truncate min-w-0">
-            {mode === "create"
-              ? "New task"
-              : `Recurring — ${template?.title ?? ""}`}
+            Recurring — {template.title}
           </h2>
           <div className="flex items-center gap-2 shrink-0">
-            {mode !== "create" && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                onClick={handleDelete}
-              >
-                <Trash2 className="size-3.5" />
-                Delete
-              </Button>
-            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={handleDelete}
+            >
+              <Trash2 className="size-3.5" />
+              Delete
+            </Button>
             <Button variant="ghost" size="icon" className="size-8" onClick={onClose}>
               <X className="size-4" />
             </Button>
@@ -576,58 +440,6 @@ export function TaskPanel(props: Props) {
               </div>
             </div>
 
-            {mode !== "edit-recurring" && (
-              <div className="flex items-start min-h-[32px] max-lg:flex-col max-lg:gap-0.5 max-lg:py-1">
-                <span className="w-[72px] shrink-0 max-lg:w-full text-[12px] text-muted-foreground pl-1 pt-1.5 max-lg:pt-0">
-                  Reviewer
-                </span>
-                <div className="w-[160px] shrink-0 max-lg:w-full space-y-0.5">
-                  <Select
-                    value={reviewerId != null ? String(reviewerId) : ""}
-                    onValueChange={(v) =>
-                      setReviewerId(v === "" ? null : Number(v))
-                    }
-                    items={
-                      {
-                        "": "No reviewer",
-                        ...Object.fromEntries(
-                          users.map((u) => [String(u.id), u.username]),
-                        ),
-                      } as Record<string, React.ReactNode>
-                    }
-                  >
-                    <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
-                      <SelectValue placeholder="No reviewer" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="">No reviewer</SelectItem>
-                      {users.map((u) => (
-                        <SelectItem key={u.id} value={String(u.id)}>
-                          <span className="inline-flex items-center gap-2">
-                            <UserAvatar
-                              username={u.username}
-                              avatarUrl={u.avatar_url}
-                              size="size-5"
-                            />
-                            {u.username}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {me && reviewerId !== me.id && (
-                    <button
-                      type="button"
-                      onClick={() => setReviewerId(me.id)}
-                      className="w-full text-left px-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      Assign me
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
             <PropRow label="Points">
               <Input
                 type="number"
@@ -639,52 +451,6 @@ export function TaskPanel(props: Props) {
                 className="h-7 text-[12px] border-0 bg-transparent px-1.5 hover:bg-accent/60 rounded w-full"
               />
             </PropRow>
-
-            {mode !== "edit-recurring" && (
-              <PropRow label="Deadline">
-                <Input
-                  type="datetime-local"
-                  value={dueAt}
-                  onChange={(e) => setDueAt(e.target.value)}
-                  className="h-7 text-[12px] border-0 bg-transparent px-1.5 hover:bg-accent/60 rounded w-full"
-                />
-              </PropRow>
-            )}
-
-            {mode !== "edit-recurring" && selectedProject && (
-              <PropRow label="Bet">
-                <Select
-                  value={betId != null ? String(betId) : ""}
-                  onValueChange={(v) => setBetId(v === "" ? null : Number(v))}
-                  items={
-                    {
-                      "": "No bet",
-                      ...Object.fromEntries(
-                        betOptions.map((b) => [String(b.id), b.name]),
-                      ),
-                    } as Record<string, React.ReactNode>
-                  }
-                >
-                  <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
-                    <SelectValue placeholder="No bet" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">No bet</SelectItem>
-                    {betOptions.map((b) => (
-                      <SelectItem key={b.id} value={String(b.id)}>
-                        <span className="inline-flex items-center gap-2">
-                          <span
-                            className="size-2 rounded-full"
-                            style={{ background: b.color }}
-                          />
-                          {b.name}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </PropRow>
-            )}
 
             <div className="pt-2">
               <span className="text-[11px] uppercase tracking-wide text-muted-foreground px-1">
@@ -700,46 +466,20 @@ export function TaskPanel(props: Props) {
               </div>
             </div>
 
-            {mode === "create" && (
-              <div className="pt-2 mt-2 border-t border-border/40">
-                <div className="flex items-center justify-between px-1 py-1">
-                  <span className="text-[11px] text-muted-foreground">
-                    Recurring
-                  </span>
-                  <Switch
-                    checked={recurrence.enabled}
-                    onCheckedChange={(v) =>
-                      setRecurrence({ ...recurrence, enabled: v })
-                    }
-                  />
-                </div>
-                {recurrence.enabled && (
-                  <div className="mt-1">
-                    <RecurrencePicker
-                      state={recurrence}
-                      onChange={setRecurrence}
-                    />
-                  </div>
-                )}
+            <div className="pt-2 mt-2 border-t border-border/40">
+              <div className="flex items-center justify-between px-1 py-1">
+                <span className="text-[11px] text-muted-foreground">
+                  Active
+                </span>
+                <Switch checked={active} onCheckedChange={setActive} />
               </div>
-            )}
-
-            {mode === "edit-recurring" && (
-              <div className="pt-2 mt-2 border-t border-border/40">
-                <div className="flex items-center justify-between px-1 py-1">
-                  <span className="text-[11px] text-muted-foreground">
-                    Active
-                  </span>
-                  <Switch checked={active} onCheckedChange={setActive} />
-                </div>
-                <div className="mt-1">
-                  <RecurrencePicker
-                    state={recurrence}
-                    onChange={setRecurrence}
-                  />
-                </div>
+              <div className="mt-1">
+                <RecurrencePicker
+                  state={recurrence}
+                  onChange={setRecurrence}
+                />
               </div>
-            )}
+            </div>
 
           </div>
 
@@ -751,7 +491,6 @@ export function TaskPanel(props: Props) {
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Task title"
                 autoFocus={
-                  mode === "create" ||
                   typeof window === "undefined" ||
                   window.matchMedia("(pointer: fine)").matches
                 }
@@ -780,7 +519,7 @@ export function TaskPanel(props: Props) {
             onClick={handleSubmit}
             disabled={saving || !title.trim()}
           >
-            {saving ? "Saving..." : mode === "create" ? "Create" : "Save"}
+            {saving ? "Saving..." : "Save"}
           </Button>
         </div>
       </div>
@@ -806,13 +545,3 @@ function PropRow({
   );
 }
 
-function defaultDtstartLocal(): string {
-  const d = new Date();
-  d.setMinutes(0, 0, 0);
-  d.setHours(d.getHours() + 1);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  );
-}

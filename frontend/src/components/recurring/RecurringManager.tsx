@@ -101,7 +101,6 @@ export function RecurringManager({ projectId, projects, onClose }: Props) {
       <TaskPanel
         projects={projects}
         activeProject={scopedProject ?? null}
-        mode="edit-recurring"
         template={editing}
         onClose={() => setEditing(null)}
       />
