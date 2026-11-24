@@ -474,7 +474,13 @@ export function TaskDetail({
       if (open !== null || isEditableElement(document.activeElement)) return;
       const key = e.key.toLowerCase();
       const picker = PICKER_KEYS[key];
-      if (picker && (project || (picker !== "status" && picker !== "bet"))) {
+      // Only open pickers whose chip is on screen: status and bet need a
+      // project, and a recurring template has no deadline, reviewer or bet.
+      const hidden =
+        (!project && (picker === "status" || picker === "bet")) ||
+        (recurrence.enabled &&
+          (picker === "deadline" || picker === "reviewer" || picker === "bet"));
+      if (picker && !hidden) {
         e.preventDefault();
         setOpen(picker);
       } else if (key === "c" && task) {
