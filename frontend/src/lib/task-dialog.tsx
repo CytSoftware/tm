@@ -3,7 +3,7 @@
 /**
  * Global task dialog controller.
  *
- * Owns a single TaskPanel mounted above the shell so any page — sidebar,
+ * Owns a single TaskDetail mounted above the shell so any page — sidebar,
  * backlog, settings, global search — can open or create a task with one
  * function call. Replaces the per-page dialog state that used to live in
  * board/page.tsx.
@@ -20,7 +20,7 @@ import {
   useState,
 } from "react";
 
-import { TaskPanel } from "@/components/task/TaskPanel";
+import { TaskDetail } from "@/components/task/TaskDetail";
 import { apiFetch } from "@/lib/api";
 import { useActiveProject } from "@/lib/active-project";
 import { useProjectsQuery } from "@/hooks/use-projects";
@@ -148,16 +148,7 @@ export function TaskDialogProvider({ children }: { children: ReactNode }) {
     [openTask, openTaskByKey, createTask, close, state],
   );
 
-  // Pick the "active" project context for TaskPanel.
-  const activeProjectForPanel = useMemo(() => {
-    if (!state) return null;
-    if (state.mode === "edit") {
-      return projects.find((p) => p.id === state.task.project) ?? null;
-    }
-    return projects.find((p) => p.id === state.projectId) ?? null;
-  }, [state, projects]);
-
-  // Force a fresh TaskPanel per task so its internal form state resets
+  // Force a fresh panel per task so its internal form state resets
   // cleanly when the dialog is reopened on a different task without an
   // unmount/remount between them.
   const panelKey =
@@ -171,22 +162,22 @@ export function TaskDialogProvider({ children }: { children: ReactNode }) {
     <Ctx.Provider value={value}>
       {children}
       {state?.mode === "edit" && (
-        <TaskPanel
+        <TaskDetail
           key={panelKey ?? undefined}
           projects={projects}
-          activeProject={activeProjectForPanel ?? projects[0] ?? null}
-          mode="edit"
           task={state.task}
           onClose={close}
         />
       )}
       {state?.mode === "create" && (
-        <TaskPanel
+        <TaskDetail
           key={panelKey ?? undefined}
           projects={projects}
-          activeProject={activeProjectForPanel ?? projects[0] ?? null}
-          mode="create"
-          initialColumnId={state.columnId ?? undefined}
+          create={{
+            // With no project in context, start in the first one (not the Inbox).
+            projectId: state.projectId ?? projects[0]?.id ?? null,
+            columnId: state.columnId,
+          }}
           onClose={close}
         />
       )}

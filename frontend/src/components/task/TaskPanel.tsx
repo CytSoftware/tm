@@ -1,19 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  ChevronDown,
-  ChevronRight,
-  ClipboardCopy,
-  Copy,
   Trash2,
   X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -22,11 +17,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { AssigneePicker, LabelPicker } from "./pickers";
 import {
@@ -35,34 +25,16 @@ import {
   parseRruleToState,
   type RecurrenceState,
 } from "./RecurrencePicker";
-import { TimeInColumn, formatDuration } from "./TimeInColumn";
-import { LinkedPRBadge } from "@/components/integrations/LinkedPRBadge";
-import { UserAvatar } from "@/components/UserAvatar";
-import { useBetsQuery } from "@/hooks/use-bets";
 import { useLabelsQuery } from "@/hooks/use-labels";
-import { useCreateTask, useUpdateTask, useDeleteTask } from "@/hooks/use-tasks";
 import { useUsersQuery } from "@/hooks/use-users";
 import { apiFetch } from "@/lib/api";
-import { fetchMe } from "@/lib/auth";
-import { currentPeriodStart } from "@/lib/periods";
-import { meKey, projectsKey, taskListKey } from "@/lib/query-keys";
-import {
-  copyTaskId,
-  copyTaskPrompt,
-  hasTextSelection,
-  isEditableElement,
-  isPrimaryModifier,
-} from "@/lib/task-copy";
+import { taskListKey } from "@/lib/query-keys";
 import type {
   Project,
-  Task,
   Priority,
   RecurringTaskTemplate,
-  StateTransition,
 } from "@/lib/types";
 import { PRIORITY_LABELS, PRIORITY_ORDER } from "@/lib/types";
-import { cn } from "@/lib/utils";
-import { TaskSources } from "./TaskSources";
 
 // TAS-057: the panel mounts bottom-anchored directly under wherever the
 // mouse was when the triggering card was clicked. Its entry animation
@@ -78,37 +50,18 @@ const CLICK_THROUGH_GUARD_MS = 400;
 
 type Props = {
   projects: Project[];
-  /** Pre-selected project for "create" mode. Null means "start in Inbox". */
+  /** Fallback project context when the template's project isn't loaded. */
   activeProject: Project | null;
+  template: RecurringTaskTemplate;
   onClose: () => void;
-} & (
-  | { mode: "create"; task?: never; template?: never; initialColumnId?: number }
-  | { mode: "edit"; task: Task; template?: never; initialColumnId?: never }
-  | {
-      mode: "edit-recurring";
-      template: RecurringTaskTemplate;
-      task?: never;
-      initialColumnId?: never;
-    }
-);
+};
 
-export function TaskPanel(props: Props) {
-  const {
-    projects,
-    activeProject,
-    mode,
-    onClose,
-  } = props;
-  const task = props.mode === "edit" ? props.task : undefined;
-  const template =
-    props.mode === "edit-recurring" ? props.template : undefined;
-  const initialColumnId =
-    props.mode === "create" ? props.initialColumnId : undefined;
+/** Edits a recurring-task template. Tasks themselves (create and edit) use
+ *  `TaskDetail`. */
+export function TaskPanel({ projects, activeProject, template, onClose }: Props) {
   const queryClient = useQueryClient();
   const usersQuery = useUsersQuery();
   const users = usersQuery.data ?? [];
-  const meQuery = useQuery({ queryKey: meKey(), queryFn: fetchMe });
-  const me = meQuery.data ?? null;
 
   // TAS-057 click-through guard: see comment above CLICK_THROUGH_GUARD_MS.
   // Initializing at first render (rather than in an effect) means the guard
@@ -134,11 +87,8 @@ export function TaskPanel(props: Props) {
 
   // projectId === null means "Inbox" (projectless task). Templates always
   // have a project — they can't live in the Inbox.
-  const initialProjectId: number | null = task
-    ? task.project
-    : template
-      ? template.project
-      : activeProject?.id ?? null;
+  const initialProjectId: number | null =
+    template.project ?? activeProject?.id ?? null;
   const [projectId, setProjectId] = useState<number | null>(initialProjectId);
   const selectedProject = useMemo(
     () =>
@@ -148,36 +98,23 @@ export function TaskPanel(props: Props) {
     [projects, projectId, activeProject],
   );
 
-  // Source of shared fields (title, priority, assignees, etc.). Both
-  // Task and RecurringTaskTemplate share this shape.
-  const seed = task ?? template;
-  const [title, setTitle] = useState(seed?.title ?? "");
-  const [description, setDescription] = useState(seed?.description ?? "");
+  const [title, setTitle] = useState(template.title ?? "");
+  const [description, setDescription] = useState(template.description ?? "");
   const [priority, setPriority] = useState<Priority | null>(
-    seed?.priority ?? null,
+    template.priority ?? null,
   );
   const [storyPoints, setStoryPoints] = useState<string>(
-    seed?.story_points != null ? String(seed.story_points) : "",
-  );
-  const [dueAt, setDueAt] = useState<string>(
-    task?.due_at ? task.due_at.slice(0, 16) : "",
+    template.story_points != null ? String(template.story_points) : "",
   );
   const [assigneeIds, setAssigneeIds] = useState<number[]>(
-    seed?.assignees?.map((u) => u.id) ?? [],
+    template.assignees.map((u) => u.id) ?? [],
   );
   const [labelIds, setLabelIds] = useState<number[]>(
-    seed?.labels.map((l) => l.id) ?? [],
+    template.labels.map((l) => l.id) ?? [],
   );
   const allLabels = useLabelsQuery().data ?? [];
-  // Bet link (Cyt OS) — tasks only; recurring templates don't carry bets.
-  const [betId, setBetId] = useState<number | null>(task?.bet?.id ?? null);
-  // Reviewer (TAS-064) — tasks only; recurring templates don't carry a
-  // reviewer. Always editable (unlike the old read-only display).
-  const [reviewerId, setReviewerId] = useState<number | null>(
-    task?.reviewer?.id ?? null,
-  );
-  // Only meaningful in `edit-recurring` mode. Controls pause/resume.
-  const [active, setActive] = useState<boolean>(template?.active ?? true);
+  // Controls pause/resume.
+  const [active, setActive] = useState<boolean>(template.active);
 
   const pickDefaultColumn = (
     p: Project | null,
@@ -190,9 +127,7 @@ export function TaskPanel(props: Props) {
       if (sameNameCol) return sameNameCol.id;
     }
     return (
-      p.columns.find((c) => c.id === initialColumnId)?.id ??
-      task?.column?.id ??
-      template?.column?.id ??
+      template.column?.id ??
       p.columns.find((c) => c.kind === "todo")?.id ??
       p.columns.find((c) => !c.is_done)?.id ??
       p.columns[0]?.id ??
@@ -209,13 +144,13 @@ export function TaskPanel(props: Props) {
     // clear it entirely if we're moving into the Inbox).
     const currentCol =
       selectedProject?.columns.find((c) => c.id === columnId) ?? null;
-    const currentColName = currentCol?.name ?? task?.column?.name;
+    const currentColName = currentCol?.name;
     setColumnId(pickDefaultColumn(selectedProject, currentColName));
     // Drop labels scoped to another project. This also runs on mount, before
     // the labels query resolves — a label we can't resolve yet is kept, never
     // dropped, or opening and saving a task would wipe its labels (TAS-077).
     const knownLabels = new Map(
-      [...(seed?.labels ?? []), ...allLabels].map((l) => [l.id, l]),
+      [...(template.labels ?? []), ...allLabels].map((l) => [l.id, l]),
     );
     setLabelIds((prev) =>
       prev.filter((id) => {
@@ -223,25 +158,11 @@ export function TaskPanel(props: Props) {
         return scope == null || scope === selectedProject?.id;
       }),
     );
-    // Bets are strictly project-scoped — a project switch always unlinks
-    // (switching back to the original project restores the task's own bet).
-    setBetId(
-      selectedProject?.id === initialProjectId ? (task?.bet?.id ?? null) : null,
-    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
 
   const [recurrence, setRecurrence] = useState<RecurrenceState>(() =>
-    template
-      ? parseRruleToState(template.rrule, template.dtstart)
-      : {
-          enabled: false,
-          preset: "daily",
-          weekdays: ["MO"],
-          monthDay: 1,
-          customRrule: "",
-          dtstartLocal: defaultDtstartLocal(),
-        },
+    parseRruleToState(template.rrule, template.dtstart),
   );
 
   // Selectable labels: global ones plus the selected project's (Inbox: global only).
@@ -249,60 +170,15 @@ export function TaskPanel(props: Props) {
     (l) => l.project == null || l.project === selectedProject?.id,
   );
 
-  // Current-period bets for the selected project. The task's own bet stays
-  // selectable even when it belongs to an older period.
-  const betsQuery = useBetsQuery(
-    selectedProject?.id ?? null,
-    currentPeriodStart(),
-    { enabled: mode !== "edit-recurring" },
-  );
-  const betOptions = useMemo(() => {
-    const bets = (betsQuery.data ?? []).map((b) => ({
-      id: b.id,
-      name: b.name,
-      color: b.color,
-    }));
-    if (task?.bet && !bets.some((b) => b.id === task.bet!.id)) {
-      bets.push({
-        id: task.bet.id,
-        name: task.bet.name,
-        color: task.bet.color,
-      });
-    }
-    return bets;
-  }, [betsQuery.data, task?.bet]);
-
-  const createTask = useCreateTask();
-  const updateTask = useUpdateTask();
-  const deleteTask = useDeleteTask();
-
-  const createRecurring = useMutation({
-    mutationFn: (payload: unknown) =>
-      apiFetch<RecurringTaskTemplate>("/api/recurring-tasks/", {
-        method: "POST",
-        body: payload,
-      }),
-    onSuccess: () => {
-      // Invalidate the whole "recurring" prefix so RecurringManager's
-      // "all" scope refetches too, not only the per-project listing.
-      queryClient.invalidateQueries({ queryKey: ["recurring"] });
-      if (selectedProject) {
-        queryClient.invalidateQueries({
-          queryKey: taskListKey(selectedProject.id),
-        });
-      }
-    },
-  });
-
   const updateRecurring = useMutation({
     mutationFn: (payload: unknown) =>
       apiFetch<RecurringTaskTemplate>(
-        `/api/recurring-tasks/${template?.id}/`,
+        `/api/recurring-tasks/${template.id}/`,
         { method: "PATCH", body: payload },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["recurring"] });
-      if (template?.project != null) {
+      if (template.project != null) {
         queryClient.invalidateQueries({
           queryKey: taskListKey(template.project),
         });
@@ -312,7 +188,7 @@ export function TaskPanel(props: Props) {
 
   const deleteRecurring = useMutation({
     mutationFn: () =>
-      apiFetch<void>(`/api/recurring-tasks/${template?.id}/`, {
+      apiFetch<void>(`/api/recurring-tasks/${template.id}/`, {
         method: "DELETE",
       }),
     onSuccess: () => {
@@ -320,11 +196,7 @@ export function TaskPanel(props: Props) {
     },
   });
 
-  const saving =
-    createTask.isPending ||
-    updateTask.isPending ||
-    createRecurring.isPending ||
-    updateRecurring.isPending;
+  const saving = updateRecurring.isPending;
 
   const projectItems = useMemo(
     () =>
@@ -386,104 +258,36 @@ export function TaskPanel(props: Props) {
 
   async function handleSubmit() {
     if (!title.trim()) return;
-
-    if (mode === "edit-recurring" && template) {
-      const rrule = buildRrule(recurrence);
-      if (!rrule || !recurrence.dtstartLocal) return;
-      const payload: Record<string, unknown> = {
-        title,
-        description,
-        priority,
-        story_points: storyPoints === "" ? null : Number(storyPoints),
-        column_id: columnId,
-        assignee_ids: assigneeIds,
-        label_ids: labelIds,
-        rrule,
-        dtstart: new Date(recurrence.dtstartLocal).toISOString(),
-        active,
-      };
-      if (projectId != null && projectId !== template.project) {
-        payload.project_id = projectId;
-      }
-      await updateRecurring.mutateAsync(payload);
-      onClose();
-      return;
-    }
-
-    if (mode === "create" && recurrence.enabled) {
-      if (!selectedProject) {
-        alert("Recurring tasks need a project.");
-        return;
-      }
-      const rrule = buildRrule(recurrence);
-      if (!rrule) return;
-      await createRecurring.mutateAsync({
-        project_id: selectedProject.id,
-        column_id: columnId,
-        title,
-        description,
-        priority,
-        story_points: storyPoints === "" ? null : Number(storyPoints),
-        rrule,
-        dtstart: new Date(recurrence.dtstartLocal).toISOString(),
-        timezone:
-          Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
-        active: true,
-        assignee_ids: assigneeIds,
-      });
-      onClose();
-      return;
-    }
-
+    const rrule = buildRrule(recurrence);
+    if (!rrule || !recurrence.dtstartLocal) return;
     const payload: Record<string, unknown> = {
-      project_id: selectedProject?.id ?? null,
-      column_id: selectedProject ? columnId : null,
       title,
       description,
       priority,
       story_points: storyPoints === "" ? null : Number(storyPoints),
-      due_at: dueAt ? new Date(dueAt).toISOString() : null,
+      column_id: columnId,
       assignee_ids: assigneeIds,
       label_ids: labelIds,
-      bet_id: selectedProject ? betId : null,
-      // Always sent (even when unchanged) so clearing the reviewer works —
-      // omitting the key entirely would look like "no change" to the PATCH.
-      reviewer_id: reviewerId,
+      rrule,
+      dtstart: new Date(recurrence.dtstartLocal).toISOString(),
+      active,
     };
-
-    if (mode === "create") {
-      await createTask.mutateAsync(payload as any);
-    } else if (task) {
-      await updateTask.mutateAsync({ key: task.key, ...payload } as any);
-      // If project changed, also invalidate the old project's task list
-      if (task.project !== selectedProject?.id) {
-        if (task.project != null) {
-          queryClient.invalidateQueries({
-            queryKey: taskListKey(task.project),
-          });
-        }
-        queryClient.invalidateQueries({ queryKey: projectsKey() });
-      }
+    if (projectId != null && projectId !== template.project) {
+      payload.project_id = projectId;
     }
+    await updateRecurring.mutateAsync(payload);
     onClose();
   }
 
   async function handleDelete() {
-    if (mode === "edit-recurring" && template) {
-      if (
-        !confirm(
-          `Delete recurring template "${template.title}"?\n\nFuture instances will stop being generated. Tasks already created by this template are kept.`,
-        )
-      ) {
-        return;
-      }
-      await deleteRecurring.mutateAsync();
-      onClose();
+    if (
+      !confirm(
+        `Delete recurring template "${template.title}"?\n\nFuture instances will stop being generated. Tasks already created by this template are kept.`,
+      )
+    ) {
       return;
     }
-    if (!task) return;
-    if (!confirm(`Delete ${task.key}?`)) return;
-    await deleteTask.mutateAsync(task.key);
+    await deleteRecurring.mutateAsync();
     onClose();
   }
 
@@ -495,34 +299,6 @@ export function TaskPanel(props: Props) {
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [onClose]);
-
-  // ⌘C copies the task id, ⌘⇧C copies the full prompt (with live unsaved
-  // title/description). Bail without preventDefault outside edit mode, over
-  // a text selection, or with an editable element focused (title input,
-  // TipTap, a portalised Select) — native ⌘C must win in all of those.
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if ((e.key !== "c" && e.key !== "C") || !isPrimaryModifier(e) || e.altKey) {
-        return;
-      }
-      if (
-        mode !== "edit" ||
-        !task ||
-        hasTextSelection() ||
-        isEditableElement(document.activeElement)
-      ) {
-        return;
-      }
-      e.preventDefault();
-      if (e.shiftKey) {
-        void copyTaskPrompt(task, { title, description });
-      } else {
-        void copyTaskId(task);
-      }
-    }
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [mode, task, title, description]);
 
   return (
     <>
@@ -549,65 +325,18 @@ export function TaskPanel(props: Props) {
         {/* Header */}
         <div className="shrink-0 flex items-center justify-between gap-2 px-6 py-3 border-b border-border/60 max-lg:px-3">
           <h2 className="text-[15px] font-semibold tracking-tight truncate min-w-0">
-            {mode === "create"
-              ? "New task"
-              : mode === "edit-recurring"
-                ? `Recurring — ${template?.title ?? ""}`
-                : `${task?.key} — ${task?.title}`}
+            Recurring — {template.title}
           </h2>
           <div className="flex items-center gap-2 shrink-0">
-            {mode === "edit" && task && (
-              <>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        onClick={() => void copyTaskId(task)}
-                      >
-                        <Copy className="size-3.5" />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>
-                    Copy task ID <kbd className="ml-1 text-[10px]">⌘C</kbd>
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        onClick={() =>
-                          void copyTaskPrompt(task, { title, description })
-                        }
-                      >
-                        <ClipboardCopy className="size-3.5" />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>
-                    Copy prompt for Claude{" "}
-                    <kbd className="ml-1 text-[10px]">⌘⇧C</kbd>
-                  </TooltipContent>
-                </Tooltip>
-              </>
-            )}
-            {mode !== "create" && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                onClick={handleDelete}
-              >
-                <Trash2 className="size-3.5" />
-                Delete
-              </Button>
-            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={handleDelete}
+            >
+              <Trash2 className="size-3.5" />
+              Delete
+            </Button>
             <Button variant="ghost" size="icon" className="size-8" onClick={onClose}>
               <X className="size-4" />
             </Button>
@@ -676,15 +405,6 @@ export function TaskPanel(props: Props) {
               </PropRow>
             )}
 
-            {mode === "edit" && task?.current_column_since && (
-              <div className="flex items-start min-h-[22px]">
-                <span className="w-[72px] shrink-0 max-lg:hidden text-[12px] text-muted-foreground pl-1" />
-                <div className="flex-1 min-w-0 pl-1.5">
-                  <TimeInColumn task={task} size="sm" durationOnly />
-                </div>
-              </div>
-            )}
-
             <PropRow label="Priority">
               <Select
                 value={priority ?? ""}
@@ -720,58 +440,6 @@ export function TaskPanel(props: Props) {
               </div>
             </div>
 
-            {mode !== "edit-recurring" && (
-              <div className="flex items-start min-h-[32px] max-lg:flex-col max-lg:gap-0.5 max-lg:py-1">
-                <span className="w-[72px] shrink-0 max-lg:w-full text-[12px] text-muted-foreground pl-1 pt-1.5 max-lg:pt-0">
-                  Reviewer
-                </span>
-                <div className="w-[160px] shrink-0 max-lg:w-full space-y-0.5">
-                  <Select
-                    value={reviewerId != null ? String(reviewerId) : ""}
-                    onValueChange={(v) =>
-                      setReviewerId(v === "" ? null : Number(v))
-                    }
-                    items={
-                      {
-                        "": "No reviewer",
-                        ...Object.fromEntries(
-                          users.map((u) => [String(u.id), u.username]),
-                        ),
-                      } as Record<string, React.ReactNode>
-                    }
-                  >
-                    <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
-                      <SelectValue placeholder="No reviewer" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="">No reviewer</SelectItem>
-                      {users.map((u) => (
-                        <SelectItem key={u.id} value={String(u.id)}>
-                          <span className="inline-flex items-center gap-2">
-                            <UserAvatar
-                              username={u.username}
-                              avatarUrl={u.avatar_url}
-                              size="size-5"
-                            />
-                            {u.username}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {me && reviewerId !== me.id && (
-                    <button
-                      type="button"
-                      onClick={() => setReviewerId(me.id)}
-                      className="w-full text-left px-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      Assign me
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
             <PropRow label="Points">
               <Input
                 type="number"
@@ -783,52 +451,6 @@ export function TaskPanel(props: Props) {
                 className="h-7 text-[12px] border-0 bg-transparent px-1.5 hover:bg-accent/60 rounded w-full"
               />
             </PropRow>
-
-            {mode !== "edit-recurring" && (
-              <PropRow label="Deadline">
-                <Input
-                  type="datetime-local"
-                  value={dueAt}
-                  onChange={(e) => setDueAt(e.target.value)}
-                  className="h-7 text-[12px] border-0 bg-transparent px-1.5 hover:bg-accent/60 rounded w-full"
-                />
-              </PropRow>
-            )}
-
-            {mode !== "edit-recurring" && selectedProject && (
-              <PropRow label="Bet">
-                <Select
-                  value={betId != null ? String(betId) : ""}
-                  onValueChange={(v) => setBetId(v === "" ? null : Number(v))}
-                  items={
-                    {
-                      "": "No bet",
-                      ...Object.fromEntries(
-                        betOptions.map((b) => [String(b.id), b.name]),
-                      ),
-                    } as Record<string, React.ReactNode>
-                  }
-                >
-                  <SelectTrigger className="h-7 w-full text-[12px] border-0 bg-transparent px-1 hover:bg-accent/60 rounded">
-                    <SelectValue placeholder="No bet" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">No bet</SelectItem>
-                    {betOptions.map((b) => (
-                      <SelectItem key={b.id} value={String(b.id)}>
-                        <span className="inline-flex items-center gap-2">
-                          <span
-                            className="size-2 rounded-full"
-                            style={{ background: b.color }}
-                          />
-                          {b.name}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </PropRow>
-            )}
 
             <div className="pt-2">
               <span className="text-[11px] uppercase tracking-wide text-muted-foreground px-1">
@@ -844,93 +466,21 @@ export function TaskPanel(props: Props) {
               </div>
             </div>
 
-            {task && task.sources?.length > 0 && (
-              <div className="pt-2 mt-2 border-t border-border/40">
-                <span className="text-[11px] uppercase tracking-wide text-muted-foreground px-1">
-                  From
+            <div className="pt-2 mt-2 border-t border-border/40">
+              <div className="flex items-center justify-between px-1 py-1">
+                <span className="text-[11px] text-muted-foreground">
+                  Active
                 </span>
-                <TaskSources sources={task.sources} className="mt-1 px-1" />
+                <Switch checked={active} onCheckedChange={setActive} />
               </div>
-            )}
+              <div className="mt-1">
+                <RecurrencePicker
+                  state={recurrence}
+                  onChange={setRecurrence}
+                />
+              </div>
+            </div>
 
-            {task && task.linked_prs.length > 0 && (
-              <div className="pt-2 mt-2 border-t border-border/40">
-                <span className="text-[11px] uppercase tracking-wide text-muted-foreground px-1">
-                  Pull requests
-                </span>
-                <div className="mt-1 space-y-1">
-                  {task.linked_prs.map((pr) => (
-                    <div
-                      key={pr.id}
-                      className="flex items-center gap-1.5 px-1 text-[11px]"
-                    >
-                      <LinkedPRBadge pr={pr} />
-                      {pr.repository?.repo_full_name && (
-                        <span className="shrink-0 text-muted-foreground">
-                          {pr.repository.repo_full_name}
-                        </span>
-                      )}
-                      <span className="flex-1 min-w-0 truncate">
-                        {pr.pr_title}
-                      </span>
-                      {/* Reviewer is already shown inline on the badge. */}
-                      {pr.author_login && (
-                        <span className="shrink-0 text-[10px] text-muted-foreground">
-                          by {pr.author_login}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {mode === "create" && (
-              <div className="pt-2 mt-2 border-t border-border/40">
-                <div className="flex items-center justify-between px-1 py-1">
-                  <span className="text-[11px] text-muted-foreground">
-                    Recurring
-                  </span>
-                  <Switch
-                    checked={recurrence.enabled}
-                    onCheckedChange={(v) =>
-                      setRecurrence({ ...recurrence, enabled: v })
-                    }
-                  />
-                </div>
-                {recurrence.enabled && (
-                  <div className="mt-1">
-                    <RecurrencePicker
-                      state={recurrence}
-                      onChange={setRecurrence}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-
-            {mode === "edit-recurring" && (
-              <div className="pt-2 mt-2 border-t border-border/40">
-                <div className="flex items-center justify-between px-1 py-1">
-                  <span className="text-[11px] text-muted-foreground">
-                    Active
-                  </span>
-                  <Switch checked={active} onCheckedChange={setActive} />
-                </div>
-                <div className="mt-1">
-                  <RecurrencePicker
-                    state={recurrence}
-                    onChange={setRecurrence}
-                  />
-                </div>
-              </div>
-            )}
-
-            {mode === "edit" && task && (
-              <div className="pt-2 mt-2 border-t border-border/40">
-                <TransitionHistory taskKey={task.key} />
-              </div>
-            )}
           </div>
 
           {/* Right: title + description */}
@@ -941,7 +491,6 @@ export function TaskPanel(props: Props) {
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Task title"
                 autoFocus={
-                  mode === "create" ||
                   typeof window === "undefined" ||
                   window.matchMedia("(pointer: fine)").matches
                 }
@@ -970,29 +519,12 @@ export function TaskPanel(props: Props) {
             onClick={handleSubmit}
             disabled={saving || !title.trim()}
           >
-            {saving ? "Saving..." : mode === "create" ? "Create" : "Save"}
+            {saving ? "Saving..." : "Save"}
           </Button>
         </div>
       </div>
       </div>
     </>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-1">
-      <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-      {children}
-    </div>
   );
 }
 
@@ -1013,101 +545,3 @@ function PropRow({
   );
 }
 
-function TransitionHistory({ taskKey }: { taskKey: string }) {
-  const [open, setOpen] = useState(false);
-  const query = useQuery({
-    queryKey: ["task-transitions", taskKey],
-    queryFn: () =>
-      apiFetch<StateTransition[]>(`/api/tasks/${taskKey}/transitions/`),
-    enabled: open,
-    staleTime: 10_000,
-  });
-
-  const entries = query.data ?? [];
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 w-full px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-      >
-        {open ? (
-          <ChevronDown className="size-3" />
-        ) : (
-          <ChevronRight className="size-3" />
-        )}
-        <span className="uppercase tracking-wide">History</span>
-        {entries.length > 0 && (
-          <span className="ml-auto text-[10px] text-muted-foreground/70 tabular-nums">
-            {entries.length}
-          </span>
-        )}
-      </button>
-      {open && (
-        <div className="mt-1 pl-5 pr-1 space-y-1">
-          {query.isLoading && (
-            <p className="text-[11px] text-muted-foreground">Loading...</p>
-          )}
-          {!query.isLoading && entries.length === 0 && (
-            <p className="text-[11px] text-muted-foreground">
-              No column changes yet.
-            </p>
-          )}
-          {entries.map((t) => (
-            <TransitionRow key={t.id} transition={t} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TransitionRow({ transition }: { transition: StateTransition }) {
-  const from = transition.from_column?.name;
-  const to = transition.to_column?.name ?? "—";
-  const actor =
-    transition.triggered_by?.username ??
-    (transition.source === "recurring"
-      ? "recurring"
-      : transition.source === "backfill"
-        ? "backfill"
-        : transition.source === "mcp"
-          ? "agent"
-          : transition.source === "github"
-            ? "GitHub"
-            : "system");
-  const when = formatDuration(transition.at);
-  return (
-    <div className="flex items-start gap-1.5 text-[11px] leading-tight">
-      <span className="size-1 rounded-full bg-muted-foreground/40 mt-1.5 shrink-0" />
-      <div className="min-w-0 flex-1">
-        <span className="text-foreground">
-          {from ? (
-            <>
-              {from} <span className="text-muted-foreground">→</span> {to}
-            </>
-          ) : (
-            <>
-              <span className="text-muted-foreground">Placed in</span> {to}
-            </>
-          )}
-        </span>
-        <div className="text-muted-foreground/80">
-          {actor} · {when} ago
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function defaultDtstartLocal(): string {
-  const d = new Date();
-  d.setMinutes(0, 0, 0);
-  d.setHours(d.getHours() + 1);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  );
-}

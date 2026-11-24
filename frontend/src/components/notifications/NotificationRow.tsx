@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   Eye,
   type LucideIcon,
+  MessageSquare,
   MoveRight,
   Pencil,
   Trash2,
@@ -167,6 +168,22 @@ export function describeNotification(n: Notification): {
             <strong className="font-medium">{actorName}</strong> requested
             your review on {keyEl}
             {n.task_title && <> · {n.task_title}</>}
+          </>
+        ),
+      };
+    case "commented":
+      return {
+        Icon: MessageSquare,
+        text: (
+          <>
+            <strong className="font-medium">{actorName}</strong> commented on{" "}
+            {keyEl}
+            {n.payload.excerpt && (
+              <span className="text-muted-foreground">
+                {" "}
+                · “{n.payload.excerpt}”
+              </span>
+            )}
           </>
         ),
       };

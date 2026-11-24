@@ -122,9 +122,11 @@ type Props = {
   value: string;
   onChange: (markdown: string) => void;
   onSubmit?: () => void;
+  /** Borderless page look: the toolbar only shows on hover or focus. */
+  plain?: boolean;
 };
 
-export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
+export function DescriptionEditor({ value, onChange, onSubmit, plain }: Props) {
   const isInternalUpdate = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -168,7 +170,8 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
     editorProps: {
       attributes: {
         class:
-          "prose prose-sm max-w-none dark:prose-invert min-h-[200px] p-3 focus-visible:outline-none",
+          "prose prose-sm max-w-none dark:prose-invert min-h-[200px] focus-visible:outline-none " +
+          (plain ? "px-0 py-2" : "p-3"),
       },
       handlePaste: (_view, event) => {
         const files = filesFromClipboard(event.clipboardData);
@@ -276,9 +279,21 @@ export function DescriptionEditor({ value, onChange, onSubmit }: Props) {
   if (!editor) return null;
 
   return (
-    <div className="h-full flex flex-col rounded-md border border-border/80 overflow-hidden bg-background">
+    <div
+      className={cn(
+        "group/editor h-full flex flex-col overflow-hidden",
+        !plain && "rounded-md border border-border/80 bg-background",
+      )}
+    >
       {/* Toolbar */}
-      <div className="shrink-0 flex items-center gap-0.5 overflow-x-auto scrollbar-none px-2 py-1.5 border-b border-border/60 bg-muted/30">
+      <div
+        className={cn(
+          "shrink-0 flex items-center gap-0.5 overflow-x-auto scrollbar-none py-1.5",
+          plain
+            ? "-ml-1.5 opacity-0 transition-opacity group-hover/editor:opacity-100 group-focus-within/editor:opacity-100 hover-none:opacity-100"
+            : "px-2 border-b border-border/60 bg-muted/30",
+        )}
+      >
         <ToolbarButton
           active={editor.isActive("bold")}
           onClick={() => editor.chain().focus().toggleBold().run()}

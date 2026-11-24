@@ -28,6 +28,7 @@ from apps.tasks.access import (
     visible_knowledge_slugs,
     visible_project_ids,
 )
+from apps.tasks import comments as task_comments
 from apps.tasks.broadcast import broadcast_task_event
 from apps.tasks.models import (
     Bet,
@@ -41,6 +42,7 @@ from apps.tasks.models import (
     Project,
     RecurringTaskTemplate,
     Task,
+    TaskComment,
     TransitionEvent,
     TransitionSource,
     View,
@@ -239,6 +241,11 @@ def _task_dict(t: Task, *, include_description: bool = True) -> dict[str, Any]:
         "current_column_since": since.isoformat() if since else None,
         "staleness": compute_staleness(t),
         "linked_prs": [_linked_pr_dict(link) for link in t.pull_requests.all()],
+        "comment_count": (
+            t.comments.count()
+            if getattr(t, "comment_count", None) is None
+            else t.comment_count
+        ),
     }
     if include_description:
         data["description"] = t.description
@@ -817,6 +824,42 @@ def delete_task(key: str, mcp_user=None) -> dict[str, Any]:
     task.delete()
     broadcast_task_event(project_id, "task.deleted", {"key": task_key})
     return {"ok": True, "key": task_key}
+
+
+# ---------------------------------------------------------------------------
+# Comments — logic lives in apps.tasks.comments; these only resolve refs.
+# ---------------------------------------------------------------------------
+
+
+def list_comments(key: str, mcp_user=None) -> list[dict[str, Any]]:
+    task = _tasks(mcp_user).get(key=key)
+    return [
+        task_comments.comment_dict(c)
+        for c in task.comments.select_related("task", "author")
+    ]
+
+
+def add_comment(key: str, body: str, mcp_user=None) -> dict[str, Any]:
+    task = _tasks(mcp_user).get(key=key)
+    author = _resolve_reporter_for_mcp(mcp_user)
+    return task_comments.comment_dict(task_comments.add_comment(task, author, body))
+
+
+def _comment(comment_id: int, mcp_user) -> TaskComment:
+    qs = TaskComment.objects.select_related("task", "author")
+    return scope_for_caller(qs, mcp_user, field="task__project").get(pk=comment_id)
+
+
+def edit_comment(comment_id: int, body: str, mcp_user=None) -> dict[str, Any]:
+    comment = _comment(comment_id, mcp_user)
+    task_comments.edit_comment(comment, _resolve_reporter_for_mcp(mcp_user), body)
+    return task_comments.comment_dict(comment)
+
+
+def delete_comment(comment_id: int, mcp_user=None) -> dict[str, Any]:
+    comment = _comment(comment_id, mcp_user)
+    task_comments.delete_comment(comment, _resolve_reporter_for_mcp(mcp_user))
+    return {"ok": True, "id": comment_id}
 
 
 def _next_bottom_position(column: Column, *, exclude_task_id: int | None = None) -> float:

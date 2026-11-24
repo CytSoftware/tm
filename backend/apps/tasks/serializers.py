@@ -22,6 +22,7 @@ from .models import (
     RecurringTaskTemplate,
     StateTransition,
     Task,
+    TaskComment,
     View,
 )
 from .access import can_see_project
@@ -370,6 +371,7 @@ class TaskReadSerializer(serializers.ModelSerializer):
     staleness = serializers.SerializerMethodField()
     linked_prs = serializers.SerializerMethodField()
     sources = serializers.SerializerMethodField()
+    comment_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
@@ -400,6 +402,7 @@ class TaskReadSerializer(serializers.ModelSerializer):
             "staleness",
             "linked_prs",
             "sources",
+            "comment_count",
         )
         read_only_fields = fields  # the write serializer is separate
 
@@ -416,6 +419,12 @@ class TaskReadSerializer(serializers.ModelSerializer):
         from apps.integrations.serializers import LinkedPRSerializer
 
         return LinkedPRSerializer(obj.pull_requests.all(), many=True).data
+
+    def get_comment_count(self, obj: Task) -> int:
+        # Annotated by ``base_task_queryset``; count directly for a task
+        # loaded some other way.
+        count = getattr(obj, "comment_count", None)
+        return obj.comments.count() if count is None else count
 
     def get_sources(self, obj: Task) -> list[dict]:
         """Where the task came from: the CRM lead whose update filed it, and
@@ -894,6 +903,23 @@ class RecurringPreviewSerializer(serializers.Serializer):
 # ---------------------------------------------------------------------------
 # Notifications
 # ---------------------------------------------------------------------------
+
+
+class TaskCommentSerializer(serializers.ModelSerializer):
+    author = UserSerializer(read_only=True)
+
+    class Meta:
+        model = TaskComment
+        fields = ("id", "author", "body", "created_at", "updated_at", "edited_at")
+        read_only_fields = ("id", "author", "created_at", "updated_at", "edited_at")
+
+    def validate_body(self, value: str) -> str:
+        from .comments import clean_body
+
+        try:
+            return clean_body(value)
+        except ValueError as e:
+            raise serializers.ValidationError(str(e)) from e
 
 
 class NotificationSerializer(serializers.ModelSerializer):

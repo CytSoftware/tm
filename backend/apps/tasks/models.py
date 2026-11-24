@@ -6,6 +6,7 @@ Core models:
     Column                    — status columns on the Kanban board, per project.
     Label                     — colored labels, per project.
     Task                      — the work unit. Human key like "CYT-001".
+    TaskComment               — a task's comment thread.
     View                      — saved Notion-style filter+sort presets.
     RecurringTaskTemplate     — blueprints that generate Task instances on schedule.
     Bet / Metric / Checkin    — Cyt OS bets: period-scoped, project-specific
@@ -845,6 +846,37 @@ class StaleThresholdConfig(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Comments
+# ---------------------------------------------------------------------------
+
+
+class TaskComment(TimestampedModel):
+    """One message in a task's comment thread (oldest first).
+
+    Written only through :mod:`apps.tasks.comments`, which owns the author
+    check, the notification and the broadcast.
+    """
+
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="comments")
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="task_comments",
+    )
+    body = models.TextField()
+    # ``updated_at`` also moves on no-op saves; this is set only when the
+    # body actually changes, so it is what the "edited" mark reads.
+    edited_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["task", "created_at"])]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.task_id} #{self.id} by {self.author_id}"
+
+
+# ---------------------------------------------------------------------------
 # Notifications
 # ---------------------------------------------------------------------------
 
@@ -856,6 +888,7 @@ class NotificationVerb(models.TextChoices):
     COMPLETED = "completed", "Completed"
     DELETED = "deleted", "Deleted"
     REVIEW_REQUESTED = "review_requested", "Review requested"
+    COMMENTED = "commented", "Commented"
 
 
 class Notification(models.Model):

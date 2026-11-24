@@ -57,7 +57,7 @@ export function AssigneeCheckboxList({
           key={u.id}
           type="button"
           onClick={() => onToggle(u.id)}
-          className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] hover:bg-accent transition-colors"
+          className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] hover:bg-accent focus-visible:bg-accent outline-none transition-colors"
         >
           <Checkbox checked={selected.includes(u.id)} />
           <UserAvatar
@@ -177,7 +177,7 @@ export function LabelCheckboxList({
           key={l.id}
           type="button"
           onClick={() => onToggle(l.id)}
-          className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] hover:bg-accent transition-colors"
+          className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] hover:bg-accent focus-visible:bg-accent outline-none transition-colors"
         >
           <Checkbox checked={selected.includes(l.id)} />
           <span
@@ -191,10 +191,9 @@ export function LabelCheckboxList({
   );
 }
 
-/** Full label editor for the task panel sidebar: a removable badge row for
- *  the current selection, a "+ Add label" trigger that opens the checkbox
- *  list, and an inline "create new label" form at the bottom of the list. */
-export function LabelPicker({
+/** Label checkbox list plus an inline "create new label" form. No Popover
+ *  wrapper — callers own it; the form resets when the popover unmounts it. */
+export function LabelMenu({
   available,
   selected,
   onChange,
@@ -229,20 +228,109 @@ export function LabelPicker({
     },
   });
 
-  function toggle(id: number) {
-    onChange(
-      selected.includes(id)
-        ? selected.filter((x) => x !== id)
-        : [...selected, id],
-    );
-  }
-
   function handleCreate() {
     const name = newName.trim();
     if (!name || createLabel.isPending) return;
     createLabel.mutate({ project: projectId, name, color: newColor });
   }
 
+  return (
+    <>
+      <LabelCheckboxList
+        available={available}
+        selected={selected}
+        onToggle={(id) => onChange(toggled(selected, id))}
+      />
+
+      <div className="mt-1 border-t border-border/60 pt-1">
+        {creating ? (
+          <div className="px-2 py-1.5 space-y-2">
+            <Input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleCreate();
+                } else if (e.key === "Escape") {
+                  // Leave the form, not the popover around it.
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setCreating(false);
+                  setNewName("");
+                }
+              }}
+              autoFocus
+              placeholder="Label name"
+              className="h-7 text-[12px]"
+            />
+            <ColorPicker value={newColor} onChange={setNewColor} />
+            {createLabel.isError && (
+              <p className="text-[10px] text-destructive">
+                Couldn’t create label. Name may already be taken.
+              </p>
+            )}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-muted-foreground">
+                {projectId == null ? "Global" : "Project-scoped"}
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[11px]"
+                  onClick={() => {
+                    setCreating(false);
+                    setNewName("");
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-6 px-2 text-[11px]"
+                  onClick={handleCreate}
+                  disabled={!newName.trim() || createLabel.isPending}
+                >
+                  {createLabel.isPending ? "Adding…" : "Create"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent outline-none transition-colors"
+          >
+            + Create new label
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
+function toggled(ids: number[], id: number): number[] {
+  return ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
+}
+
+/** Full label editor for the recurring-template panel sidebar: a removable
+ *  badge row for the current selection and a "+ Add label" popover. */
+export function LabelPicker({
+  available,
+  selected,
+  onChange,
+  projectId,
+}: {
+  available: LabelType[];
+  selected: number[];
+  onChange: (ids: number[]) => void;
+  /** Project scope for newly-created labels. `null` = global (Inbox). */
+  projectId: number | null;
+}) {
   return (
     <div className="space-y-1.5">
       {selected.length > 0 && (
@@ -259,21 +347,14 @@ export function LabelPicker({
                   color: l.color,
                   borderColor: `${l.color}44`,
                 }}
-                onClick={() => toggle(l.id)}
+                onClick={() => onChange(toggled(selected, l.id))}
               >
                 {l.name} ×
               </Badge>
             ))}
         </div>
       )}
-      <Popover
-        onOpenChange={(open) => {
-          if (!open) {
-            setCreating(false);
-            setNewName("");
-          }
-        }}
-      >
+      <Popover>
         <PopoverTrigger
           render={
             <Button
@@ -286,77 +367,12 @@ export function LabelPicker({
           }
         />
         <PopoverContent className="w-60 p-1" align="start">
-          <LabelCheckboxList
+          <LabelMenu
             available={available}
             selected={selected}
-            onToggle={toggle}
+            onChange={onChange}
+            projectId={projectId}
           />
-
-          <div className="mt-1 border-t border-border/60 pt-1">
-            {creating ? (
-              <div className="px-2 py-1.5 space-y-2">
-                <Input
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleCreate();
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      setCreating(false);
-                      setNewName("");
-                    }
-                  }}
-                  autoFocus
-                  placeholder="Label name"
-                  className="h-7 text-[12px]"
-                />
-                <ColorPicker value={newColor} onChange={setNewColor} />
-                {createLabel.isError && (
-                  <p className="text-[10px] text-destructive">
-                    Couldn’t create label. Name may already be taken.
-                  </p>
-                )}
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] text-muted-foreground">
-                    {projectId == null ? "Global" : "Project-scoped"}
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2 text-[11px]"
-                      onClick={() => {
-                        setCreating(false);
-                        setNewName("");
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="h-6 px-2 text-[11px]"
-                      onClick={handleCreate}
-                      disabled={!newName.trim() || createLabel.isPending}
-                    >
-                      {createLabel.isPending ? "Adding…" : "Create"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setCreating(true)}
-                className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-              >
-                + Create new label
-              </button>
-            )}
-          </div>
         </PopoverContent>
       </Popover>
     </div>

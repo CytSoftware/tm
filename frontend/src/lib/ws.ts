@@ -16,6 +16,7 @@ import {
   taskListKey,
   projectKey,
   projectsKey,
+  taskCommentsKey,
   toReviewKey,
   unclaimedReviewsKey,
 } from "./query-keys";
@@ -47,6 +48,10 @@ export function connectProjectSocket({
         queryClient.invalidateQueries({ queryKey: ["tasks-infinite"] });
       }
       return;
+    }
+
+    if (event.type === "task.commented") {
+      queryClient.invalidateQueries({ queryKey: taskCommentsKey(event.key) });
     }
 
     queryClient.invalidateQueries({ queryKey: taskListKey(projectId) });

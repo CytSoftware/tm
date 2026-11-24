@@ -46,6 +46,7 @@ from typing import Any, Iterable, Mapping
 from django.contrib.auth import get_user_model
 from django.db.models import (
     Case,
+    Count,
     IntegerField,
     OuterRef,
     Prefetch,
@@ -54,6 +55,7 @@ from django.db.models import (
     Subquery,
     When,
 )
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -66,6 +68,7 @@ from .models import (
     Project,
     StateTransition,
     Task,
+    TaskComment,
 )
 
 User = get_user_model()
@@ -109,6 +112,15 @@ def base_task_queryset() -> QuerySet[Task]:
         .order_by("-at")
         .values("at")[:1]
     )
+    # A correlated subquery rather than ``Count("comments")``: a join-based
+    # count would multiply with the label/assignee joins filters add.
+    comment_count = (
+        TaskComment.objects.filter(task=OuterRef("pk"))
+        .order_by()
+        .values("task")
+        .annotate(n=Count("id"))
+        .values("n")
+    )
     # `UserSerializer.get_avatar_url` reads `user.profile` for both the
     # reporter and every assignee. Without these prefetches each card
     # serialization triggers an N+1 lookup for the OneToOne profile row.
@@ -134,7 +146,10 @@ def base_task_queryset() -> QuerySet[Task]:
             ),
             "pull_requests__repository__installation",
         )
-        .annotate(current_column_since=Subquery(latest_entry))
+        .annotate(
+            current_column_since=Subquery(latest_entry),
+            comment_count=Coalesce(Subquery(comment_count), 0),
+        )
         .order_by("project_id", "column__order", "position", "id")
     )
 

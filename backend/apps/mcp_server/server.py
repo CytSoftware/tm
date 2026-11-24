@@ -136,6 +136,7 @@ returns the thread; `list_crm_activity` is the cross-lead feed."""
 #: read-only token can't call a new read tool" — visible and harmless — instead
 #: of "a read-only token can write", which is neither.
 READ_ONLY_TOOLS = frozenset({
+    "list_comments",
     "drive_list",
     "drive_read",
     "get_bet",
@@ -437,6 +438,37 @@ async def move_task(
 async def delete_task(key: str) -> dict[str, Any]:
     """Delete a task by its human key."""
     return await _async(tools.delete_task)(key, mcp_user=_get_mcp_user())
+
+
+@mcp.tool()
+async def list_comments(key: str) -> list[dict[str, Any]]:
+    """List a task's comments, oldest first. ``key`` is the task key like ``"CYT-001"``.
+
+    Each comment carries ``id``, ``author`` (username), ``body``,
+    ``created_at`` and ``edited_at`` (null unless the body was edited).
+    """
+    return await _async(tools.list_comments)(key, mcp_user=_get_mcp_user())
+
+
+@mcp.tool()
+async def add_comment(key: str, body: str) -> dict[str, Any]:
+    """Post a comment on task ``key`` as the calling user. The task's
+    assignees get a "commented" notification."""
+    return await _async(tools.add_comment)(key, body, mcp_user=_get_mcp_user())
+
+
+@mcp.tool()
+async def edit_comment(comment_id: int, body: str) -> dict[str, Any]:
+    """Replace the body of one of your own comments."""
+    return await _async(tools.edit_comment)(
+        comment_id, body, mcp_user=_get_mcp_user()
+    )
+
+
+@mcp.tool()
+async def delete_comment(comment_id: int) -> dict[str, Any]:
+    """Delete one of your own comments."""
+    return await _async(tools.delete_comment)(comment_id, mcp_user=_get_mcp_user())
 
 
 @mcp.tool()
