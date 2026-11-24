@@ -207,6 +207,51 @@ class CrossModuleTests(TestCase):
         self.assertIsNone(person.company_id)
         self.assertEqual(self.client.get(f"/api/crm/contacts/{theirs.pk}/").status_code, 404)
 
+    def test_meeting_curation_cannot_give_another_projects_person_a_company(self):
+        # The company link would make the person visible through its leads.
+        grant(self.emp, ["meetings", "crm"])
+        acme = Entity.objects.create(kind=EntityKind.COMPANY, name="Acme", slug="acme")
+        Lead.objects.create(title="ours", project=self.mine, company=acme)
+        jane = Entity.objects.create(kind=EntityKind.PERSON, name="Jane Roe", slug="jane-roe")
+        Update.objects.create(
+            lead=Lead.objects.create(title="theirs", project=self.theirs),
+            body="call", occurred_at=timezone.now(),
+        ).people.add(jane)
+        meeting = Meeting.objects.create(
+            stem="m", title="ours", started_at=timezone.now(), project=self.mine
+        )
+        resp = self.client.patch(
+            f"/api/meetings/{meeting.key}/",
+            {"entities": [{"kind": "person", "name": "Jane Roe", "company": "Acme"}]},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        jane.refresh_from_db()
+        self.assertIsNone(jane.company_id)
+        self.assertEqual(self.client.get(f"/api/crm/contacts/{jane.pk}/").status_code, 404)
+
+    def test_company_only_another_project_bills_is_out_of_reach(self):
+        grant(self.emp, ["crm"])
+        acme = Entity.objects.create(
+            kind=EntityKind.COMPANY, name="Acme", slug="acme", phone="+974 1",
+        )
+        Payment.objects.create(
+            title="p", company=acme, project=self.theirs, type="one_off",
+            amount=Decimal("10"), due_on=date(2026, 12, 1),
+        )
+        resp = self.client.post(
+            "/api/crm/leads/", {"title": "pilot", "project": self.mine.pk, "company": acme.pk},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 400)
+        resp = self.client.post(
+            "/api/crm/contacts/", {"kind": "company", "name": "Acme", "phone": "+1 evil"},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 400)
+        acme.refresh_from_db()
+        self.assertEqual(acme.phone, "+974 1")
+
     def test_billing_create_by_name_does_not_edit_the_contact(self):
         grant(self.emp, ["billing"])
         company = Entity.objects.create(

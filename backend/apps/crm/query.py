@@ -119,7 +119,10 @@ def reachable_entities(user) -> QuerySet[Entity]:
     q = visible_contacts(user)
     if q is None:
         return Entity.objects.all()
-    return Entity.objects.filter(pk__in=Entity.objects.filter(q | ~IN_CRM).values("pk"))
+    # Billing counts as "someone has it" too, or a company only another
+    # project bills would read as nobody's and be claimable by name or id.
+    known = IN_CRM | Q(payments__isnull=False) | Q(licences__isnull=False)
+    return Entity.objects.filter(pk__in=Entity.objects.filter(q | ~known).values("pk"))
 
 
 # ---------------------------------------------------------------------------

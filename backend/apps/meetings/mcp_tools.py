@@ -365,7 +365,7 @@ def update_meeting(
         serializer.is_valid(raise_exception=True)
     except ValidationError as exc:
         raise ValueError(f"Invalid meeting data: {_flatten_errors(exc.detail)}")
-    services.curate_meeting(target, serializer.validated_data)
+    services.curate_meeting(target, serializer.validated_data, user=mcp_user)
     broadcast_meeting_event("meeting.updated", {"key": target.key})
     return _detail(target, include_transcript=False, mcp_user=mcp_user)
 

@@ -145,7 +145,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
             target = _guard(services.resolve_project, payload.validated_data["project"])
             if not can_see_project(request.user, target.id if target else None, "meetings"):
                 raise ValidationError({"project": "Pick a project you have access to."})
-        _guard(services.curate_meeting, meeting, payload.validated_data)
+        _guard(services.curate_meeting, meeting, payload.validated_data, user=request.user)
         _announce(meeting)
         return self._detail(meeting)
 
