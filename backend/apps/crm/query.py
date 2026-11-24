@@ -42,7 +42,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.meetings.models import Entity
-from apps.tasks.access import has_full_access, visible_project_ids
+from apps.tasks.access import has_full_access, member_project_ids, visible_project_ids
 from apps.tasks.models import ColumnKind, Project, Task
 
 from .models import CLOSED_STAGES, Lead, Licence, Payment, Update
@@ -111,18 +111,35 @@ def visible_contacts(user) -> Q | None:
     return q
 
 
+def _on_projects(ids) -> Q:
+    """On a lead, update, payment or licence in ``ids`` — directly, or (as in
+    ``IN_CRM``) through a person's company or a company's tagged people."""
+    return (
+        Q(leads__project_id__in=ids)
+        | Q(crm_updates__lead__project_id__in=ids)
+        | Q(company__leads__project_id__in=ids)
+        | Q(people__crm_updates__lead__project_id__in=ids)
+        | Q(payments__project_id__in=ids)
+        | Q(licences__project_id__in=ids)
+    )
+
+
+#: Someone's CRM or billing has it. Billing counts, or a company only another
+#: project bills would read as nobody's and be claimable by name or id.
+KNOWN = IN_CRM | Q(payments__isnull=False) | Q(licences__isnull=False)
+
+
 def reachable_entities(user) -> QuerySet[Entity]:
     """Entities ``user`` may tag on an update, put on a lead or bill: the ones
-    they can see, plus ones nobody has in the CRM yet (a person met in a
-    meeting, a brand-new company). An entity that only lives on another
-    project's leads stays out of reach."""
+    they can see, the ones their own projects' CRM or billing already has
+    (whichever module they hold), and ones nobody has yet (a person met in a
+    meeting, a brand-new company). An entity that only lives on other
+    projects' leads, updates or bills stays out of reach."""
     q = visible_contacts(user)
     if q is None:
         return Entity.objects.all()
-    # Billing counts as "someone has it" too, or a company only another
-    # project bills would read as nobody's and be claimable by name or id.
-    known = IN_CRM | Q(payments__isnull=False) | Q(licences__isnull=False)
-    return Entity.objects.filter(pk__in=Entity.objects.filter(q | ~known).values("pk"))
+    ours = _on_projects(member_project_ids(user) or set())
+    return Entity.objects.filter(pk__in=Entity.objects.filter(q | ours | ~KNOWN).values("pk"))
 
 
 # ---------------------------------------------------------------------------

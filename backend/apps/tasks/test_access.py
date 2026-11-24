@@ -252,6 +252,39 @@ class CrossModuleTests(TestCase):
         acme.refresh_from_db()
         self.assertEqual(acme.phone, "+974 1")
 
+    def test_tagging_a_person_cannot_reveal_their_company_from_another_project(self):
+        # Tagging P makes P's company visible through its people.
+        grant(self.emp, ["crm"])
+        secret = Entity.objects.create(kind=EntityKind.COMPANY, name="Secret", slug="secret")
+        Payment.objects.create(
+            title="p", company=secret, project=self.theirs, type="one_off",
+            amount=Decimal("10"), due_on=date(2026, 12, 1),
+        )
+        person = Entity.objects.create(
+            kind=EntityKind.PERSON, name="Pat", slug="pat", company=secret,
+        )
+        lead = Lead.objects.create(title="ours", project=self.mine)
+        resp = self.client.post(
+            "/api/crm/updates/",
+            {"lead": lead.key, "body": "call", "kind": "call", "people": [person.pk]},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(self.client.get(f"/api/crm/contacts/{secret.pk}/").status_code, 404)
+
+    def test_crm_user_can_open_a_lead_for_a_company_their_project_bills(self):
+        grant(self.emp, ["crm"])
+        client = Entity.objects.create(kind=EntityKind.COMPANY, name="Client", slug="client")
+        Payment.objects.create(
+            title="p", company=client, project=self.mine, type="one_off",
+            amount=Decimal("10"), due_on=date(2026, 12, 1),
+        )
+        resp = self.client.post(
+            "/api/crm/leads/", {"title": "renewal", "project": self.mine.pk, "company": client.pk},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 201)
+
     def test_billing_create_by_name_does_not_edit_the_contact(self):
         grant(self.emp, ["billing"])
         company = Entity.objects.create(

@@ -84,7 +84,10 @@ def check_reach(
         raise CrmError(f"No licence with id {licence.pk}.")
     if meeting is not None and not can_see_project(user, meeting.project_id, "meetings"):
         raise CrmError(f"Meeting {meeting.key!r} not found.")
-    wanted = {e.pk for e in entities if e is not None}
+    entities = [e for e in entities if e is not None]
+    # A tagged or linked person makes their company visible too (through its
+    # people), so the company has to be within reach as well.
+    wanted = {e.pk for e in entities} | {e.company_id for e in entities if e.company_id}
     if wanted:
         from .query import reachable_entities
 
